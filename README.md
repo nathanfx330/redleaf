@@ -34,7 +34,7 @@ It uses SpaCy for Named Entity Recognition (NER) and stores all data in an embed
 
 1.  **Clone the Repository:**
     ```bash
-    git clone <your-repository-url>
+    git clone https://github.com/nathanfx330/redleaf.git
     cd redleaf
     ```
 
