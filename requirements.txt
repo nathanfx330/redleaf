@@ -1,0 +1,11 @@
+# Flask and dependencies
+Flask
+
+# PDF Processing
+PyMuPDF
+
+# NLP
+spacy>=3.0.0,<4.0.0 # Pinning spacy major version is often wise
+
+# Optional: Add other direct dependencies if you know them,
+# but conda/pip usually handle transitive dependencies well.

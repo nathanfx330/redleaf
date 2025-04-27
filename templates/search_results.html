@@ -1,0 +1,56 @@
+<!-- File: ./templates/search_results.html -->
+{% extends 'base.html' %}
+
+{% block title %}Search: "{{ query }}" - Redleaf{% endblock %}
+
+{% block content %}
+  <p style="margin-bottom: 15px;"><a href="{{ url_for('browse_index') }}">« Back to Entity Index & Search</a></p>
+  <h1>Redleaf - Search Results for "{{ query }}"</h1>
+
+  {# ... (error message / flash message handling unchanged) ... #}
+  {% if error_message %}
+      <div class="alert alert-warning">{{ error_message }}</div>
+  {% endif %}
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <div class="flash-messages">
+      {% for category, message in messages %}
+         {% set alert_class = 'alert-info' %}{% if category == 'error' %}{% set alert_class = 'alert-error' %}{% elif category == 'success' %}{% set alert_class = 'alert-success' %}{% elif category == 'warning' %}{% set alert_class = 'alert-warning' %}{% endif %}
+        <div class="alert {{ alert_class }}">{{ message }}</div>
+      {% endfor %}
+      </div>
+    {% endif %}
+  {% endwith %}
+
+
+  {% if results %}
+    <p>Found {{ results | length }} pages/documents matching your query:</p> {# Updated text #}
+    <ul class="search-results-list">
+      {% for result in results %}
+        {# Determine file extension for logic #}
+        {% set file_ext = result.relative_path.split('.')[-1].lower() if '.' in result.relative_path else '' %}
+        <li>
+          {# --- UPDATED: Conditional Viewer Link --- #}
+          {% if file_ext == 'pdf' %}
+            <a href="{{ url_for('view_pdf', relative_path_str=result.relative_path) }}#page={{ result.page_number }}" target="_blank">
+                {{ result.relative_path }} (Page {{ result.page_number }})
+            </a>
+          {% elif file_ext in ['html', 'htm', 'txt'] %}
+             {# Link to source viewer. Page number is likely 1 but keep for consistency #}
+             <a href="{{ url_for('view_source', relative_path_str=result.relative_path) }}#page={{ result.page_number }}" target="_blank">
+                {{ result.relative_path }} {# Don't show page number if it's always 1? Or show it? Showing for now. #}
+                 ({{ "Document" if file_ext != 'txt' else "Text File" }}) {# Indicate type if not PDF #}
+            </a>
+          {% else %}
+            {{ result.relative_path }} (Page {{ result.page_number }}) (Unsupported type view)
+          {% endif %}
+          <div class="search-snippet">
+              {{ result.snippet | safe }}
+          </div>
+        </li>
+      {% endfor %}
+    </ul>
+  {% elif not error_message %}
+    <p>No results found matching your query.</p>
+  {% endif %}
+{% endblock %}

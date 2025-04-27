@@ -1,0 +1,128 @@
+<!-- File: ./templates/index.html -->
+{% extends 'base.html' %}
+
+{% block title %}Browse & Search - Redleaf{% endblock %}
+
+{% block content %}
+  <h1>Redleaf - Browse Entities & Search</h1>
+  {# Search Form #}
+  <div class="search-container">
+    <form action="{{ url_for('search') }}" method="get">
+      <input type="search" name="q" placeholder="Search document keywords..." aria-label="Search Keywords" value="{{ request.args.get('q', '') }}" required>
+      <button type="submit" class="btn btn-primary">Search</button> {# Added btn class #}
+    </form>
+  </div>
+
+  <hr> {# Separate search from browse #}
+
+  <h2>Browse Extracted Entities</h2>
+
+  {# Display flashed messages (e.g., DB errors from browse route) #}
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <div class="flash-messages">
+      {% for category, message in messages %}
+        {% set alert_class = 'alert-info' %} {# Default #}
+        {% if category == 'error' %} {% set alert_class = 'alert-error' %}
+        {% elif category == 'success' %} {% set alert_class = 'alert-success' %}
+        {% elif category == 'warning' %} {% set alert_class = 'alert-warning' %}
+        {% endif %}
+        <div class="alert {{ alert_class }}">{{ message }}</div>
+      {% endfor %}
+      </div>
+    {% endif %}
+  {% endwith %}
+
+  {# Display specific error if passed from browse route #}
+  {% if error %}
+     <div class="alert alert-error">Error loading entities from database. Please check application logs.</div>
+  {% elif not entities_by_label %} {# Check if the dictionary is empty #}
+    <p><em>No entities found or indexed yet. Process some files via the dashboard.</em></p> {# MODIFIED: Updated prompt #}
+  {% else %}
+    <div class="entity-columns">
+      {# Loop through the display labels to control order and inclusion #}
+      {% for label in display_labels %}
+        {% if label in sorted_labels %} {# Check if there are any entities for this label #}
+        <div class="entity-column">
+          <h3>{{ label }}</h3>
+          {# --- MODIFIED: Added class 'expandable-list' --- #}
+          <ul class="expandable-list">
+            {# --- MODIFIED: Assigned entities to a variable for easier access --- #}
+            {% set entities = entities_by_label[label] %}
+            {# Loop through entities for the current label #}
+            {% for entity in entities %}
+              {# --- MODIFIED: Added conditional class for hiding items beyond 20 --- #}
+              <li class="{{ 'entity-item-hidden' if loop.index > 20 else '' }}">
+                <a href="{{ url_for('entity_detail', label=label, encoded_text=entity.encoded_text) }}">{{ entity.text }}</a>
+                <span class="entity-count">({{ entity.count }})</span> {# Display appearance count #}
+              </li>
+            {% else %}
+              {# This block should not be reached if label in sorted_labels check passes #}
+              <li><em>No entities found for this label.</em></li>
+            {% endfor %}
+          </ul>
+          {# --- ADDED: "Show More/Less" Button conditionally --- #}
+          {% if entities | length > 20 %}
+            <button class="btn btn-sm btn-outline-secondary toggle-entity-list" data-total-items="{{ entities | length }}">
+              Show All ({{ entities | length }})
+            </button>
+          {% endif %}
+          {# --- END ADDED --- #}
+        </div>
+        {% endif %}
+      {% endfor %}
+    </div>
+  {% endif %}
+
+  {# --- ADDED: CSS for hiding items --- #}
+  <style>
+    .entity-column ul.expandable-list li.entity-item-hidden {
+      display: none; /* Initially hide items beyond the 20th */
+    }
+
+    .entity-column ul.expandable-list.expanded li.entity-item-hidden {
+      display: list-item; /* Show hidden items when list is expanded */
+    }
+
+    .toggle-entity-list {
+      display: block; /* Make button take full width relative to column */
+      width: 100%;
+      margin-top: 10px;
+      text-align: center;
+      box-sizing: border-box; /* Include padding in width */
+    }
+  </style>
+  {# --- END ADDED CSS --- #}
+
+  {# --- ADDED: JavaScript for toggling --- #}
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const toggleButtons = document.querySelectorAll('.toggle-entity-list');
+
+      toggleButtons.forEach(button => {
+        button.addEventListener('click', () => {
+          // Find the list associated with this button (it's the preceding sibling UL)
+          const list = button.previousElementSibling;
+          // Get total count from data attribute for robustness
+          const totalItems = button.getAttribute('data-total-items');
+
+          if (list && list.tagName === 'UL') {
+            // Toggle the 'expanded' class on the UL
+            list.classList.toggle('expanded');
+
+            // Update button text based on the new state
+            if (list.classList.contains('expanded')) {
+              button.textContent = 'Show Top 20';
+            } else {
+              button.textContent = `Show All (${totalItems})`;
+            }
+          } else {
+             console.error("Could not find the list associated with the button:", button);
+          }
+        });
+      });
+    });
+  </script>
+  {# --- END ADDED JavaScript --- #}
+
+{% endblock %}

@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Project Reader</title>
+    <style>
+        /* Dark Theme CSS Variables (same as before) */
+        :root {
+            --bg-color: #1e1e1e;
+            --text-color: #d4d4d4;
+            --text-muted: #888;
+            --link-color: #4fc1ff; /* Using a different link color for contrast */
+            --link-hover: #82d4ff;
+            --border-color: #3a3a3a;
+            --container-bg: #252526;
+            --code-bg: #1a1a1a;
+            --code-text: #ccc;
+            --header-border: #444;
+            --icon-dir: #ffd700; /* Gold */
+            --icon-py: #4ec9b0;  /* Teal */
+            --icon-html: #d16969;/* Light Red */
+            --icon-css: #569cd6; /* Blue */
+            --icon-other: #888;
+            --button-bg: #333;
+            --button-hover-bg: #444;
+            --button-active-bg: #555;
+            --button-text: #ccc;
+            --error-text: #f48771;
+            --copy-all-bg: #007acc;
+            --copy-all-hover: #005fa3;
+            --copy-all-active: #004c8c;
+            --copy-all-text: #fff;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+            line-height: 1.6;
+            margin: 0;
+            padding: 20px;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+        }
+        .container {
+            background-color: var(--container-bg);
+            padding: 25px;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            max-width: 1200px;
+            margin: auto;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+        }
+        h1 {
+            color: var(--text-color);
+            border-bottom: 1px solid var(--header-border);
+            padding-bottom: 10px;
+            margin-top: 0;
+            font-size: 1.8em;
+            font-weight: 500;
+            margin-bottom: 25px;
+        }
+
+        /* Remove H2 for files/dirs as it's one list now */
+
+        .file-list { /* Using a class for the list */
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .file-item { /* Class for each file entry li */
+            padding: 15px 0; /* Increased padding */
+            border-bottom: 1px solid var(--border-color);
+        }
+        .file-item:last-child {
+            border-bottom: none;
+        }
+
+        .item-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 10px; /* Space before code block */
+            flex-wrap: wrap; /* Allow wrapping if needed */
+        }
+
+        .icon {
+            display: inline-block;
+            width: 25px;
+            text-align: center;
+            margin-right: 12px;
+            font-size: 1.3em;
+            flex-shrink: 0; /* Prevent icon from shrinking */
+        }
+        .py-icon { color: var(--icon-py); }
+        .html-icon { color: var(--icon-html); }
+        .css-icon { color: var(--icon-css); }
+
+        .file-name {
+            font-weight: 600;
+            color: var(--text-color);
+            margin-right: 10px;
+        }
+
+        .copy-button {
+            background-color: var(--button-bg);
+            color: var(--button-text);
+            border: 1px solid var(--border-color);
+            padding: 3px 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.8em;
+            margin-left: auto; /* Pushes button to the right */
+            transition: background-color 0.2s ease, color 0.2s ease;
+            flex-shrink: 0;
+        }
+        .copy-button:hover { background-color: var(--button-hover-bg); }
+        .copy-button:active { background-color: var(--button-active-bg); }
+        .copy-button.copied {
+            background-color: var(--icon-py);
+            color: var(--bg-color);
+        }
+
+        /* Code Block Styling (mostly same as before) */
+        .code-block-container {
+            margin-top: 5px; /* Reduced top margin */
+            border: 1px solid var(--border-color);
+            border-radius: 5px;
+            overflow: hidden;
+        }
+         .code-block-prefix {
+            font-family: monospace;
+            font-size: 0.95em; /* Slightly larger */
+            color: var(--text-muted);
+            background-color: #303031;
+            padding: 8px 12px; /* More padding */
+            border-bottom: 1px solid var(--border-color);
+            word-break: break-all;
+         }
+         /* Prefix content is now just the path, filename is in item-header */
+
+        pre {
+            background-color: var(--code-bg);
+            color: var(--code-text);
+            padding: 15px;
+            border-radius: 0 0 4px 4px;
+            margin: 0;
+            overflow-x: auto;
+            white-space: pre;
+            font-family: Consolas, "Courier New", monospace;
+            font-size: 0.9em;
+            line-height: 1.45;
+        }
+        pre code {
+            padding: 0; background: none; border: none;
+            font-size: inherit; color: inherit;
+        }
+        pre code.error-content { color: var(--error-text); font-style: italic; }
+
+        /* Copy All Button */
+        .copy-all-container {
+            margin-bottom: 25px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid var(--header-border);
+            text-align: center; /* Center the button */
+        }
+        #copy-all-button {
+            background-color: var(--copy-all-bg);
+            color: var(--copy-all-text);
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 1.1em;
+            font-weight: 500;
+            transition: background-color 0.2s ease;
+        }
+        #copy-all-button:hover { background-color: var(--copy-all-hover); }
+        #copy-all-button:active { background-color: var(--copy-all-active); }
+        #copy-all-button.copied {
+             background-color: var(--icon-py); /* Green for success */
+             color: var(--bg-color);
+        }
+
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Project File Contents</h1>
+        <p style="text-align: center; margin-top: -15px; margin-bottom: 20px; color: var(--text-muted);">Base Directory: {{ base_directory }}</p>
+
+        <div class="copy-all-container">
+            <button id="copy-all-button">Copy All Files Structure & Content</button>
+        </div>
+
+        {% if files %}
+            <ul class="file-list">
+                {% for file_info in files %}
+                <li class="file-item" data-path="{{ file_info.path }}"> {# Store path for JS #}
+                    <div class="item-header">
+                        {% if file_info.type == 'python' %}<span class="icon py-icon">🐍</span>
+                        {% elif file_info.type == 'html' %}<span class="icon html-icon">📄</span>
+                        {% elif file_info.type == 'css' %}<span class="icon css-icon">🎨</span>
+                        {% endif %} {# Assuming only viewable files are in the list now #}
+
+                        <span class="file-name">{{ file_info.name }}</span>
+
+                        {# Only show copy button if there's non-error content #}
+                        {% if not file_info.error and file_info.content is not none %}
+                            <button class="copy-button" data-target-id="code-{{ file_info.id }}">Copy</button>
+                        {% endif %}
+                    </div>
+
+                    {# Always show the container and prefix #}
+                    <div class="code-block-container">
+                        <div class="code-block-prefix">
+                           {{ file_info.path }} {# Display the ./path/to/file #}
+                        </div>
+                         {# Display content or error message #}
+                        <pre><code id="code-{{ file_info.id }}" class="{{ 'error-content' if file_info.error else '' }}">{{ file_info.content | escape }}</code></pre>
+                    </div>
+                </li>
+                {% endfor %}
+            </ul>
+        {% else %}
+             <p style="text-align: center; margin-top: 30px;"><em>No viewable files (.py, .html, .css) found in the target directory or its subdirectories.</em></p>
+        {% endif %}
+    </div>
+
+    <script>
+        // Individual Copy Button Functionality (same as before)
+        document.addEventListener('click', function(event) {
+            if (event.target.classList.contains('copy-button')) {
+                const button = event.target;
+                const targetId = button.getAttribute('data-target-id');
+                const codeElement = document.getElementById(targetId);
+
+                if (codeElement) {
+                    const textToCopy = codeElement.innerText;
+                    navigator.clipboard.writeText(textToCopy)
+                        .then(() => {
+                            const originalText = button.textContent;
+                            button.textContent = 'Copied!';
+                            button.classList.add('copied');
+                            button.disabled = true;
+                            setTimeout(() => {
+                                button.textContent = originalText;
+                                button.classList.remove('copied');
+                                button.disabled = false;
+                            }, 1500);
+                        })
+                        .catch(err => {
+                            console.error('Failed to copy text: ', err);
+                            button.textContent = 'Error';
+                             setTimeout(() => { button.textContent = 'Copy'; }, 2000);
+                        });
+                }
+            }
+        });
+
+        // Copy All Button Functionality
+        const copyAllButton = document.getElementById('copy-all-button');
+        if (copyAllButton) {
+            copyAllButton.addEventListener('click', function() {
+                let fullTextOutput = "";
+                const fileItems = document.querySelectorAll('.file-list .file-item');
+
+                fileItems.forEach(item => {
+                    const path = item.getAttribute('data-path'); // Get path from data attribute
+                    const codeElement = item.querySelector('pre code');
+                    const isError = codeElement ? codeElement.classList.contains('error-content') : true; // Check if it's an error block
+
+                    // Only include non-error files in the "Copy All" output
+                    if (path && codeElement && !isError) {
+                        const codeContent = codeElement.innerText;
+                        // Format as requested: Prefix line, then code content
+                        fullTextOutput += `--- File: ${path} ---\n`;
+                        fullTextOutput += `${codeContent}\n\n`; // Add two newlines for separation
+                    } else if (path && codeElement && isError) {
+                         // Optionally include errors with a note
+                         // fullTextOutput += `--- File: ${path} (Error Reading) ---\n`;
+                         // fullTextOutput += `${codeElement.innerText}\n\n`;
+                    }
+                });
+
+                if (fullTextOutput) {
+                    navigator.clipboard.writeText(fullTextOutput.trim()) // Trim trailing newlines
+                        .then(() => {
+                            const originalText = copyAllButton.textContent;
+                            copyAllButton.textContent = 'Copied All!';
+                            copyAllButton.classList.add('copied');
+                            copyAllButton.disabled = true;
+                            setTimeout(() => {
+                                copyAllButton.textContent = originalText;
+                                copyAllButton.classList.remove('copied');
+                                copyAllButton.disabled = false;
+                            }, 2000);
+                        })
+                        .catch(err => {
+                            console.error('Failed to copy all text: ', err);
+                            copyAllButton.textContent = 'Copy All Error!';
+                            setTimeout(() => { copyAllButton.textContent = 'Copy All Files Structure & Content'; }, 2500);
+                        });
+                } else {
+                    // Handle case where no valid files were found to copy
+                    alert("No valid file content found to copy.");
+                }
+            });
+        }
+
+    </script>
+
+</body>
+</html>

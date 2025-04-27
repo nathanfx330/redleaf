@@ -1,0 +1,147 @@
+<!-- File: ./templates/base.html -->
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    {# --- MODIFIED: Added v0.8 to title block --- #}
+    <title>{% block title %}Redleaf{% endblock %} v0.8</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    {# --- ADDED: Inline Styles for New Layout (Ideally move to style.css later) --- #}
+    <style>
+        /* Apply flex structure to body */
+        body {
+            display: flex;
+            flex-direction: column; /* Stack header, main, footer */
+            min-height: 100vh; /* Ensure body takes full viewport height */
+            margin: 0; /* Remove default body margin */
+            /* Inherits background/text color from style.css */
+        }
+        /* Top Navigation Bar */
+        .topnav {
+            display: flex;
+            align-items: center; /* Vertically center items */
+            padding: 0.6rem 1.5rem; /* Vertical and horizontal padding */
+            /* --- MODIFIED: Using CSS var defined in style.css --- */
+            background-color: var(--topnav-bg, #343a40); /* Use specific var or fallback */
+            border-bottom: 1px solid var(--container-border, #444); /* Use container-border from dark theme */
+            color: var(--topnav-text, #f0f0f0); /* Use specific var or fallback */
+            flex-shrink: 0; /* Prevent header from shrinking */
+            min-height: 50px; /* Ensure a minimum height */
+        }
+        /* Container for Title and Version - Now a Link */
+        /* --- ADDED: Specific rule for the link itself --- */
+        .topnav a.logo-title {
+            margin-right: auto; /* Pushes nav links to the right */
+            text-decoration: none; /* Remove underline from link */
+            color: inherit; /* Inherit text color from .topnav */
+            display: flex; /* Use flex for alignment */
+            align-items: baseline; /* Align title and version text nicely */
+            gap: 0.4rem; /* Space between title and version */
+            transition: opacity 0.2s ease; /* Add subtle hover fade */
+        }
+        /* --- ADDED: Hover state for the link --- */
+        .topnav a.logo-title:hover {
+            opacity: 0.8;
+        }
+
+        /* Title Styling */
+        .topnav .title {
+            font-size: 1.3em;
+            font-weight: 500;
+            white-space: nowrap;
+            /* color: var(--text-color, #e0e0e0); REMOVED - Inherits from parent link */
+        }
+        /* Version Styling */
+         .topnav .version {
+             font-size: 0.75em;
+             opacity: 0.8;
+             /* color: var(--text-muted, #888); REMOVED - Inherits */
+             font-weight: 400;
+         }
+        /* Navigation Links Container */
+        .topnav .nav-links {
+            display: flex;
+            gap: 1.75rem; /* Space between nav links */
+            list-style: none;
+            margin: 0;
+            padding: 0;
+            align-items: center; /* Vertically align nav links */
+        }
+        /* Individual Navigation Link */
+        .topnav .nav-links a {
+            /* --- MODIFIED: Using CSS var defined in style.css --- */
+            color: var(--topnav-link-color, #adb5bd); /* Use specific var or fallback */
+            text-decoration: none;
+            font-size: 0.95em;
+            padding: 0.3rem 0;
+            border-bottom: 2px solid transparent; /* Underline placeholder */
+            transition: color 0.2s ease, border-bottom-color 0.2s ease;
+        }
+        /* Hover/Active State for Nav Links */
+        .topnav .nav-links a:hover,
+        .topnav .nav-links a.active {
+             /* --- MODIFIED: Using CSS vars defined in style.css --- */
+            color: var(--topnav-link-hover-color, #ffffff); /* Use specific var or fallback */
+            border-bottom-color: var(--topnav-link-active-border, #5F1B15); /* Use specific var or fallback */
+        }
+
+        /* Main content area below topnav */
+        .main-content-area {
+            flex-grow: 1; /* Allow main content to expand vertically */
+            padding: 20px 30px; /* Padding inside the content area */
+            max-width: 1400px; /* Limit content width for readability */
+            width: 100%;
+            margin: 0 auto; /* Center the content area */
+            box-sizing: border-box;
+        }
+
+        /* Area for future dynamic content */
+        #dynamic-content-area {
+            padding: 0 30px 20px 30px; /* Match main content padding */
+            max-width: 1400px;
+            width: 100%;
+            margin: 0 auto;
+            box-sizing: border-box;
+        }
+
+        /* General heading/hr styles (copied from old inline style) */
+         h1 { color: var(--text-color); margin-bottom: 25px; font-weight: 400; text-align: left; }
+         h2 { border-bottom: 1px solid var(--hr-color, #444); padding-bottom: 8px; margin-top: 25px; margin-bottom: 15px; font-weight: 500; }
+         hr { border: 0; height: 1px; background: var(--hr-color, #444); margin: 25px 0; }
+         code { word-wrap: break-word; white-space: pre-wrap; background-color: var(--code-bg, #1a1a1a); padding: 0.1em 0.3em; border-radius: 3px; font-family: Consolas, monospace; font-size: 0.9em;}
+
+    </style>
+</head>
+<body>
+    {# --- MODIFIED: Top Navigation Bar --- #}
+    <header class="topnav">
+        {# --- MODIFIED: Changed outer div to <a> tag linking to dashboard --- #}
+        <a href="{{ url_for('dashboard') }}" class="logo-title" title="Go to Dashboard">
+            <span class="title">Redleaf</span><span class="version">v0.8</span>
+        </a>
+        {# --- END MODIFICATION --- #}
+        <ul class="nav-links">
+            {# Add class="active" based on request.endpoint for highlighting #}
+            <li><a href="{{ url_for('dashboard') }}" class="{{ 'active' if request.endpoint == 'dashboard' else '' }}">Dashboard</a></li>
+            <li><a href="{{ url_for('browse_index') }}" class="{{ 'active' if request.endpoint in ['browse_index', 'search', 'entity_detail'] else '' }}">Browse & Search</a></li>
+            <li><a href="{{ url_for('catalog_view') }}" class="{{ 'active' if request.endpoint == 'catalog_view' else '' }}">Catalog & Notes</a></li> {# Updated link text #}
+        </ul>
+    </header>
+
+    {# --- Main Content Area wrapper --- #}
+    <main class="main-content-area">
+        {# Content from other templates will be inserted here #}
+        {% block content %}{% endblock %}
+    </main>
+
+    {# --- Area for Dynamic Content Loading --- #}
+    <div id="dynamic-content-area">
+        {% block dynamic_content %}{% endblock %} {# Optional block #}
+    </div>
+
+    {# --- Scripts Block (for JS from child templates) --- #}
+    {% block scripts %}{% endblock %}
+
+</body>
+</html>

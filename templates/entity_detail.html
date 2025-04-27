@@ -1,0 +1,63 @@
+<!-- File: ./templates/entity_detail.html -->
+{% extends 'base.html' %}
+
+{% block title %}{{ entity_label }}: {{ entity_text }} - Redleaf{% endblock %}
+
+{% block content %}
+  {# ... (breadcrumb and heading unchanged) ... #}
+  <nav aria-label="breadcrumb" class="breadcrumb"> {# Added class #}
+      <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{{ url_for('browse_index') }}">Browse & Search</a></li>
+        <li class="breadcrumb-item active" aria-current="page">{{ entity_label }}: {{ entity_text | truncate(80) }}</li>
+      </ol>
+  </nav>
+
+  <h1><span style="color: var(--muted-text-color);">{{ entity_label }}:</span> {{ entity_text }}</h1>
+  <p>Found in the following documents and pages:</p>
+
+  {# ... (error message / flash message handling unchanged) ... #}
+    {% if error_message %}
+      <div class="alert alert-error">{{ error_message }}</div>
+  {% endif %}
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <div class="flash-messages">
+      {% for category, message in messages %}
+        {% set alert_class = 'alert-info' %}{% if category == 'error' %}{% set alert_class = 'alert-error' %}{% elif category == 'success' %}{% set alert_class = 'alert-success' %}{% elif category == 'warning' %}{% set alert_class = 'alert-warning' %}{% endif %}
+        <div class="alert {{ alert_class }}">{{ message }}</div>
+      {% endfor %}
+      </div>
+    {% endif %}
+  {% endwith %}
+
+  {% if results %}
+    <ul class="search-results-list">
+      {% for item in results %}
+        {# Determine file extension for logic #}
+        {% set file_ext = item.relative_path.split('.')[-1].lower() if '.' in item.relative_path else '' %}
+        <li>
+          {# --- UPDATED: Conditional Viewer Link --- #}
+          {% if file_ext == 'pdf' %}
+             <a href="{{ url_for('view_pdf', relative_path_str=item.relative_path) }}#page={{ item.page_number }}" target="_blank" title="View PDF: {{ item.relative_path }}">
+                 {{ item.relative_path }} (Page {{ item.page_number }})
+             </a>
+           {% elif file_ext in ['html', 'htm', 'txt'] %}
+             {# Link to source viewer. Page number is likely 1 but keep for consistency #}
+             <a href="{{ url_for('view_source', relative_path_str=item.relative_path) }}#page={{ item.page_number }}" target="_blank" title="View Source: {{ item.relative_path }}">
+                {{ item.relative_path }} {# Don't show page number if it's always 1? Or show it? Showing for now. #}
+                 ({{ "Document" if file_ext != 'txt' else "Text File" }}) {# Indicate type if not PDF #}
+            </a>
+          {% else %}
+            {{ item.relative_path }} (Page {{ item.page_number }}) (Unsupported type view)
+          {% endif %}
+          <div class="search-snippet">
+            {{ item.snippet | safe }}
+          </div>
+        </li>
+      {% endfor %}
+    </ul>
+  {% elif not error_message %}
+    <p><em>No occurrences found for this entity.</em></p>
+  {% endif %}
+
+{% endblock %}
