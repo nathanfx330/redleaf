@@ -6,7 +6,7 @@ It uses SpaCy for Named Entity Recognition (NER) and stores all data in an embed
 
 ## Key Features
 
-*   **Multi-Format Support:** Processes `.pdf`, `.html`, `.txt`, and `.srt` files.
+*   **Multi-Format Support:** Processes `.pdf`, `.html` and `.txt` files.
 *   **Text Extraction:** Extracts text from PDFs (using PyMuPDF) and HTML (using BeautifulSoup). Copies SRT/TXT content.
 *   **Named Entity Recognition:** Uses SpaCy (`en_core_web_lg` model by default) to identify and index entities (Person, Org, Date, Location, GPE).
 *   **Local Database:** Stores all indexed data and metadata in a local SQLite database (`redleaf_data.db`).
