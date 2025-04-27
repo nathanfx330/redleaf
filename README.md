@@ -4,6 +4,8 @@ Redleaf is a self-contained, personal document analysis tool built with Python a
 
 It uses SpaCy for Named Entity Recognition (NER) and stores all data in an embedded SQLite database, making the entire system easy to move and manage.
 
+V 0.8! It's functional, but there are a few hiccups I'm ironing out. FYI
+
 ## Key Features
 
 *   **Multi-Format Support:** Processes `.pdf`, `.html` and `.txt` files.
