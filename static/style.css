@@ -1,69 +1,135 @@
 /* --- File: ./static/style.css --- */
-/* --- Light Theme (Default) --- */
+/* --- Redleaf Base Theme (Dark) --- */
 :root {
-  
-    /* --- Button Color Variables --- */
-    --btn-primary-bg: var(--grey-btn-dark);
-    --btn-primary-border: var(--grey-btn-dark);
-    --btn-primary-text: var(--text-on-dark);
-    --btn-primary-hover-bg: var(--grey-btn-dark-hover);
-    --btn-primary-hover-border: var(--grey-btn-dark-hover);
+    /* Base Theme Colors */
+    --bg-color: #1a1a1a;
+    --text-color: #e0e0e0; /* White/Light Text */
+    --container-bg: #252526;
+    --container-border: #3a3a3a;
+    --column-bg: #2d2d2d;
+    --column-border: #444444;
+    --column-header-color: #ccc;
+    --input-bg: #3c3c3c;
+    --input-border: #555;
+    --input-text: #ddd;
+    --hr-color: #444;
+    --muted-text-color: #888;
+    --snippet-bg: #333;
+    --snippet-border: #4a4a4a;
+    --snippet-text: #bdbdbd;
+    --highlight-bg: #4a4a4a; /* Dark Grey highlight */
+    --highlight-text: #fff;
+    --text-on-dark-bg: #f0f0f0; /* Consistent light text for buttons etc */
 
-    --btn-info-bg: var(--grey-btn-light);
-    --btn-info-border: var(--grey-btn-light);
-    --btn-info-text: var(--text-on-dark);
-    --btn-info-hover-bg: var(--grey-btn-light-hover);
-    --btn-info-hover-border: var(--grey-btn-light-hover);
+    /* -- Core Color Palette -- */
+    --palette-red-dark: #5F1B15; /* Base Red */
+    --palette-red-hover: #942c22; /* Lighter Red Hover */
+    --palette-red-light: #f48771; /* Lighter Red for text/accents */
+    --palette-red-alert-bg: #491510; /* Dark bg for Red Alert */
+    --palette-red-alert-border: var(--palette-red-dark);
 
-    --btn-warning-bg: var(--grey-btn-medium);
-    --btn-warning-border: var(--grey-btn-medium);
-    --btn-warning-text: var(--text-on-dark);
-    --btn-warning-hover-bg: var(--grey-btn-medium-hover);
-    --btn-warning-hover-border: var(--grey-btn-medium-hover);
+    --std-green-success: #838383; /* Specific Green for Success status/buttons */
+    --std-green-success-hover: #bdbdbd;
+    --std-green-alert-bg: #1c4a24;
+    --std-green-alert-border: #2a6b37;
+    --std-green-text: #c3e6cb; /* Light green text for dark bg (Alerts) */
 
-    --btn-danger-bg: var(--red-accent);
-    --btn-danger-border: var(--red-accent);
-    --btn-danger-text: var(--text-on-dark);
-    --btn-danger-hover-bg: var(--red-accent-hover);
-    --btn-danger-hover-border: var(--red-accent-hover);
+    /* Grey Palette (Adjusted for single theme clarity) */
+    --grey-light-a: #a0a0a0;
+    --grey-light-1: #616161; /* Medium */
+    --grey-light-2: #5c5c5c; /* Medium Dark */
+    --grey-medium-1: #5c5c5c; /* Dark */
+    --grey-medium-2: #424242; /* Darker */
+    --grey-medium-3: #194271; /* Bluish Grey */
+    --grey-medium-3-light: #265080; /* Lighter Bluish Grey Hover */
+    --grey-dark-1: #686767; /* Very Dark */
+    --grey-dark-2: #161616; /* Near Black */
 
-    --btn-secondary-bg: var(--grey-btn-dark); /* Same as Primary */
-    --btn-secondary-border: var(--grey-btn-dark);
-    --btn-secondary-text: var(--text-on-dark);
-    --btn-secondary-hover-bg: var(--grey-btn-dark-hover);
-    --btn-secondary-hover-border: var(--grey-btn-dark-hover);
+    /* --- Link Styles --- */
+    --link-color: var(--grey-light-a); /* Medium Grey Link */
+    --link-hover-color: var(--palette-red-light); /* Light Red hover */
 
-    --btn-success-bg: var(--green-success);
-    --btn-success-border: var(--green-success);
-    --btn-success-text: var(--text-on-dark);
-    --btn-success-hover-bg: var(--green-success-hover);
-    --btn-success-hover-border: var(--green-success-hover);
+    /* --- Status Colors (Text color) --- */
+    --status-new-color: var(--grey-light-1);
+    --status-progress-color: var(--grey-light-2);
+    --status-extracted-color: var(--grey-light-2);
+    --status-indexed-color: var(--std-green-success);
+    --status-indexed-empty-color: #66d9b7; /* Keep distinct color for empty/skipped */
+    --status-error-color: var(--palette-red-light);
+    --status-missing-color: var(--muted-text-color);
 
-    --btn-check-bg: var(--grey-btn-dark); /* Same as Primary/Secondary */
-    --btn-check-border: var(--grey-btn-dark);
-    --btn-check-text: var(--text-on-dark);
-    --btn-check-hover-bg: var(--grey-btn-dark-hover);
-    --btn-check-hover-border: var(--grey-btn-dark-hover);
+    /* --- Button Style Definitions --- */
+    /* Primary Button (Filled Darker Grey) */
+    --btn-primary-bg: var(--grey-medium-2);
+    --btn-primary-border: var(--grey-medium-2);
+    --btn-primary-text: var(--text-on-dark-bg);
+    --btn-primary-hover-bg: var(--grey-dark-1);
+    --btn-primary-hover-border: var(--grey-dark-1);
 
-    --btn-disabled-bg: var(--grey-disabled-bg);
-    --btn-disabled-border: var(--grey-disabled-border);
-    --btn-disabled-text: var(--grey-disabled-text);
+    /* Info Button (Medium Dark Grey - Lightest Gray Button) */
+    --btn-info-bg: var(--grey-light-2);
+    --btn-info-border: var(--grey-light-2);
+    --btn-info-text: var(--text-on-dark-bg);
+    --btn-info-hover-bg: var(--grey-light-1); /* Lighten */
+    --btn-info-hover-border: var(--grey-light-1);
 
-    --btn-outline-secondary-border: var(--grey-outline-border);
-    --btn-outline-secondary-text: var(--grey-outline-text);
-    --btn-outline-secondary-hover-bg: var(--grey-outline-hover-bg);
-    --btn-outline-secondary-hover-text: var(--grey-outline-hover-text);
+    /* Warning Button (Dark Grey - Middle Gray Button - Also used for active favorite) */
+    --btn-warning-bg: var(--grey-medium-1);
+    --btn-warning-border: var(--grey-medium-1);
+    --btn-warning-text: var(--text-on-dark-bg);
+    --btn-warning-hover-bg: var(--grey-light-2); /* Lighten */
+    --btn-warning-hover-border: var(--grey-light-2);
+
+    /* Danger Button (Dark Red - Use base red, hover lighter) */
+    --btn-danger-bg: var(--palette-red-dark);
+    --btn-danger-border: var(--palette-red-dark);
+    --btn-danger-text: var(--text-on-dark-bg);
+    --btn-danger-hover-bg: var(--palette-red-hover);
+    --btn-danger-hover-border: var(--palette-red-hover);
+
+    /* Secondary Button (Bluish Grey) */
+    --btn-secondary-bg: var(--grey-medium-3);
+    --btn-secondary-border: var(--grey-medium-2); /* Keep slightly darker border */
+    --btn-secondary-text: var(--text-on-dark-bg);
+    --btn-secondary-hover-bg: var(--grey-medium-3-light); /* Use lighter bluish grey */
+    --btn-secondary-hover-border: var(--grey-medium-2);
+
+    /* Success Button (Use Base Red - Consistent with Danger) */
+    /* NOTE: Renaming `--btn-success-*` but keeping palette red values */
+    /* This might be confusing, consider renaming if green is desired */
+    --btn-success-bg: var(--palette-red-dark); /* Using Red */
+    --btn-success-border: var(--palette-red-dark); /* Using Red */
+    --btn-success-text: #fff;
+    --btn-success-hover-bg: var(--palette-red-hover); /* Using Red Hover */
+    --btn-success-hover-border: var(--palette-red-hover); /* Using Red Hover */
+
+    /* Check Button (Darker Grey - Same as Primary) */
+    --btn-check-bg: var(--grey-medium-2);
+    --btn-check-border: var(--grey-medium-2);
+    --btn-check-text: var(--text-on-dark-bg);
+    --btn-check-hover-bg: var(--grey-dark-1);
+    --btn-check-hover-border: var(--grey-dark-1);
+
+    /* Disabled Button (Darkest Grey Fill) */
+    --btn-disabled-bg: var(--grey-dark-1);
+    --btn-disabled-border: var(--grey-medium-2);
+    --btn-disabled-text: var(--muted-text-color);
+
+    /* Outline Secondary Button (Actual Outline Style - Lighter Grey) */
+    --btn-outline-secondary-border: var(--grey-light-1); /* Lighter Grey outline */
+    --btn-outline-secondary-text: var(--grey-light-1);
+    --btn-outline-secondary-hover-bg: var(--grey-light-1); /* Fill with outline color */
+    --btn-outline-secondary-hover-text: #212529; /* Dark text on light fill */
 
     /* Top Nav Specific */
-    --topnav-bg: #212529; /* Very Dark Grey */
-    --topnav-text: var(--text-on-dark); /* White Text */
-    --topnav-link-color: #adb5bd; /* Medium Grey for links */
+    --topnav-bg: var(--grey-dark-2); /* Near Black */
+    --topnav-text: #f0f0f0; /* White Text */
+    --topnav-link-color: #adb5bd; /* Medium Grey links */
     --topnav-link-hover-color: #ffffff; /* White link hover */
-    --topnav-link-active-border: var(--red-accent); /* Red underline */
+    --topnav-link-active-border: var(--palette-red-light); /* Lighter Red underline */
 }
 
 /* --- General Styles --- */
-/* NO CHANGES HERE - Structure remains as provided */
 body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; line-height: 1.6; background-color: var(--bg-color); color: var(--text-color); transition: background-color 0.3s ease, color 0.3s ease; }
 h1, h2, h3 { color: var(--text-color); }
 h1 { margin-bottom: 25px; font-weight: 300; }
@@ -71,7 +137,7 @@ h2 { border-bottom: 1px solid var(--hr-color); padding-bottom: 8px; margin-top: 
 hr { border: 0; height: 1px; background: var(--hr-color); margin: 25px 0; }
 a { color: var(--link-color); text-decoration: none; }
 a:hover { text-decoration: underline; color: var(--link-hover-color); }
-code { word-wrap: break-word; white-space: pre-wrap; background-color: var(--highlight-bg); padding: 0.1em 0.3em; border-radius: 3px; font-family: Consolas, monospace; font-size: 0.9em;}
+code { word-wrap: break-word; white-space: pre-wrap; background-color: var(--highlight-bg); padding: 0.1em 0.3em; border-radius: 3px; font-family: Consolas, monospace; font-size: 0.9em; background-color: var(--input-bg); /* Ensure dark background */ }
 pre { word-wrap: break-word; white-space: pre-wrap; }
 .search-container { margin-bottom: 20px; padding: 15px; background-color: var(--column-bg); border: 1px solid var(--column-border); border-radius: 6px; transition: background-color 0.3s ease, border-color 0.3s ease; }
 .search-container form { display: flex; gap: 10px; }
@@ -91,10 +157,14 @@ pre { word-wrap: break-word; white-space: pre-wrap; }
 .search-snippet { margin-top: 8px; font-size: 0.9em; color: var(--snippet-text); background-color: var(--snippet-bg); padding: 8px 12px; border: 1px solid var(--snippet-border); border-radius: 4px; line-height: 1.5; transition: background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease; }
 .search-snippet strong { background-color: var(--highlight-bg); font-weight: bold; color: var(--highlight-text); padding: 1px 3px; border-radius: 3px; }
 .flash-messages { margin-bottom: 15px; }
+
+/* --- Alerts (Dark Theme) --- */
 .alert { padding: 10px 15px; border: 1px solid transparent; border-radius: 4px; margin-bottom: 10px; }
-.alert-info, .alert-warning { color: #383d41; background-color: #e2e3e5; border-color: #d6d8db; } /* Alert Grey */
-.alert-error { color: var(--red-accent); background-color: var(--red-alert-bg); border-color: var(--red-alert-border); }
-.alert-success { color: var(--green-alert-text); background-color: var(--green-alert-bg); border-color: var(--green-alert-border); }
+.alert-info, .alert-warning { color: #ced4da; background-color: var(--grey-medium-1); border-color: var(--grey-light-2); } /* Dark Grey */
+.alert-error { color: #f5c6cb; background-color: var(--palette-red-alert-bg); border-color: var(--palette-red-dark); } /* Dark Red */
+.alert-success { color: var(--std-green-text); background-color: var(--std-green-alert-bg); border-color: var(--std-green-alert-border); } /* Dark Green */
+
+/* --- Buttons --- */
 .btn { display: inline-block; font-weight: 400; text-align: center; vertical-align: middle; cursor: pointer; user-select: none; background-color: transparent; border: 1px solid transparent; padding: .375rem .75rem; font-size: 1rem; line-height: 1.5; border-radius: .25rem; text-decoration: none; transition: color .15s ease-in-out,background-color .15s ease-in-out,border-color .15s ease-in-out,box-shadow .15s ease-in-out; }
 .btn:hover { text-decoration: none; }
 .btn-sm { padding: .25rem .5rem; font-size: .875rem; line-height: 1.5; border-radius: .2rem; }
@@ -108,14 +178,16 @@ pre { word-wrap: break-word; white-space: pre-wrap; }
 .btn-danger { color: var(--btn-danger-text); background-color: var(--btn-danger-bg); border-color: var(--btn-danger-border); }
 .btn-danger:hover { color: var(--btn-danger-text); background-color: var(--btn-danger-hover-bg); border-color: var(--btn-danger-hover-border); }
 .btn-secondary { color: var(--btn-secondary-text); background-color: var(--btn-secondary-bg); border-color: var(--btn-secondary-border); }
-.btn-secondary:hover { color: var(--btn-secondary-text); background-color: var(--grey-medium-3-light); border-color: var(--btn-secondary-hover-border); }
+.btn-secondary:hover { color: var(--btn-secondary-text); background-color: var(--btn-secondary-hover-bg); border-color: var(--btn-secondary-hover-border); } /* Corrected hover */
 .btn-success { color: var(--btn-success-text); background-color: var(--btn-success-bg); border-color: var(--btn-success-border); }
 .btn-success:hover { color: var(--btn-success-text); background-color: var(--btn-success-hover-bg); border-color: var(--btn-success-hover-border); }
 .btn-check { color: var(--btn-check-text); background-color: var(--btn-check-bg); border-color: var(--btn-check-border); }
 .btn-check:hover { color: var(--btn-check-text); background-color: var(--btn-check-hover-bg); border-color: var(--btn-check-hover-border); }
 .btn-disabled, .btn:disabled { color: var(--btn-disabled-text); background-color: var(--btn-disabled-bg); border-color: var(--btn-disabled-border); opacity: 0.65; cursor: not-allowed; }
-.btn-outline-secondary { color: var(--btn-outline-secondary-text); border-color: var(--btn-outline-secondary-border); background-color: transparent; } /* Ensure transparent background */
+.btn-outline-secondary { color: var(--btn-outline-secondary-text); border-color: var(--btn-outline-secondary-border); background-color: transparent; }
 .btn-outline-secondary:hover { color: var(--btn-outline-secondary-hover-text); background-color: var(--btn-outline-secondary-hover-bg); border-color: var(--btn-outline-secondary-border); }
+
+/* --- Status Table & Status Text --- */
 .status-table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 0.9em; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
 .status-table th, .status-table td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--container-border); vertical-align: middle; }
 .status-table th { background-color: var(--column-bg); font-weight: 500; border-bottom-width: 2px; border-color: var(--column-border); }
@@ -128,11 +200,13 @@ pre { word-wrap: break-word; white-space: pre-wrap; }
 .status-table td span[title*="Missing"] { color: var(--status-missing-color); font-style: italic; }
 .status-new { font-weight: bold; color: var(--status-new-color); }
 .status-textextractinprogress, .status-indexinginprogress { font-style: italic; color: var(--status-progress-color); }
-.status-textextracted { color: var(--status-extracted-color); }
+.status-textextracted, .status-textready { color: var(--status-extracted-color); } /* Grouped ready/extracted */
 .status-indexed { color: var(--status-indexed-color); }
 .status-indexedemptytext, .status-indexednocontent, .status-indexedpageskipped-toolong { color: var(--status-indexed-empty-color); }
 .status-missingremovedfromfolder { color: var(--status-missing-color); font-style: italic; }
 td[class^="status-error"], .status-error { color: var(--status-error-color); font-weight: bold; }
+
+/* --- Other Components --- */
 .action-buttons-area { display: flex; flex-wrap: wrap; gap: 30px; margin-bottom: 25px; padding: 15px; background-color: var(--column-bg); border: 1px solid var(--column-border); border-radius: 6px; }
 .bulk-actions, .reset-action { flex: 1; min-width: 300px; }
 .bulk-actions h3, .reset-action h3 { margin-top: 0; font-size: 1.1em; color: var(--column-header-color); border-bottom: 1px solid var(--column-border); padding-bottom: 5px; margin-bottom: 10px; }
@@ -155,157 +229,18 @@ td[class^="status-error"], .status-error { color: var(--status-error-color); fon
 .breadcrumb a { color: var(--link-color); text-decoration: none; }
 .breadcrumb a:hover { color: var(--link-hover-color); }
 
-
-/* --- Dark Theme --- */
-@media (prefers-color-scheme: dark) {
-    :root {
-        /* Base Dark Theme Colors */
-        --bg-color: #1a1a1a;
-        --text-color: #e0e0e0; /* White/Light Text */
-        --container-bg: #252526;
-        --container-border: #3a3a3a;
-        --column-bg: #2d2d2d;
-        --column-border: #444444;
-        --column-header-color: #ccc;
-        --input-bg: #3c3c3c;
-        --input-border: #555;
-        --input-text: #ddd;
-        --hr-color: #444;
-        --muted-text-color: #888;
-        --snippet-bg: #333;
-        --snippet-border: #4a4a4a;
-        --snippet-text: #bdbdbd;
-        --highlight-bg: #4a4a4a; /* Dark Grey highlight */
-        --highlight-text: #fff;
-
-        /* -- Core Palette (Dark Theme) -- */
-        --palette-red-dark: #5F1B15; /* Base Red */
-        --palette-red-hover: #942c22; /* Lighter Red Hover */
-        --palette-red-light: #f48771; /* Lighter Red for text/accents */
-        --palette-red-alert-bg: #491510; /* Dark bg for Red Alert */
-        --palette-red-alert-border: var(--palette-red-dark);
-
-        --std-green-success: #838383; /* Bright Green */
-        --std-green-success-hover: #bdbdbd;
-        --std-green-alert-bg: #1c4a24;
-        --std-green-alert-border: #2a6b37;
-        --std-green-text: #c3e6cb; /* Light green text for dark bg */
-
-        --grey-light-a: #a0a0a0; 
-        --grey-light-1: #616161; /* Medium */
-        --grey-light-2: #5c5c5c; /* Medium Dark (Info Btn) */
-        --grey-medium-1: #5c5c5c; /* Dark (Warning Btn) */
-        --grey-medium-2: #424242; /* Darker (Secondary/Check/Primary Btn) */
-        --grey-medium-3:#194271;
-        --grey-medium-3-light:#265080;
-        --grey-dark-1: #686767;   /* Very Dark (Primary Hover)*/
-        --grey-dark-2: #161616;   /* Near Black (Topnav BG) */
-
-
-        --text-on-dark-bg: #f0f0f0; /* Consistent light text */
-
-        /* --- Link Styles (Dark Theme) --- */
-        --link-color: var( --grey-light-a); /* Medium Grey Link */
-        --link-hover-color: var(--palette-red-light); /* Light Red hover */
-
-        /* --- Status Colors (Text color for dark theme) --- */
-        --status-new-color: var(--grey-light-1);
-        --status-progress-color: var(--grey-light-2);
-        --status-extracted-color: var(--grey-light-2);
-        --status-indexed-color: var(--std-green-success);
-        --status-indexed-empty-color: #66d9b7;
-        --status-error-color: var(--palette-red-light);
-        --status-missing-color: var(--muted-text-color);
-
-        /* --- Button Style Definitions (Dark Theme) --- */
-        /* Primary Button (Filled Darker Grey) */
-        --btn-primary-bg: var(--grey-medium-2);
-        --btn-primary-border: var(--grey-medium-2);
-        --btn-primary-text: var(--text-on-dark-bg);
-        --btn-primary-hover-bg: var(--grey-dark-1);
-        --btn-primary-hover-border: var(--grey-dark-1);
-
-        /* Info Button (Medium Dark Grey - Lightest Gray Button) */
-        --btn-info-bg: var(--grey-light-2);
-        --btn-info-border: var(--grey-light-2);
-        --btn-info-text: var(--text-on-dark-bg);
-        --btn-info-hover-bg: var(--grey-light-1); /* Lighten */
-        --btn-info-hover-border: var(--grey-light-1);
-
-        /* Warning Button (Dark Grey - Middle Gray Button) */
-        --btn-warning-bg: var(--grey-medium-1);
-        --btn-warning-border: var(--grey-medium-1);
-        --btn-warning-text: var(--text-on-dark-bg);
-        --btn-warning-hover-bg: var(--grey-light-2); /* Lighten */
-        --btn-warning-hover-border: var(--grey-light-2);
-
-        /* Danger Button (Dark Red - Use base red, hover lighter) */
-        --btn-danger-bg: var(--palette-red-dark);
-        --btn-danger-border: var(--palette-red-dark);
-        --btn-danger-text: var(--text-on-dark-bg);
-        --btn-danger-hover-bg: var(--palette-red-hover);
-        --btn-danger-hover-border: var(--palette-red-hover);
-
-        /* Secondary Button (Darker Grey - Same as Primary) */
-        --btn-secondary-bg: var(--grey-medium-3);
-        --btn-secondary-border: var(--grey-medium-2);
-        --btn-secondary-text: var(--text-on-dark-bg);
-        --btn-secondary-hover-bg: var(--grey-dark-1);
-        --btn-secondary-hover-border: var(--grey-dark-1);
-
-        /* Success Button (Filled Bright Green) */
-        --btn-success-bg: var(--palette-red-dark);
-        --btn-success-border: var(--palette-red-dark);
-        --btn-success-text: #fff;
-        --btn-success-hover-bg: var(--std-green-success-hover);
-        --btn-success-hover-border: var(--std-green-success-hover);
-
-        /* Check Button (Darker Grey - Same as Primary/Secondary) */
-        --btn-check-bg: var(--grey-medium-2);
-        --btn-check-border: var(--grey-medium-2);
-        --btn-check-text: var(--text-on-dark-bg);
-        --btn-check-hover-bg: var(--grey-dark-1);
-        --btn-check-hover-border: var(--grey-dark-1);
-
-        /* Disabled Button (Darkest Grey Fill) */
-        --btn-disabled-bg: var(--grey-dark-1);
-        --btn-disabled-border: var(--grey-medium-2);
-        --btn-disabled-text: var(--muted-text-color);
-
-        /* Outline Secondary Button (Actual Outline Style - Lighter Grey) */
-        --btn-outline-secondary-border: var(--grey-light-1); /* Lighter Grey outline */
-        --btn-outline-secondary-text: var(--grey-light-1);
-        --btn-outline-secondary-hover-bg: var(--grey-light-1); /* Fill with outline color */
-        --btn-outline-secondary-hover-text: #212529; /* Dark text on light fill */
-
-        /* Top Nav Specific (Dark Theme) */
-        --topnav-bg: var(--grey-dark-2); /* Near Black */
-        --topnav-text: #f0f0f0; /* White Text */
-        --topnav-link-color: #adb5bd; /* Medium Grey links */
-        --topnav-link-hover-color: #ffffff; /* White link hover */
-        --topnav-link-active-border: var(--palette-red-light); /* Lighter Red underline */
-    }
-
-    /* Dark Theme Alert Colors */
-    .alert-info { color: #ced4da; background-color: var(--grey-medium-1); border-color: var(--grey-light-2); } /* Dark Grey */
-    .alert-warning { color: #ced4da; background-color: var(--grey-medium-1); border-color: var(--grey-light-2); } /* Dark Grey */
-    .alert-error { color: #f5c6cb; background-color: var(--palette-red-alert-bg); border-color: var(--palette-red-dark); }   /* Dark Red */
-    .alert-success { color: var(--std-green-text); background-color: var(--std-green-alert-bg); border-color: var(--std-green-alert-border); } /* Dark Green */
-
-    /* Ensure code background is dark in dark mode */
-    code { background-color: var(--input-bg); }
-}
-
 /* --- base.html specific styles --- */
+/* Styles moved from base.html */
 body { display: flex; flex-direction: column; min-height: 100vh; margin: 0; }
 .topnav { display: flex; align-items: center; padding: 0.6rem 1.5rem; background-color: var(--topnav-bg); border-bottom: 1px solid var(--container-border); color: var(--topnav-text); flex-shrink: 0; min-height: 50px; }
-.topnav .logo-title { margin-right: auto; text-decoration: none; color: inherit; display: flex; align-items: baseline; gap: 0.4rem; }
-.topnav .title { font-size: 1.3em; font-weight: 500; white-space: nowrap; color: var(--topnav-text); }
- .topnav .version { font-size: 0.75em; opacity: 0.8; color: var(--muted-text-color); font-weight: 400; }
+.topnav a.logo-title { margin-right: auto; text-decoration: none; color: inherit; display: flex; align-items: baseline; gap: 0.4rem; transition: opacity 0.2s ease; }
+.topnav a.logo-title:hover { opacity: 0.8; }
+.topnav .title { font-size: 1.3em; font-weight: 500; white-space: nowrap; }
+.topnav .version { font-size: 0.75em; opacity: 0.8; font-weight: 400; }
 .topnav .nav-links { display: flex; gap: 1.75rem; list-style: none; margin: 0; padding: 0; align-items: center; }
 .topnav .nav-links a { color: var(--topnav-link-color); text-decoration: none; font-size: 0.95em; padding: 0.3rem 0; border-bottom: 2px solid transparent; transition: color 0.2s ease, border-bottom-color 0.2s ease; }
 .topnav .nav-links a:hover,
-.topnav .nav-links a.active { color: var(--topnav-link-hover-color); border-bottom-color: var(--topnav-link-active-border); } /* Red underline */
+.topnav .nav-links a.active { color: var(--topnav-link-hover-color); border-bottom-color: var(--topnav-link-active-border); }
 .main-content-area { flex-grow: 1; padding: 20px 30px; max-width: 1400px; width: 100%; margin: 0 auto; box-sizing: border-box; }
 #dynamic-content-area { padding: 0 30px 20px 30px; max-width: 1400px; width: 100%; margin: 0 auto; box-sizing: border-box; }
 /* --- END base.html specific styles --- */

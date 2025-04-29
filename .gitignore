@@ -1,0 +1,50 @@
+# --- Redleaf Engine .gitignore ---
+
+# ==================================
+# Python Virtual Environments
+# ==================================
+env/
+venv/
+.venv/
+.Python
+
+
+# ==================================
+# Python Compiled Files & Caches
+# ==================================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+
+# ==================================
+# Instance & Database (CRITICAL)
+#
+# The 'instance/' rule ignores the entire directory, including the
+# 'secret.key' file. The database files are also ignored.
+# ==================================
+instance/
+knowledge_base.db
+knowledge_base.db-shm
+knowledge_base.db-wal
+
+
+# ==================================
+# User Content
+#
+# Ignores the user-provided documents directory.
+# New users will need to create this folder manually.
+# ==================================
+documents/
+
+
+# ==================================
+# IDE and OS-specific files
+# ==================================
+.idea/
+.vscode/
+.DS_Store
+*.swp
+*.swo
+*~
