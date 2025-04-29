@@ -1,11 +1,22 @@
-# Flask and dependencies
-Flask
+# --- File: requirements.txt ---
+
+# Flask and Web Framework
+Flask>=2.0    # Or specify your preferred minimum Flask version
+# Werkzeug is usually installed as a dependency of Flask, but can be listed explicitly
 
 # PDF Processing
-PyMuPDF
+PyMuPDF>=1.18.0 # Or specify your preferred minimum version
+
+# HTML Parsing
+beautifulsoup4>=4.9.0 # Required for bs4 import in processing_tasks.py
 
 # NLP
-spacy>=3.0.0,<4.0.0 # Pinning spacy major version is often wise
+spacy>=3.0.0,<4.0.0 # For entity recognition. Pinned to v3.x
 
-# Optional: Add other direct dependencies if you know them,
-# but conda/pip usually handle transitive dependencies well.
+# --- Installation Notes ---
+# After installing the above packages using 'pip install -r requirements.txt',
+# you MUST download the required spaCy language model separately:
+#
+# python -m spacy download en_core_web_lg
+#
+# Ensure you have sufficient privileges and internet access to run this command.
