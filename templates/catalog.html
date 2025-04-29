@@ -43,10 +43,16 @@
     <h2>Your Catalogs (Playlists)</h2>
     <div class="catalog-list">
       {% for catalog in catalogs %}
-        <div class="catalog-item" data-catalog-id="{{ catalog.id }}">
+        <div class="catalog-item" data-catalog-id="{{ catalog.id }}"> {# Ensure this ID is correct #}
           <div class="catalog-meta">
               <h3>{{ catalog.name }}</h3>
-              <button class="btn btn-sm btn-danger" onclick="deleteCatalog({{ catalog.id }}, {{ catalog.name | tojson | safe }})">Delete Catalog</button>
+              {# --- MODIFIED: Changed onclick signature, added data attribute --- #}
+              <button class="btn btn-sm btn-danger"
+                      onclick="deleteCatalog({{ catalog.id }}, this)"
+                      data-catalog-name="{{ catalog.name | e }}"> {# Use simple escape for data attribute #}
+                  Delete Catalog
+              </button>
+              {# --- END MODIFICATION --- #}
           </div>
           {% if catalog.description %}
             <p style="font-size: 0.9em; color: var(--muted-text-color);">{{ catalog.description }}</p>
@@ -68,7 +74,6 @@
               {% endfor %}
             </ul>
           {% else %}
-            {# MODIFIED: Added class for JS check #}
             <p class="empty-message"><em>This catalog is empty. Add documents via the viewer.</em></p>
           {% endif %}
         </div>
@@ -121,7 +126,7 @@
   {# --- END DOCUMENTS WITH NOTES SECTION --- #}
 
 
-{# JavaScript for create/delete (Unchanged - No modifications needed here) #}
+{# --- JavaScript Section --- #}
 <script>
     // --- JavaScript for Catalog Page Interactivity ---
     document.addEventListener('DOMContentLoaded', () => {
@@ -133,6 +138,7 @@
         const descInput = document.getElementById('new-catalog-desc');
         const createStatus = document.getElementById('create-catalog-status');
 
+        // (Logic for Create Catalog form remains unchanged)
         showCreateFormBtn.addEventListener('click', () => {
             createForm.style.display = 'block';
             showCreateFormBtn.style.display = 'none';
@@ -158,7 +164,6 @@
             createStatus.textContent = 'Creating...';
             createStatus.style.color = 'orange';
             try {
-                // Uses API endpoint which should already work
                 const response = await fetch('/api/catalogs', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
@@ -181,29 +186,71 @@
         });
     });
 
-    // --- Functions for Delete/Remove (Requires API endpoints to be working) ---
-    async function deleteCatalog(catalogId, catalogName) {
+    // --- MODIFIED deleteCatalog Function (Takes button element, reads name from data attribute) ---
+    async function deleteCatalog(catalogId, buttonElement) { // Changed second parameter
+        // Retrieve name from the button's data attribute
+        const catalogName = buttonElement.getAttribute('data-catalog-name') || `ID ${catalogId}`; // Fallback name
+
+        // Debug: Log function entry and arguments
+        console.log('[DEBUG] deleteCatalog called. ID:', catalogId, 'Type:', typeof catalogId, 'Retrieved Name:', catalogName);
+
         if (confirm(`Are you sure you want to delete the catalog "${catalogName}"? This will also remove all documents from it. This cannot be undone.`)) {
+             // Debug: Log confirmation step
+             console.log('[DEBUG] Confirmation received.');
              try {
-                const response = await fetch(`/api/catalogs/${catalogId}`, { method: 'DELETE' });
-                if (response.ok) {
-                    // Find and remove the catalog item visually
+                const apiUrl = `/api/catalogs/${catalogId}`;
+                // Debug: Log API URL being called
+                console.log('[DEBUG] Attempting fetch to:', apiUrl);
+
+                // Perform the API call
+                const response = await fetch(apiUrl, { method: 'DELETE' });
+
+                // Debug: Log the response status from the server
+                console.log('[DEBUG] Fetch response received. Status:', response.status, 'OK:', response.ok);
+
+                if (response.ok) { // Status code 200-299
+                    // Debug: Log success path
+                    console.log('[DEBUG] Response OK. Attempting to remove element.');
+                    // Find the specific catalog item div using the data attribute
                     const catalogItem = document.querySelector(`.catalog-item[data-catalog-id="${catalogId}"]`);
+                    // Alternative way to find relative to button: const catalogItem = buttonElement.closest('.catalog-item');
                     if (catalogItem) {
-                        catalogItem.remove();
+                        // Debug: Log the found element
+                        console.log('[DEBUG] Found catalog item element:', catalogItem);
+                        catalogItem.remove(); // Remove the element from the page
+                        // Debug: Log removal success
+                        console.log('[DEBUG] Element removed.');
+                    } else {
+                         // Debug: Warn if the element wasn't found (might indicate mismatch)
+                         console.warn('[DEBUG] Could not find catalog item element for ID:', catalogId);
+                         // Optional: Add a non-alert feedback message here if needed
+                         // alert('Catalog deleted from server, but failed to remove item from page. Please refresh.');
                     }
-                    alert('Catalog deleted.'); // Or use a flash-like message area
-                } else {
-                    const result = await response.json().catch(() => ({ detail: 'Failed to parse error response.' })); // Handle non-JSON errors
+                } else { // Handle non-OK responses (4xx, 5xx)
+                    // Debug: Log failure path
+                    console.log('[DEBUG] Response NOT OK. Status:', response.status);
+                    // Try to get error detail from JSON response, provide fallback
+                    const result = await response.json().catch(() => ({ detail: `Failed to parse error response. Status: ${response.status}` }));
+                    // Debug: Log the error detail received
+                    console.error('[DEBUG] API Error Detail:', result.detail);
+                    // Show alert ONLY for errors
                     alert(`Error deleting catalog: ${result.detail || response.statusText}`);
                 }
              } catch (error) {
-                 console.error("Delete Catalog Error:", error);
-                 alert(`Network error during delete: ${error}`);
+                 // Catch errors during the fetch itself (network, CORS, etc.) or during response processing
+                 console.error("[DEBUG] Error during delete fetch/processing:", error);
+                 // Show alert ONLY for errors
+                 alert(`Network or script error during delete: ${error}`);
              }
+        } else {
+             // Debug: Log if user cancelled
+             console.log('[DEBUG] Deletion cancelled by user.');
         }
     }
+    // --- END MODIFIED deleteCatalog Function ---
 
+
+    // --- removeDocFromCatalog function remains unchanged ---
     async function removeDocFromCatalog(catalogId, docPath, buttonElement) {
          if (confirm(`Remove "${docPath}" from this catalog?`)) {
             const encodedPath = encodeURIComponent(docPath); // Encode for URL path segment
