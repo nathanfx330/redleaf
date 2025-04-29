@@ -1,17 +1,19 @@
 # --- File: requirements.txt ---
 
 # Flask and Web Framework
-Flask>=2.0    # Or specify your preferred minimum Flask version
-# Werkzeug is usually installed as a dependency of Flask, but can be listed explicitly
+Flask>=2.0
 
 # PDF Processing
-PyMuPDF>=1.18.0 # Or specify your preferred minimum version
+PyMuPDF>=1.18.0
 
 # HTML Parsing
-beautifulsoup4>=4.9.0 # Required for bs4 import in processing_tasks.py
+beautifulsoup4>=4.9.0
 
 # NLP
-spacy>=3.0.0,<4.0.0 # For entity recognition. Pinned to v3.x
+spacy>=3.0.0,<4.0.0
+
+# Search Engine
+Whoosh>=2.7.0 # <<<--- ADDED
 
 # --- Installation Notes ---
 # After installing the above packages using 'pip install -r requirements.txt',
