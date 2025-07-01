@@ -1,0 +1,31 @@
+# Redleaf Engine Conda Environment
+#
+# To create this environment from the terminal, run:
+# > conda env create -f environment.yml
+#
+# Then, to activate it before running the app, use:
+# > conda activate redleaf-env
+
+name: redleaf-env
+
+channels:
+  - conda-forge
+  - defaults
+
+dependencies:
+  # Core Python version
+  - python=3.9
+
+  # Web Framework & Dependencies
+  - flask=2.3.3
+  - flask-wtf=1.1.1
+  - werkzeug=2.3.7
+
+  # Document Processing & NLP
+  - beautifulsoup4=4.12.2
+  - lxml=4.9.3
+  - spacy=3.6.1
+  - pymupdf=1.23.5 # The conda package for PyMuPDF/fitz
+
+  # Pip is included to manage any packages not on Conda, like cupy
+  - pip
