@@ -1,6 +1,6 @@
 # Redleaf Engine
 
-Redleaf is a self-hosted, personal document analysis tool built with Python and Flask. It's designed to run on your local machine, allowing you to build a private, searchable knowledge base **for yourself or a small team on a local network (LAN)**.
+Redleaf is a self-hosted, personal document analysis tool built with Python and Flask. It's designed to run entirely on your local machine, allowing you to build a private, searchable knowledge base **for yourself or a small team on a local network (LAN)**.
 
 It uses **spaCy** for advanced Natural Language Processing and stores all data in a local **SQLite** database, making the entire system secure and self-contained.
 
@@ -28,7 +28,7 @@ It uses **spaCy** for advanced Natural Language Processing and stores all data i
 
 ## Setup & Installation
 
-It's **strongly recommend** using Conda (via Miniconda) to manage the environment, as it simplifies the installation of complex scientific and data processing packages.
+Using **Conda** is strongly recommended to manage the environment, as it simplifies the installation of complex scientific and data processing packages.
 
 ### Option 1: Using Conda (Recommended)
 
@@ -40,7 +40,7 @@ If you don't have Conda, install [Miniconda](https://docs.conda.io/en/latest/min
 **2. Clone the Repository**
 ```bash
 git clone https://github.com/nathanfx330/redleaf.git
-cd redleaf-engine
+cd redleaf
 ```
 
 **3. Create the Conda Environment**
@@ -70,7 +70,7 @@ If you prefer not to use Conda, you can use a standard Python virtual environmen
 **1. Clone the Repository**
 ```bash
 git clone https://github.com/nathanfx330/redleaf.git
-cd redleaf-engine
+cd redleaf
 ```
 
 **2. Create and Activate a Virtual Environment**
@@ -147,8 +147,8 @@ Once installed, go to the Redleaf settings page in the UI and toggle on "Enable 
 ## Getting Started
 
 1.  **Create Admin Account:** When you first visit the application, you will be prompted to create the primary administrator account.
-2.  **Invite Users (Optional):** As an admin, you can go to the Settings page to generate invitation tokens for other users.
-3.  **Discover Documents:** Go to the Dashboard and click **"1. Discover Docs"** to have Redleaf find and register the files in your `documents` folder.
+2.  **Invite Users (Optional):** As an admin, you can generate invitation tokens for other users from the Settings page.
+3.  **Discover Documents:** Copy your documents into the project's `documents` folder, then go to the Dashboard and click **"1. Discover Docs"** to have Redleaf find and register the files.
 4.  **Process Documents:** Click **"2. Process All 'New'"** to begin indexing and NLP extraction. You can monitor the progress on the dashboard.
 5.  **Update Cache:** Once processing is complete, click **"3. Update Browse Cache"** to aggregate the new data for the Discovery page.
 6.  **Explore!** Navigate to the Discovery tab to search and browse your newly created knowledge base.
