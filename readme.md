@@ -69,7 +69,7 @@ If you prefer not to use Conda, you can use a standard Python virtual environmen
 
 **1. Clone the Repository**
 ```bash
-git clone https://github.com/your-username/redleaf-engine.git
+git clone https://github.com/nathanfx330/redleaf.git
 cd redleaf-engine
 ```
 
