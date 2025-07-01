@@ -1,15 +1,15 @@
 # Redleaf Engine
 
-Redleaf is a self-hosted, personal document analysis tool built with Python and Flask. It's designed to run entirely on your local machine, allowing you to build a private, searchable knowledge base **for yourself or a small team on a local network (LAN)**.
+Redleaf is a self-hosted, personal document analysis tool built with Python and Flask. It's designed to run entirely on your local machine, allowing you to build a private, searchable knowledge base for yourself or a small team on a local network.
 
-It uses **spaCy** for advanced Natural Language Processing and stores all data in a local **SQLite** database, making the entire system secure and self-contained.
+Redleaf goes beyond simple search by **automatically discovering and mapping relationships** between the people, places, and organizations within your texts, helping you uncover connections you never knew existed.
 
 ## Key Features
 
-*   **Multi-Format Ingestion:** Process `.pdf`, `.html`, and `.txt` files.
+*   **Relationship Discovery Engine:** This is the core of Redleaf. It automatically identifies and visualizes connections between entities. Uncover hidden patterns like `[Person] founded [Company]` or `[Company] acquired [Startup]` that repeat across your entire document collection. You can then drill down to see the exact context for each occurrence.
 *   **LAN-Ready & Multi-User:** Runs on your local network, allowing multiple users to access, search, and contribute to the same knowledge base from their own computers.
 *   **Secure Authentication:** Features a full user authentication system with admin roles and **secure, invitation-only registration**.
-*   **Automated NLP Pipeline:** Uses spaCy to automatically extract named entities (people, places, organizations) and infer relationships between them.
+*   **Automated NLP Pipeline:** Uses spaCy to automatically extract named entities (people, places, organizations) that power the relationship discovery.
 *   **Robust Background Processing:** A sophisticated manager handles long-running, CPU-intensive NLP tasks in parallel processes without blocking the web interface.
 *   **GPU Acceleration:** Optional support for CUDA-enabled NVIDIA GPUs to dramatically speed up processing.
 *   **Rich Curation & Collaboration Tools:**
@@ -159,7 +159,7 @@ Once installed, go to the Redleaf settings page in the UI and toggle on "Enable 
 
 5.  **Update Cache:** Once processing is complete, click **"3. Update Browse Cache"** to aggregate the new data for the Discovery page.
 
-6.  **Explore!** Navigate to the Discovery tab to search and browse your newly created knowledge base.
+6.  **Explore!** Navigate to the **Discovery** tab to search for keywords or browse entities. **Be sure to check the "Explore Relationships" tab to see the most common connections automatically found in your collection.**
 
 ## Directory Structure
 
