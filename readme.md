@@ -39,7 +39,7 @@ If you don't have Conda, install [Miniconda](https://docs.conda.io/en/latest/min
 
 **2. Clone the Repository**
 ```bash
-git clone https://github.com/your-username/redleaf-engine.git
+git clone https://github.com/nathanfx330/redleaf.git
 cd redleaf-engine
 ```
 
