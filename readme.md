@@ -4,12 +4,11 @@ Redleaf is a self-hosted, personal document analysis tool built with Python and 
 
 It uses **spaCy** for advanced Natural Language Processing and stores all data in a local **SQLite** database, making the entire system secure and self-contained.
 
-
 ## Key Features
 
 *   **Multi-Format Ingestion:** Process `.pdf`, `.html`, and `.txt` files.
 *   **LAN-Ready & Multi-User:** Runs on your local network, allowing multiple users to access, search, and contribute to the same knowledge base from their own computers.
-*   **Secure Authentication:** Features a full user authentication system with admin roles and invitation-based registration.
+*   **Secure Authentication:** Features a full user authentication system with admin roles and **secure, invitation-only registration**.
 *   **Automated NLP Pipeline:** Uses spaCy to automatically extract named entities (people, places, organizations) and infer relationships between them.
 *   **Robust Background Processing:** A sophisticated manager handles long-running, CPU-intensive NLP tasks in parallel processes without blocking the web interface.
 *   **GPU Acceleration:** Optional support for CUDA-enabled NVIDIA GPUs to dramatically speed up processing.
@@ -144,13 +143,22 @@ pip install cupy-cuda12x
 ```
 Once installed, go to the Redleaf settings page in the UI and toggle on "Enable GPU Acceleration".
 
-## Getting Started
+## Getting Started: First-Time Workflow
 
-1.  **Create Admin Account:** When you first visit the application, you will be prompted to create the primary administrator account.
-2.  **Invite Users (Optional):** As an admin, you can generate invitation tokens for other users from the Settings page.
+### A. Initial Server Setup
+
+1.  **Create Admin Account:** The very first time you visit the application, you will be directed to a setup page to create the primary administrator account.
+
+2.  **Add Other Users (Optional):** To add more users, the administrator **must** go to the **Settings** page and generate an invitation token. This unique token can then be given to a new user, who will use it on the registration page to create their account. **New users cannot register without a valid token.**
+
+### B. Document Processing
+
 3.  **Discover Documents:** Copy your documents into the project's `documents` folder, then go to the Dashboard and click **"1. Discover Docs"** to have Redleaf find and register the files.
+
 4.  **Process Documents:** Click **"2. Process All 'New'"** to begin indexing and NLP extraction. You can monitor the progress on the dashboard.
+
 5.  **Update Cache:** Once processing is complete, click **"3. Update Browse Cache"** to aggregate the new data for the Discovery page.
+
 6.  **Explore!** Navigate to the Discovery tab to search and browse your newly created knowledge base.
 
 ## Directory Structure
