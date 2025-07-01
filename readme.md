@@ -1,6 +1,6 @@
 # Redleaf Engine
 
-Redleaf is a self-hosted, personal document analysis tool built with Python and Flask. It's designed to run entirely on your local machine, allowing you to build a private, searchable knowledge base. Simply place your documents (PDF, HTML, TXT) in the designated folder, and use the web interface to process, index, search, browse, and organize them.
+Redleaf is a self-hosted, personal document analysis tool built with Python and Flask. It's designed to run on your local machine, allowing you to build a private, searchable knowledge base **for yourself or a small team on a local network (LAN)**.
 
 It uses **spaCy** for advanced Natural Language Processing and stores all data in a local **SQLite** database, making the entire system secure and self-contained.
 
@@ -8,17 +8,16 @@ It uses **spaCy** for advanced Natural Language Processing and stores all data i
 ## Key Features
 
 *   **Multi-Format Ingestion:** Process `.pdf`, `.html`, and `.txt` files.
+*   **LAN-Ready & Multi-User:** Runs on your local network, allowing multiple users to access, search, and contribute to the same knowledge base from their own computers.
+*   **Secure Authentication:** Features a full user authentication system with admin roles and invitation-based registration.
 *   **Automated NLP Pipeline:** Uses spaCy to automatically extract named entities (people, places, organizations) and infer relationships between them.
-*   **Full-Text Search:** Powerful search across all ingested documents, powered by SQLite FTS5 with highlighted snippets.
 *   **Robust Background Processing:** A sophisticated manager handles long-running, CPU-intensive NLP tasks in parallel processes without blocking the web interface.
 *   **GPU Acceleration:** Optional support for CUDA-enabled NVIDIA GPUs to dramatically speed up processing.
-*   **Interactive UI:** A fast, API-driven frontend to explore entities, relationships, and search results.
-*   **Integrated Document Viewer:** View original documents directly within the application, with a custom paginated viewer for text and extracted HTML content.
-*   **Rich Curation Tools:**
+*   **Rich Curation & Collaboration Tools:**
     *   **Catalogs:** Group related documents into custom collections.
     *   **Tags:** Apply multiple tags to documents for fine-grained organization.
-    *   **Notes & Comments:** Add private notes or public comments to any document.
-*   **Secure & Multi-User:** Features a full user authentication system with admin roles and invitation-based registration.
+    *   **Notes & Comments:** Add private notes (user-specific) or public comments to any document.
+*   **Full-Text Search:** Powerful search across all ingested documents, powered by SQLite FTS5 with highlighted snippets.
 
 ## Technology Stack
 
@@ -103,15 +102,31 @@ Proceed to the **"Running the Application"** step below.
 
 ## Running the Application
 
-**1. Add Your Documents**
-Create a `documents` folder in the project root if it doesn't exist. Place any PDF, TXT, or HTML files you want to process inside this folder.
+### 1. Start the Server
 
-**2. Run the App**
-Make sure your environment (`redleaf-env` or `venv`) is activated, then run:
+Make sure your environment (`redleaf-env` or `venv`) is activated and you are in the project's root directory. Then run:
 ```bash
 python app.py
 ```
-The application will start and be accessible at **`http://localhost:5000`**.
+The server is now running and listening for connections.
+
+### 2. Access the Web UI
+
+The application is now accessible to anyone on your local network.
+
+*   **For Yourself (on the same machine):**
+    Open your web browser and go to **`http://localhost:5000`**
+
+*   **For Other Users on Your Network:**
+    You need to find the local IP address of the computer running the server.
+    *   On **Windows**, open Command Prompt and type `ipconfig`. Look for the "IPv4 Address".
+    *   On **macOS** or **Linux**, open a terminal and type `ip a` or `ifconfig`. Look for the "inet" address.
+
+    It will look something like `192.168.1.15` or `10.0.0.52`. Other users can then access Redleaf by navigating to that IP address followed by the port number in their browser.
+    
+    Example: **`http://192.168.1.15:5000`**
+
+> **Important Security Note:** Running the server on `0.0.0.0` makes it accessible to any device on your network. Only do this on trusted networks (like your home or a private office). Your operating system's firewall may ask for permission to allow incoming connections; you must allow it for others to connect.
 
 ## (Optional) GPU Acceleration Setup
 
@@ -131,11 +146,12 @@ Once installed, go to the Redleaf settings page in the UI and toggle on "Enable 
 
 ## Getting Started
 
-1.  **Create Admin Account:** When you first visit `http://localhost:5000`, you will be prompted to create the primary administrator account.
-2.  **Discover Documents:** After logging in, you will be on the Dashboard. Click **"1. Discover Docs"** to have Redleaf find and register the files in your `documents` folder.
-3.  **Process Documents:** Click **"2. Process All 'New'"** to begin indexing and NLP extraction. You can monitor the progress on the dashboard.
-4.  **Update Cache:** Once processing is complete, click **"3. Update Browse Cache"** to aggregate the new data for the Discovery page.
-5.  **Explore!** Navigate to the Discovery tab to search and browse your newly created knowledge base.
+1.  **Create Admin Account:** When you first visit the application, you will be prompted to create the primary administrator account.
+2.  **Invite Users (Optional):** As an admin, you can go to the Settings page to generate invitation tokens for other users.
+3.  **Discover Documents:** Go to the Dashboard and click **"1. Discover Docs"** to have Redleaf find and register the files in your `documents` folder.
+4.  **Process Documents:** Click **"2. Process All 'New'"** to begin indexing and NLP extraction. You can monitor the progress on the dashboard.
+5.  **Update Cache:** Once processing is complete, click **"3. Update Browse Cache"** to aggregate the new data for the Discovery page.
+6.  **Explore!** Navigate to the Discovery tab to search and browse your newly created knowledge base.
 
 ## Directory Structure
 
