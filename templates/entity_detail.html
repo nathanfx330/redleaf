@@ -1,0 +1,192 @@
+{% extends 'layout.html' %}
+{% block title %}Entity: {{ text }}{% endblock %}
+
+{% block content %}
+<div class="breadcrumb">
+    <a href="{{ url_for('discover_view') }}">Discovery</a> /
+    <span>{{ label }}: {{ text }}</span>
+</div>
+
+<div class="page-heading">
+    <h1><mark>{{ text }}</mark> <span class="chip" style="font-size: 0.6em; vertical-align: middle;">{{ label }}</span></h1>
+</div>
+
+<div class="panel">
+    <div class="panel-body">
+        <!-- Tab Navigation -->
+        <nav class="tabs-nav">
+            <button class="tab-link active" data-tab="relationships">Inferred Relationships</button>
+            <button class="tab-link" data-tab="mentions">Document Mentions</button>
+        </nav>
+
+        <!-- Tab Content: Inferred Relationships (Now the default view) -->
+        <div id="tab-relationships" class="tab-content active">
+            <div id="relationships-container" class="mt-3">
+                <p class="text-muted">Loading relationships...</p>
+            </div>
+        </div>
+
+        <!-- Tab Content: Document Mentions -->
+        <div id="tab-mentions" class="tab-content">
+            <p class="mt-3">Found in the following documents:</p>
+            {% if results %}
+                <div class="sort-controls">
+                    <button id="sort-alpha-btn" class="button button-small active">Alphabetical (Path)</button>
+                    <button id="sort-pages-btn" class="button button-small">Page Count (High-Low)</button>
+                </div>
+                <ul class="result-list" id="entity-result-list-container">
+                    {# The initial rendering is now handled by JavaScript #}
+                </ul>
+            {% else %}
+                <p class="text-muted empty-state">No occurrences of this entity were found in any indexed document pages.</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+
+<a href="{{ url_for('discover_view') }}" class="button mt-4">← Back to Discovery</a>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+
+{# Pass entity_id to the script #}
+<script> const ENTITY_ID = {{ entity_id }}; </script>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    // --- Tab Switching Logic ---
+    const tabContainer = document.querySelector('.panel-body');
+    tabContainer.addEventListener('click', (event) => {
+        if (!event.target.classList.contains('tab-link')) return;
+
+        const tabId = event.target.dataset.tab;
+        
+        tabContainer.querySelectorAll('.tab-link').forEach(l => l.classList.remove('active'));
+        event.target.classList.add('active');
+
+        tabContainer.querySelectorAll('.tab-content').forEach(content => {
+            content.classList.toggle('active', content.id === `tab-${tabId}`);
+        });
+    });
+
+    // --- Mentions Tab Logic (Sorting List) ---
+    const initialResults = {{ results|tojson }};
+    const resultsContainer = document.getElementById('entity-result-list-container');
+    const sortAlphaBtn = document.getElementById('sort-alpha-btn');
+    const sortPagesBtn = document.getElementById('sort-pages-btn');
+
+    function renderResults(resultsArray) {
+        if (!resultsContainer) return;
+        resultsContainer.innerHTML = ''; 
+        if (!resultsArray || resultsArray.length === 0) {
+            resultsContainer.innerHTML = '<p class="text-muted empty-state">No results found.</p>';
+            return;
+        }
+        resultsArray.forEach(res => {
+            const colorDot = res.color ? `<span class="color-dot" style="background-color: ${res.color};"></span>` : '';
+            const tagsChip = res.has_tags ? '<span class="chip" title="This document has tags">🏷️</span>' : '';
+            const noteChip = res.has_personal_note ? '<span class="chip" title="You have a private note">📝</span>' : '';
+            const commentsChip = res.comment_count > 0 ? `<span class="chip" title="${res.comment_count} public comment(s)">💬 ${res.comment_count}</span>` : '';
+            let catalogChips = '';
+            if (res.catalog_names) {
+                res.catalog_names.split(',').forEach(name => {
+                    const trimmedName = name.trim();
+                    catalogChips += `<span class="chip" title="In catalog: ${trimmedName}">🗂️ ${trimmedName}</span>`;
+                });
+            }
+            const pageCountText = (res.page_count && res.page_count > 0) ? ` of ${res.page_count}` : '';
+            const snippetHtml = res.snippet ? `<p class="result-snippet">...${res.snippet}...</p>` : '<p class="result-snippet text-muted"><em>Could not generate snippet for this page.</em></p>';
+
+            const resultItemHtml = `
+                <li class="result-item">
+                    <div class="result-item-header">
+                        <div>
+                            ${colorDot}
+                            <a class="result-title" href="/document/${res.doc_id}#page=${res.page_number}">${res.relative_path}</a>
+                            <span class="ms-2"> ${tagsChip} ${noteChip} ${commentsChip} ${catalogChips} </span>
+                        </div>
+                        <span class="text-muted"> Page ${res.page_number}${pageCountText} </span>
+                    </div>
+                    ${snippetHtml}
+                </li>`;
+            resultsContainer.insertAdjacentHTML('beforeend', resultItemHtml);
+        });
+    }
+
+    if(sortAlphaBtn){
+        function setActiveButton(activeBtn) {
+            [sortAlphaBtn, sortPagesBtn].forEach(btn => btn.classList.remove('active'));
+            activeBtn.classList.add('active');
+        }
+        sortAlphaBtn.addEventListener('click', () => { setActiveButton(sortAlphaBtn); renderResults(initialResults); });
+        sortPagesBtn.addEventListener('click', () => {
+            setActiveButton(sortPagesBtn);
+            const sortedByPages = [...initialResults].sort((a, b) => {
+                const pageCountA = a.page_count || 0;
+                const pageCountB = b.page_count || 0;
+                if (pageCountB !== pageCountA) return pageCountB - pageCountA;
+                return a.relative_path.localeCompare(b.relative_path);
+            });
+            renderResults(sortedByPages);
+        });
+    }
+    renderResults(initialResults);
+
+    // --- Relationships Tab Logic ---
+    const relationshipsContainer = document.getElementById('relationships-container');
+    if (ENTITY_ID && relationshipsContainer) {
+        fetch(`/api/entity/${ENTITY_ID}/relationships`)
+            .then(response => response.ok ? response.json() : Promise.reject('Network response was not ok'))
+            .then(data => {
+                if (data.length === 0) {
+                    relationshipsContainer.innerHTML = '<p class="text-muted empty-state">No direct relationships found.</p>';
+                    return;
+                }
+
+                let html = '<ul class="simple-list">';
+                data.forEach(rel => {
+                    const thisEntityText = {{ text|tojson }};
+                    
+                    // --- MODIFIED: Determine subject/object IDs and build the detail URL ---
+                    let subject_id, object_id;
+                    if (rel.role === 'subject') {
+                        subject_id = ENTITY_ID;
+                        object_id = rel.other_entity_id;
+                    } else { // role is 'object'
+                        subject_id = rel.other_entity_id;
+                        object_id = ENTITY_ID;
+                    }
+                    const detailUrl = `/discover/relationship?subject_id=${subject_id}&object_id=${object_id}&phrase=${encodeURIComponent(rel.relationship_phrase)}`;
+
+                    const otherEntityUrl = `/discover/entity/${encodeURIComponent(rel.other_entity_label)}/${encodeURIComponent(rel.other_entity_text)}`;
+                    let relationshipHtml;
+                    if (rel.role === 'object') {
+                        relationshipHtml = `
+                            <strong>${thisEntityText}</strong>
+                            <span class="chip">${rel.relationship_phrase}</span> 
+                            <span style="font-size: 1.2em;">→</span> 
+                            <a href="${otherEntityUrl}">${rel.other_entity_text}</a>`;
+                    } else { 
+                        relationshipHtml = `
+                            <a href="${otherEntityUrl}">${rel.other_entity_text}</a> 
+                            <span class="chip">${rel.relationship_phrase}</span> 
+                            <span style="font-size: 1.2em;">→</span> 
+                            <strong>${thisEntityText}</strong>`;
+                    }
+                    
+                    // --- MODIFIED: Make the count a link ---
+                    html += `<li><a href="${detailUrl}" class="chip text-muted" title="See all ${rel.count} occurrences">${rel.count}x</a> ${relationshipHtml}</li>`;
+                });
+                html += '</ul>';
+                relationshipsContainer.innerHTML = html;
+            })
+            .catch(error => {
+                console.error('Error fetching relationships:', error);
+                relationshipsContainer.innerHTML = '<p class="text-danger">Could not load relationships.</p>';
+            });
+    }
+});
+</script>
+{% endblock %}

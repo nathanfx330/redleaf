@@ -1,0 +1,27 @@
+{% extends 'layout.html' %}
+{% block title %}Tag: {{ tag_name }}{% endblock %}
+{% block content %}
+<div class="breadcrumb">
+    <a href="{{ url_for('tags_index') }}">All Tags</a> /
+    <span>{{ tag_name }}</span>
+</div>
+<div class="page-heading">
+    <h1>Documents tagged with <mark>{{ tag_name }}</mark></h1>
+</div>
+
+{# CORRECTED LOGIC: The `if documents` check must wrap the entire list and the else block. #}
+{% if documents %}
+    <ul class="simple-list">
+    {% for doc in documents %}
+        <li><a href="{{ url_for('document_view', doc_id=doc.id) }}">{{ doc.relative_path }}</a></li>
+    {% endfor %}
+    </ul>
+{% else %}
+    {# This message should now correctly only appear if the documents list is truly empty, which it shouldn't be if you got here from the tags_index page. #}
+    <div class="empty-state">
+        <p>No documents found with this tag. This might be a cache issue.</p>
+    </div>
+{% endif %}
+
+<a href="{{ url_for('tags_index') }}" class="button mt-4">← Back to All Tags</a>
+{% endblock %}

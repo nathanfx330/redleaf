@@ -1,0 +1,29 @@
+# --- Redleaf Engine .gitignore ---
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+
+# Instance-specific files (VERY IMPORTANT)
+instance/
+knowledge_base.db
+knowledge_base.db-shm
+knowledge_base.db-wal
+
+# Documents folder (Users should provide their own documents)
+# You might want to add a placeholder file in this directory to ensure it's created.
+documents/
+
+# IDE and OS files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store

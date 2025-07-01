@@ -1,0 +1,105 @@
+{% extends 'layout.html' %}
+{% block title %}Relationship Details - Redleaf{% endblock %}
+
+{% block content %}
+<div class="breadcrumb">
+    <a href="{{ url_for('discover_view') }}">Discovery</a> /
+    <span>Relationship</span>
+</div>
+
+<div class="page-heading">
+    <h1>Relationship Occurrences</h1>
+</div>
+
+<div class="panel">
+    <div class="panel-body">
+        <h4>
+            <mark>{{ subject.text }}</mark>
+            <span class="chip">{{ phrase }}</span>
+            <mark>{{ object_entity.text }}</mark>
+        </h4>
+        <p class="text-muted">Showing all pages where this relationship was found.</p>
+    </div>
+</div>
+
+
+<div id="results-container">
+    <p class="text-muted empty-state"><em>Loading occurrences...</em></p>
+</div>
+
+<a href="{{ url_for('discover_view') }}" class="button mt-4">← Back to Discovery</a>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const resultsContainer = document.getElementById('results-container');
+    const subjectId = {{ subject_id }};
+    const objectId = {{ object_id }};
+    const phrase = "{{ phrase|escapejs }}";
+
+    async function fetchDetails() {
+        const url = `/api/relationships/detail?subject_id=${subjectId}&object_id=${objectId}&phrase=${encodeURIComponent(phrase)}`;
+        try {
+            const response = await fetch(url);
+            if (!response.ok) throw new Error('Network response was not ok');
+            const results = await response.json();
+            
+            if (results.length === 0) {
+                resultsContainer.innerHTML = '<p class="text-muted empty-state">No occurrences found. This may be a caching issue.</p>';
+                return;
+            }
+
+            let html = '<ul class="result-list">';
+            results.forEach(res => {
+                const colorDot = res.color ? `<span class="color-dot" style="background-color: ${res.color};"></span>` : '';
+                const tagsChip = res.has_tags ? '<span class="chip" title="This document has tags">🏷️</span>' : '';
+                const noteChip = res.has_personal_note ? '<span class="chip" title="You have a private note">📝</span>' : '';
+                const commentsChip = res.comment_count > 0 ? `<span class="chip" title="${res.comment_count} public comment(s)">💬 ${res.comment_count}</span>` : '';
+                
+                let catalogChips = '';
+                if (res.catalog_names) {
+                    res.catalog_names.split(',').forEach(name => {
+                        const trimmedName = name.trim();
+                        catalogChips += `<span class="chip" title="In catalog: ${trimmedName}">🗂️ ${trimmedName}</span>`;
+                    });
+                }
+                
+                const pageCountText = (res.page_count && res.page_count > 0) ? ` of ${res.page_count}` : '';
+                const snippetHtml = res.snippet ? `<p class="result-snippet">...${res.snippet}...</p>` : '<p class="result-snippet text-muted"><em>Could not generate snippet for this page.</em></p>';
+
+                html += `
+                    <li class="result-item">
+                        <div class="result-item-header">
+                            <div>
+                                ${colorDot}
+                                <a class="result-title" href="/document/${res.doc_id}#page=${res.page_number}">${res.relative_path}</a>
+                                <span class="ms-2">
+                                    ${tagsChip}
+                                    ${noteChip}
+                                    ${commentsChip}
+                                    ${catalogChips}
+                                </span>
+                            </div>
+                            <span class="text-muted">
+                                Page ${res.page_number}${pageCountText}
+                            </span>
+                        </div>
+                        ${snippetHtml}
+                    </li>
+                `;
+            });
+            html += '</ul>';
+            resultsContainer.innerHTML = html;
+
+        } catch (error) {
+            console.error("Failed to fetch relationship details:", error);
+            resultsContainer.innerHTML = '<p class="text-danger empty-state">Error loading relationship details from the server.</p>';
+        }
+    }
+
+    fetchDetails();
+});
+</script>
+{% endblock %}

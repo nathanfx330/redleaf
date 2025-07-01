@@ -1,0 +1,609 @@
+{% extends 'layout.html' %}
+{% set page_layout = 'full_height' %}
+{% block title %}Workbench: {{ doc.relative_path }}{% endblock %}
+{% block content %}
+<div class="workbench-container" data-doc-id="{{ doc.id }}" data-doc-color="{{ doc.color or '' }}">
+    {# This hidden form provides the CSRF token for all JS API calls on this page #}
+    <form id="csrf-form-container" style="display: none;">{{ form.hidden_tag() }}</form>
+    
+    <div class="page-heading">
+        <h1 class="text-truncate" title="{{ doc.relative_path }}">{{ doc.relative_path }}</h1>
+        <div class="toolbar">
+            
+            <!-- NEW: View Mode Toggle for HTML files -->
+            {% if doc.file_type == 'HTML' %}
+            <div id="view-toggle-container"
+                 data-raw-url="{{ url_for('serve_document', relative_path=doc.relative_path) }}"
+                 data-text-url="{{ url_for('view_html_document', doc_id=doc.id) }}">
+                <button class="button button-small active" id="view-raw-btn">Rendered View</button>
+                <button class="button button-small" id="view-text-btn">Text View</button>
+            </div>
+            {% endif %}
+
+            <div class="dropdown">
+                <button class="button" id="copy-text-btn">Copy Text</button>
+                <div class="dropdown-menu" id="copy-text-menu">
+                    <a class="dropdown-item" href="#" id="copy-all-text-btn">Copy All Text</a>
+                    <div class="dropdown-divider"></div>
+                    <div class="dropdown-form">
+                        <label for="page-num-single" class="form-label">Single Page</label>
+                        <div class="input-group">
+                            <input type="number" class="form-control form-control-small" id="page-num-single" placeholder="e.g., 5" min="1" max="{{ doc.page_count or 1 }}">
+                            <button class="button button-small" id="copy-single-page-btn">Copy</button>
+                        </div>
+                    </div>
+                    <div class="dropdown-divider"></div>
+                    <div class="dropdown-form">
+                        <label class="form-label">Page Range</label>
+                        <div class="input-group">
+                            <input type="number" class="form-control form-control-small" id="page-num-start" placeholder="Start" min="1" max="{{ doc.page_count or 1 }}">
+                            <input type="number" class="form-control form-control-small" id="page-num-end" placeholder="End" min="1" max="{{ doc.page_count or 1 }}">
+                            <button class="button button-small" id="copy-range-page-btn">Copy</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="workbench-layout">
+        <div class="workbench-viewer">
+            {# MODIFIED: Simplified iframe logic. HTML now defaults to the raw view. #}
+            {% if doc.file_type == 'TXT' %}
+                <iframe src="{{ url_for('view_text_document', doc_id=doc.id) }}" title="Text Document Viewer" id="doc-viewer"></iframe>
+            {% else %}
+                {# This now handles both PDF and HTML initial views #}
+                <iframe src="{{ url_for('serve_document', relative_path=doc.relative_path) }}" title="Document Viewer" id="doc-viewer"></iframe>
+            {% endif %}
+        </div>
+        <aside class="workbench-sidebar">
+            <div class="panel">
+                <div class="panel-header">Curation</div>
+                <div class="panel-body">
+                    <div class="form-group">
+                        <label class="form-label">Color Tag</label>
+                        <div class="color-palette" id="color-palette">
+                            <span class="palette-color" data-color="#d93a3e" style="background-color: #d93a3e;" title="Red"></span>
+                            <span class="palette-color" data-color="#e0843a" style="background-color: #e0843a;" title="Orange"></span>
+                            <span class="palette-color" data-color="#e8c63b" style="background-color: #e8c63b;" title="Yellow"></span>
+                            <span class="palette-color" data-color="#4caf50" style="background-color: #4caf50;" title="Green"></span>
+                            <span class="palette-color" data-color="#2196f3" style="background-color: #2196f3;" title="Blue"></span>
+                            <span class="palette-color" data-color="#9c27b0" style="background-color: #9c27b0;" title="Purple"></span>
+                            <span class="palette-color palette-clear" data-color="" title="Clear Color">×</span>
+                        </div>
+                    </div>
+                    <div class="form-switch">
+                        <input type="checkbox" role="switch" id="is-favorite-toggle">
+                        <label for="is-favorite-toggle">Favorite</label>
+                    </div>
+                    <div class="form-group">
+                        <label for="note-content" class="form-label">My Private Note</label>
+                        <textarea class="form-control" id="note-content" rows="4"></textarea>
+                    </div>
+                    <button id="save-curation-btn" class="button">Save Note</button>
+                </div>
+            </div>
+            <div class="panel">
+                <div class="panel-header">Comments</div>
+                <div class="panel-body">
+                    <div id="comment-list" class="comment-list-container"></div>
+                    <div class="comment-form-container mt-3">
+                         <textarea id="new-comment-text" class="form-control" rows="3" placeholder="Leave a public comment..."></textarea>
+                         <button id="post-comment-btn" class="button mt-2">Post Comment</button>
+                    </div>
+                </div>
+            </div>
+            <div class="panel">
+                <div class="panel-header">Tags</div>
+                <div class="panel-body">
+                    <div id="tag-container" class="tag-container"></div>
+                    <div class="autocomplete-wrapper">
+                        <input type="text" id="tag-input" class="form-control mt-2" placeholder="Add a tag and press Enter...">
+                        <div id="autocomplete-list" class="autocomplete-items"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="panel">
+                <div class="panel-header">Catalogs</div>
+                <div class="panel-body" id="catalog-list-container"></div>
+                <div class="panel-footer">
+                    <div class="input-group">
+                        <input type="text" class="form-control" id="new-catalog-name" placeholder="New catalog name...">
+                        <button class="button" type="button" id="create-catalog-btn">Create</button>
+                    </div>
+                </div>
+            </div>
+        </aside>
+    </div>
+</div>
+{% endblock %}
+{% block scripts %}
+{{ super() }}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+
+    // --- UTILITY FUNCTIONS ---
+    function escapeHtml(text) {
+        if (typeof text !== 'string') return '';
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+    
+    // --- API HELPER ---
+    class ApiHelper {
+        constructor(docId, csrfToken) {
+            this.docId = docId;
+            this.csrfToken = csrfToken;
+        }
+
+        async _fetch(url, options = {}) {
+            options.headers = { 'Content-Type': 'application/json', ...options.headers };
+            if (options.method && options.method.toUpperCase() !== 'GET') {
+                options.headers['X-CSRFToken'] = this.csrfToken;
+            }
+            const response = await fetch(url, options);
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({ message: 'An unknown network error occurred' }));
+                throw new Error(errorData.message);
+            }
+            const contentType = response.headers.get("content-type");
+            if (contentType && contentType.indexOf("application/json") !== -1) {
+                return response.json();
+            }
+            return null;
+        }
+
+        getInitialData() {
+            return Promise.all([
+                this._fetch(`/api/document/${this.docId}/curation`),
+                this._fetch(`/api/document/${this.docId}/tags`),
+                this._fetch('/api/tags')
+            ]);
+        }
+        
+        saveNote(note) { return this._fetch(`/api/document/${this.docId}/curation`, { method: 'POST', body: JSON.stringify({ note }) }); }
+        saveColor(color) { return this._fetch(`/api/document/${this.docId}/color`, { method: 'POST', body: JSON.stringify({ color }) }); }
+        saveCatalogs(catalog_ids) { return this._fetch(`/api/document/${this.docId}/catalogs`, { method: 'POST', body: JSON.stringify({ catalog_ids }) }); }
+        createCatalog(name) { return this._fetch('/api/catalogs', { method: 'POST', body: JSON.stringify({ name, description: '' }) }); }
+        postComment(comment_text) { return this._fetch(`/api/document/${this.docId}/comments`, { method: 'POST', body: JSON.stringify({ comment_text }) }); }
+        deleteComment(commentId) { return this._fetch(`/api/comments/${commentId}`, { method: 'DELETE' }); }
+        saveTags(tags) { return this._fetch(`/api/document/${this.docId}/tags`, { method: 'POST', body: JSON.stringify({ tags }) }); }
+        getText(params = '') { return this._fetch(`/api/document/${this.docId}/text?${params}`); }
+    }
+
+    class ViewModeManager {
+        constructor() {
+            this.elements = {
+                container: document.getElementById('view-toggle-container'),
+                rawBtn: document.getElementById('view-raw-btn'),
+                textBtn: document.getElementById('view-text-btn'),
+                iframe: document.getElementById('doc-viewer')
+            };
+            // Only proceed if the toggle buttons exist on the page
+            if (this.elements.container) {
+                this.urls = {
+                    raw: this.elements.container.dataset.rawUrl,
+                    text: this.elements.container.dataset.textUrl
+                };
+                this._attachListeners();
+            }
+        }
+
+        _attachListeners() {
+            this.elements.rawBtn.addEventListener('click', () => this.setView('raw'));
+            this.elements.textBtn.addEventListener('click', () => this.setView('text'));
+        }
+
+        setView(mode) {
+            if (!this.elements.iframe) return;
+
+            if (mode === 'raw') {
+                if (this.elements.iframe.src !== this.urls.raw) {
+                    this.elements.iframe.src = this.urls.raw;
+                }
+                this.elements.rawBtn.classList.add('active');
+                this.elements.textBtn.classList.remove('active');
+            } else if (mode === 'text') {
+                if (this.elements.iframe.src !== this.urls.text) {
+                    this.elements.iframe.src = this.urls.text;
+                }
+                this.elements.rawBtn.classList.remove('active');
+                this.elements.textBtn.classList.add('active');
+            }
+        }
+    }
+    
+    class CurationManager {
+        constructor(api, initialColor) {
+            this.api = api;
+            this.currentColor = initialColor;
+            this.elements = {
+                palette: document.getElementById('color-palette'),
+                noteText: document.getElementById('note-content'),
+                saveBtn: document.getElementById('save-curation-btn')
+            };
+            this._attachListeners();
+            this.updatePaletteSelection();
+        }
+
+        _attachListeners() {
+            this.elements.palette.addEventListener('click', e => this._handlePaletteClick(e));
+            this.elements.saveBtn.addEventListener('click', () => this._saveNote());
+        }
+
+        updatePaletteSelection() {
+            this.elements.palette.querySelectorAll('.palette-color').forEach(el => {
+                const isSelected = el.dataset.color === this.currentColor || (this.currentColor === '' && el.dataset.color === '');
+                el.classList.toggle('selected', isSelected);
+            });
+        }
+
+        async _handlePaletteClick(event) {
+            const target = event.target.closest('.palette-color');
+            if (target) {
+                const colorValue = target.dataset.color === '' ? null : target.dataset.color;
+                try {
+                    const result = await this.api.saveColor(colorValue);
+                    this.currentColor = result.color || '';
+                    this.updatePaletteSelection();
+                } catch(e) {
+                    alert('Error saving color: ' + e.message);
+                }
+            }
+        }
+        
+        async _saveNote() {
+            this.elements.saveBtn.textContent = 'Saving...';
+            this.elements.saveBtn.disabled = true;
+            try {
+                await this.api.saveNote(this.elements.noteText.value);
+                this.elements.saveBtn.textContent = 'Saved!';
+            } catch (e) {
+                this.elements.saveBtn.textContent = 'Error!';
+                alert('Error saving note: ' + e.message);
+            } finally {
+                setTimeout(() => {
+                    this.elements.saveBtn.textContent = 'Save Note';
+                    this.elements.saveBtn.disabled = false;
+                }, 2000);
+            }
+        }
+        
+        loadData(note) {
+            this.elements.noteText.value = note;
+        }
+    }
+    
+    class CommentManager {
+        constructor(api, reloadCallback) {
+            this.api = api;
+            this.reloadCallback = reloadCallback;
+            this.currentUser = null;
+            this.elements = {
+                list: document.getElementById('comment-list'),
+                newText: document.getElementById('new-comment-text'),
+                postBtn: document.getElementById('post-comment-btn'),
+            };
+            this._attachListeners();
+        }
+        
+        _attachListeners() {
+            this.elements.postBtn.addEventListener('click', () => this._postComment());
+            this.elements.list.addEventListener('click', e => this._handleListClick(e));
+        }
+        
+        loadData(comments, currentUser) {
+            this.currentUser = currentUser;
+            this.elements.list.innerHTML = '';
+            if (!comments || comments.length === 0) {
+                this.elements.list.innerHTML = '<p class="text-muted empty-state">No comments yet.</p>';
+                return;
+            }
+            comments.forEach(c => this.elements.list.appendChild(this._createCommentElement(c)));
+        }
+        
+        _createCommentElement(comment) {
+            const div = document.createElement('div');
+            div.className = 'comment-item';
+            div.dataset.commentId = comment.id;
+            const date = new Date(comment.created_at.replace(' ', 'T') + 'Z');
+            const formattedDate = !isNaN(date) ? date.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'}) : '...';
+            const canDelete = this.currentUser && (this.currentUser.id === comment.user_id || this.currentUser.role === 'admin');
+            const deleteBtn = canDelete ? `<button class="button-delete comment-delete-btn" title="Delete comment">×</button>` : '';
+            
+            div.innerHTML = `
+                <div class="comment-header">
+                    <strong>${escapeHtml(comment.username)}</strong>
+                    <small class="text-muted">${formattedDate}</small>
+                    ${deleteBtn}
+                </div>
+                <p class="comment-body">${escapeHtml(comment.comment_text).replace(/\n/g, '<br>')}</p>
+            `;
+            return div;
+        }
+        
+        async _postComment() {
+            const text = this.elements.newText.value.trim();
+            if (!text) return;
+            this.elements.postBtn.disabled = true;
+            this.elements.postBtn.textContent = 'Posting...';
+            try {
+                await this.api.postComment(text);
+                this.elements.newText.value = '';
+                this.reloadCallback();
+            } catch (e) {
+                alert('Error posting comment: ' + e.message);
+            } finally {
+                this.elements.postBtn.disabled = false;
+                this.elements.postBtn.textContent = 'Post Comment';
+            }
+        }
+        
+        async _handleListClick(event) {
+            const deleteBtn = event.target.closest('.comment-delete-btn');
+            if (deleteBtn) {
+                const commentItem = deleteBtn.closest('.comment-item');
+                if (commentItem && confirm('Are you sure you want to delete this comment?')) {
+                    try {
+                        await this.api.deleteComment(commentItem.dataset.commentId);
+                        commentItem.remove();
+                    } catch (e) {
+                        alert('Error deleting comment: ' + e.message);
+                    }
+                }
+            }
+        }
+    }
+    
+    class TagManager {
+        constructor(api, reloadCallback) {
+            this.api = api;
+            this.reloadCallback = reloadCallback;
+            this.currentTags = [];
+            this.allSystemTags = [];
+            this.elements = {
+                container: document.getElementById('tag-container'),
+                input: document.getElementById('tag-input'),
+                autocomplete: document.getElementById('autocomplete-list')
+            };
+            this._attachListeners();
+        }
+        
+        _attachListeners() {
+            this.elements.input.addEventListener('input', () => this._handleAutocomplete());
+            this.elements.input.addEventListener('keydown', e => this._handleKeydown(e));
+            this.elements.container.addEventListener('click', e => this._handleRemoveClick(e));
+            document.addEventListener('click', e => {
+                if (e.target !== this.elements.input) this.elements.autocomplete.innerHTML = '';
+            });
+        }
+        
+        loadData(currentTags, allSystemTags) {
+            this.currentTags = currentTags;
+            this.allSystemTags = allSystemTags;
+            this.render();
+        }
+        
+        render() {
+            this.elements.container.innerHTML = '';
+            this.currentTags.forEach(tag => {
+                const tagEl = document.createElement('span');
+                tagEl.className = 'tag-item';
+                tagEl.textContent = tag;
+                tagEl.innerHTML += `<button class="tag-remove-btn" data-tag-name="${escapeHtml(tag)}">×</button>`;
+                this.elements.container.appendChild(tagEl);
+            });
+        }
+
+        async _save(tagsToSave) {
+            try {
+                const result = await this.api.saveTags(tagsToSave);
+                this.currentTags = result.tags;
+                this.render();
+            } catch (e) {
+                alert('Error saving tags: ' + e.message);
+                this.reloadCallback();
+            }
+        }
+        
+        _handleRemoveClick(event) {
+            const removeBtn = event.target.closest('.tag-remove-btn');
+            if (removeBtn) {
+                const tagName = removeBtn.dataset.tagName;
+                const newTagsList = this.currentTags.filter(t => t !== tagName);
+                this._save(newTagsList);
+            }
+        }
+        
+        _handleKeydown(event) {
+            if (event.key === 'Enter' && this.elements.input.value.trim()) {
+                event.preventDefault();
+                const newTag = this.elements.input.value.trim().toLowerCase();
+                if (!this.currentTags.includes(newTag)) {
+                    this._save([...this.currentTags, newTag]);
+                }
+                this.elements.input.value = '';
+                this.elements.autocomplete.innerHTML = '';
+            }
+        }
+
+        _handleAutocomplete() {
+            const val = this.elements.input.value.trim().toLowerCase();
+            this.elements.autocomplete.innerHTML = '';
+            if (!val) return;
+            const suggestions = this.allSystemTags.filter(tag => 
+                tag.toLowerCase().startsWith(val) && !this.currentTags.map(t => t.toLowerCase()).includes(tag.toLowerCase())
+            );
+            suggestions.slice(0, 5).forEach(tag => {
+                const item = document.createElement('div');
+                item.innerHTML = `<strong>${tag.substring(0, val.length)}</strong>${tag.substring(val.length)}`;
+                item.addEventListener('click', () => {
+                    this._save([...this.currentTags, tag]);
+                    this.elements.input.value = '';
+                    this.elements.autocomplete.innerHTML = '';
+                });
+                this.elements.autocomplete.appendChild(item);
+            });
+        }
+    }
+    
+    class CatalogManager {
+        constructor(api, reloadCallback) {
+            this.api = api;
+            this.reloadCallback = reloadCallback;
+            this.favoritesCatalogId = null;
+            this.elements = {
+                favToggle: document.getElementById('is-favorite-toggle'),
+                container: document.getElementById('catalog-list-container'),
+                createBtn: document.getElementById('create-catalog-btn'),
+                newNameInput: document.getElementById('new-catalog-name'),
+            };
+            this._attachListeners();
+        }
+
+        _attachListeners() {
+            this.elements.favToggle.addEventListener('change', () => this.saveMemberships());
+            this.elements.createBtn.addEventListener('click', () => this._create());
+            this.elements.container.addEventListener('change', e => {
+                if (e.target.classList.contains('catalog-checkbox-input')) this.saveMemberships();
+            });
+        }
+        
+        loadData(allCatalogs, memberOfCatalogsSet) {
+            const favCatalog = allCatalogs.find(c => c.name === '⭐ Favorites');
+            if (favCatalog) this.favoritesCatalogId = favCatalog.id;
+
+            this.elements.favToggle.checked = this.favoritesCatalogId ? memberOfCatalogsSet.has(this.favoritesCatalogId) : false;
+
+            this.elements.container.innerHTML = '';
+            const normalCatalogs = allCatalogs.filter(cat => cat.id !== this.favoritesCatalogId);
+            if (normalCatalogs.length === 0) {
+                this.elements.container.innerHTML = '<p class="text-muted">No other catalogs exist.</p>';
+                return;
+            }
+            normalCatalogs.forEach(cat => {
+                const isChecked = memberOfCatalogsSet.has(cat.id);
+                this.elements.container.innerHTML += `
+                    <div class="catalog-choice">
+                        <input type="checkbox" id="cat-${cat.id}" class="catalog-checkbox-input" value="${cat.id}" ${isChecked ? 'checked' : ''}>
+                        <label for="cat-${cat.id}">${escapeHtml(cat.name)}</label>
+                    </div>`;
+            });
+        }
+        
+        async saveMemberships() {
+            const memberOfIds = new Set(
+                Array.from(document.querySelectorAll('.catalog-checkbox-input:checked')).map(box => parseInt(box.value))
+            );
+            if (this.elements.favToggle.checked && this.favoritesCatalogId) {
+                memberOfIds.add(this.favoritesCatalogId);
+            }
+            try {
+                await this.api.saveCatalogs(Array.from(memberOfIds));
+            } catch (e) {
+                alert('Error saving catalog memberships: ' + e.message);
+            }
+        }
+        
+        async _create() {
+            const name = this.elements.newNameInput.value.trim();
+            if (!name) return;
+            try {
+                await this.api.createCatalog(name);
+                this.elements.newNameInput.value = '';
+                this.reloadCallback();
+            } catch (e) {
+                alert('Error creating catalog: ' + e.message);
+            }
+        }
+    }
+
+    class CopyTextManager {
+        constructor(api) {
+            this.api = api;
+            this.elements = {
+                btn: document.getElementById('copy-text-btn'),
+                menu: document.getElementById('copy-text-menu'),
+                allBtn: document.getElementById('copy-all-text-btn'),
+                singleBtn: document.getElementById('copy-single-page-btn'),
+                rangeBtn: document.getElementById('copy-range-page-btn'),
+                singleInput: document.getElementById('page-num-single'),
+                startInput: document.getElementById('page-num-start'),
+                endInput: document.getElementById('page-num-end'),
+            };
+            this._attachListeners();
+        }
+
+        _attachListeners() {
+            this.elements.btn.addEventListener('click', e => { e.stopPropagation(); this.elements.menu.classList.toggle('show'); });
+            window.addEventListener('click', e => this._handleWindowClick(e));
+            this.elements.allBtn.addEventListener('click', e => { e.preventDefault(); this._copy('', this.elements.btn); this.elements.menu.classList.remove('show'); });
+            this.elements.singleBtn.addEventListener('click', () => { const p = parseInt(this.elements.singleInput.value, 10); if(p > 0) this._copy(`start_page=${p}&end_page=${p}`, this.elements.singleBtn); });
+            this.elements.rangeBtn.addEventListener('click', () => { const s = parseInt(this.elements.startInput.value, 10); const e = parseInt(this.elements.endInput.value, 10); if(s > 0 && e >=s) this._copy(`start_page=${s}&end_page=${e}`, this.elements.rangeBtn); });
+        }
+        
+        _handleWindowClick(event) {
+             if (this.elements.menu.classList.contains('show') && !this.elements.btn.contains(event.target) && !this.elements.menu.contains(event.target)) {
+                this.elements.menu.classList.remove('show');
+            }
+        }
+        
+        async _copy(params, buttonToUpdate) {
+            const originalText = buttonToUpdate.textContent;
+            buttonToUpdate.textContent = '...';
+            buttonToUpdate.disabled = true;
+            try {
+                const data = await this.api.getText(params);
+                if (data.success && data.text) {
+                    await navigator.clipboard.writeText(data.text);
+                    buttonToUpdate.textContent = 'Copied!';
+                } else {
+                    buttonToUpdate.textContent = 'No Text';
+                    if(!data.success) alert(data.message);
+                }
+            } catch (error) {
+                buttonToUpdate.textContent = 'Error';
+                alert(error.message);
+            } finally {
+                setTimeout(() => {
+                    buttonToUpdate.textContent = originalText;
+                    buttonToUpdate.disabled = false;
+                }, 2000);
+            }
+        }
+    }
+    
+    async function main() {
+        const container = document.querySelector('.workbench-container');
+        const docId = container.dataset.docId;
+        const initialColor = container.dataset.docColor || '';
+        const csrfToken = document.querySelector('#csrf-form-container input[name="csrf_token"]').value;
+
+        const api = new ApiHelper(docId, csrfToken);
+
+        new ViewModeManager();
+        const curationManager = new CurationManager(api, initialColor);
+        const commentManager = new CommentManager(api, fetchInitialData);
+        const tagManager = new TagManager(api, fetchInitialData);
+        const catalogManager = new CatalogManager(api, fetchInitialData);
+        new CopyTextManager(api);
+        
+        async function fetchInitialData() {
+            try {
+                const [curationData, tagsResult, allTagsResponse] = await api.getInitialData();
+                
+                curationManager.loadData(curationData.note);
+                commentManager.loadData(curationData.comments, curationData.current_user);
+                catalogManager.loadData(curationData.all_catalogs, new Set(curationData.member_of_catalogs));
+                tagManager.loadData(tagsResult.tags, allTagsResponse);
+            } catch (error) {
+                console.error('Failed to fetch initial data:', error);
+                alert('Could not load document data: ' + error.message);
+            }
+        }
+        fetchInitialData();
+    }
+    main();
+});
+</script>
+{% endblock %}
