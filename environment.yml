@@ -25,7 +25,10 @@ dependencies:
   - beautifulsoup4=4.12.2
   - lxml=4.9.3
   - spacy=3.6.1
-  - pymupdf=1.23.5 # The conda package for PyMuPDF/fitz
 
-  # Pip is included to manage any packages not on Conda, like cupy
+  # Pip is included to manage packages not on Conda
   - pip
+  
+  # Pip-installed packages
+  - pip:
+    - PyMuPDF==1.23.5 # This package is installed via pip
