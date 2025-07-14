@@ -1,0 +1,29 @@
+{% extends 'layout.html' %}
+{% block title %}Login - Redleaf{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center mt-4">
+    <div class="col-md-6">
+        <div class="panel">
+            <div class="panel-header"><h3>Login to Redleaf</h3></div>
+            <div class="panel-body">
+                <form method="post">
+                    {{ form.hidden_tag() }} 
+                    <div class="form-group">
+                        <label for="username" class="form-label">Username</label>
+                        <input type="text" name="username" id="username" class="form-control" required autocomplete="username">
+                    </div>
+                    <div class="form-group">
+                        <label for="password" class="form-label">Password</label>
+                        <input type="password" name="password" id="password" class="form-control" required autocomplete="current-password">
+                    </div>
+                    <button type="submit" class="button button-primary">Login</button>
+                </form>
+            </div>
+            <div class="panel-footer text-center">
+                <p class="text-muted mb-0">Don't have an account? <a href="{{ url_for('auth.register') }}">Use an invitation code</a>.</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

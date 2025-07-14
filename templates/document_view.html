@@ -1,0 +1,201 @@
+<!-- File: ./templates/document_view.html -->
+{% extends 'layout.html' %}
+{% set page_layout = 'full_height' %}
+{% block title %}Document: {{ doc.relative_path }}{% endblock %}
+
+{% block head_extra %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/document_view.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="workbench-container" data-doc-id="{{ doc.id }}" data-doc-color="{{ doc.color or '' }}" data-file-type="{{ doc.file_type }}" data-doc-path="{{ doc.relative_path }}">
+    <form id="csrf-form-container" style="display: none;">{{ form.hidden_tag() }}</form>
+    
+    <div class="page-heading">
+        <h1 class="text-truncate" title="{{ doc.relative_path }}">{{ doc.relative_path }}</h1>
+        <div class="toolbar">
+            
+            {% if doc.file_type == 'HTML' %}
+                <button class="button" id="toggle-html-view-btn">Show Stripped Text</button>
+            {% endif %}
+
+            <a href="{{ url_for('main.send_to_synthesis', doc_id=doc.id) }}" class="button button-primary">
+                ↗ Send to Synthesis
+            </a>
+
+            <div class="dropdown">
+                <button class="button" id="copy-text-btn">Copy Text</button>
+                <div class="dropdown-menu" id="copy-text-menu">
+                    <a class="dropdown-item" href="#" id="copy-all-text-btn">Copy All Text</a>
+                    <div class="dropdown-divider"></div>
+                    <div class="dropdown-form">
+                        <label for="page-num-single" class="form-label">Single Page</label>
+                        <div class="input-group">
+                            <input type="number" class="form-control form-control-small" id="page-num-single" placeholder="e.g., 5" min="1" max="{{ doc.page_count or 1 }}">
+                            <button class="button button-small" id="copy-single-page-btn">Copy</button>
+                        </div>
+                    </div>
+                    <div class="dropdown-divider"></div>
+                    <div class="dropdown-form">
+                        <label class="form-label">Page Range</label>
+                        <div class="input-group">
+                            <input type="number" class="form-control form-control-small" id="page-num-start" placeholder="Start" min="1" max="{{ doc.page_count or 1 }}">
+                            <input type="number" class="form-control form-control-small" id="page-num-end" placeholder="End" min="1" max="{{ doc.page_count or 1 }}">
+                            <button class="button button-small" id="copy-range-page-btn">Copy</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="workbench-layout">
+        <div class="workbench-viewer">
+            {% if doc.file_type == 'PDF' %}
+                <iframe src="{{ url_for('main.view_pdf_document', doc_id=doc.id) }}" title="PDF Document Viewer" id="doc-viewer"></iframe>
+            {% elif doc.file_type == 'TXT' %}
+                <iframe src="{{ url_for('main.view_text_document', doc_id=doc.id) }}" title="Text Document Viewer" id="doc-viewer"></iframe>
+            {% elif doc.file_type == 'HTML' %}
+                <iframe src="{{ url_for('main.serve_document', relative_path=doc.relative_path) }}" title="Document Viewer" id="doc-viewer"></iframe>
+            {% elif doc.file_type == 'SRT' %}
+                <iframe src="{{ url_for('main.view_srt_document', doc_id=doc.id) }}" title="SRT Document Viewer" id="doc-viewer"></iframe>
+            {% else %}
+                <iframe src="{{ url_for('main.serve_document', relative_path=doc.relative_path) }}" title="Document Viewer" id="doc-viewer"></iframe>
+            {% endif %}
+        </div>
+        <aside class="workbench-sidebar">
+            <nav class="tabs-nav">
+                <button class="tab-link active" data-tab="curation">Curation</button>
+                <button class="tab-link" data-tab="metadata">Metadata</button>
+            </nav>
+
+            <div id="tab-curation" class="tab-content active">
+                <div class="panel">
+                    <div class="panel-header">Curation</div>
+                    <div class="panel-body">
+                        <div class="form-group">
+                            <label class="form-label">Color Tag</label>
+                            <div class="color-palette" id="color-palette">
+                                <span class="palette-color" data-color="#d93a3e" style="background-color: #d93a3e;" title="Red"></span>
+                                <span class="palette-color" data-color="#e0843a" style="background-color: #e0843a;" title="Orange"></span>
+                                <span class="palette-color" data-color="#e8c63b" style="background-color: #e8c63b;" title="Yellow"></span>
+                                <span class="palette-color" data-color="#4caf50" style="background-color: #4caf50;" title="Green"></span>
+                                <span class="palette-color" data-color="#2196f3" style="background-color: #2196f3;" title="Blue"></span>
+                                <span class="palette-color" data-color="#9c27b0" style="background-color: #9c27b0;" title="Purple"></span>
+                                <span class="palette-color palette-clear" data-color="" title="Clear Color">×</span>
+                            </div>
+                        </div>
+                        <div class="form-switch">
+                            <input type="checkbox" role="switch" id="is-favorite-toggle">
+                            <label for="is-favorite-toggle">Favorite</label>
+                        </div>
+                        <div class="form-group">
+                            <label for="note-content" class="form-label">My Private Note</label>
+                            <textarea class="form-control" id="note-content" rows="4"></textarea>
+                        </div>
+                        <button id="save-curation-btn" class="button">Save Note</button>
+                    </div>
+                </div>
+                <div class="panel">
+                    <div class="panel-header">Comments</div>
+                    <div class="panel-body">
+                        <div id="comment-list" class="comment-list-container"></div>
+                        <div class="comment-form-container mt-3">
+                            <textarea id="new-comment-text" class="form-control" rows="3" placeholder="Leave a public comment..."></textarea>
+                            <button id="post-comment-btn" class="button mt-2">Post Comment</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="panel">
+                    <div class="panel-header">Tags</div>
+                    <div class="panel-body">
+                        <div id="tag-container" class="tag-container"></div>
+                        <div class="autocomplete-wrapper">
+                            <input type="text" id="tag-input" class="form-control mt-2" placeholder="Add a tag and press Enter...">
+                            <div id="autocomplete-list" class="autocomplete-items"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="panel">
+                    <div class="panel-header">Catalogs</div>
+                    <div class="panel-body" id="catalog-list-container"></div>
+                    <div class="panel-footer">
+                        <div class="input-group">
+                            <input type="text" class="form-control" id="new-catalog-name" placeholder="New catalog name...">
+                            <button class="button" type="button" id="create-catalog-btn">Create</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="tab-metadata" class="tab-content">
+                <div class="panel">
+                    <div class="panel-header">Bibliographic Metadata</div>
+                    <div class="panel-body">
+                        <p class="text-muted">Fill in the form to generate professional citations. Data is saved as CSL-JSON.</p>
+                        <form id="metadata-form">
+                            <div class="form-group">
+                                <label for="csl-type">Document Type</label>
+                                <select id="csl-type" class="form-control"></select>
+                            </div>
+                            <div class="form-group">
+                                <label for="csl-title">Title</label>
+                                <input type="text" id="csl-title" class="form-control">
+                            </div>
+                            <div class="form-group">
+                                <label for="csl-author">Author(s)</label>
+                                <input type="text" id="csl-author" class="form-control" placeholder="e.g., Smith, John; Doe, Jane">
+                            </div>
+                            <div class="form-group">
+                                <label>Publication Date</label>
+                                <div class="row gx-2">
+                                    <div class="col"><select id="csl-date-year" class="form-control" aria-label="Year"></select></div>
+                                    <div class="col"><select id="csl-date-month" class="form-control" aria-label="Month"></select></div>
+                                    <div class="col"><select id="csl-date-day" class="form-control" aria-label="Day"></select></div>
+                                </div>
+                            </div>
+                            <div class="form-group csl-field-specific" data-csl-type="report broadcast">
+                                <label for="csl-publisher" data-label-for="report, broadcast">Publisher / Network</label>
+                                <input type="text" id="csl-publisher" class="form-control">
+                            </div>
+                            <div class="form-group csl-field-specific" data-csl-type="article-journal broadcast interview" style="display:none;">
+                                <label for="csl-container-title" data-label-for="article-journal">Journal / Program / Series Title</label>
+                                <input type="text" id="csl-container-title" class="form-control">
+                            </div>
+                             <div class="form-group csl-field-specific" data-csl-type="webpage broadcast interview" style="display:none;">
+                                <label for="csl-url">URL</label>
+                                <input type="url" id="csl-url" class="form-control">
+                            </div>
+                        </form>
+                        <button id="save-metadata-btn" class="button button-primary">Save Metadata</button>
+                        <p id="metadata-save-status" class="text-muted mt-2" style="transition: opacity 0.3s; opacity: 0;"></p>
+                    </div>
+                </div>
+            </div>
+        </aside>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+    const DOC_ID = {{ doc.id }};
+    const CSRF_TOKEN = "{{ form.csrf_token._value() }}";
+</script>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    // This script ensures that when you land on this page with a URL hash
+    // (e.g., from a search result link), the hash is passed to the iframe.
+    const hash = window.location.hash;
+    if (hash) {
+        const iframe = document.getElementById('doc-viewer');
+        if (iframe) {
+            // Append the hash to the iframe's src. The viewer inside the
+            // iframe will then be able to read it and scroll to the right place.
+            iframe.src += hash;
+        }
+    }
+});
+</script>
+<script src="{{ url_for('static', filename='js/document_view.js') }}" defer></script>
+{% endblock %}

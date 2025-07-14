@@ -1,0 +1,119 @@
+<!-- File: ./templates/srt_viewer.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SRT Viewer: {{ doc_title }}</title>
+    <style>
+        :root {
+            --bg-color: #1e1e24;
+            --text-color: #E8E8EA;
+            --text-muted: #828290;
+            --page-border: #383842;
+        }
+        body, html { margin: 0; padding: 0; background-color: var(--bg-color); color: var(--text-color); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; scroll-behavior: smooth; }
+        .container { max-width: 800px; margin: 2rem auto; padding: 1rem; }
+        .cue {
+            margin-bottom: 1.5rem;
+            cursor: pointer;
+            padding: 0.5rem;
+            border-radius: 4px;
+        }
+        .cue-timestamp {
+            font-family: monospace;
+            color: var(--text-muted);
+            /* --- THIS IS THE CHANGE --- */
+            font-size: 1.3em; 
+            /* --- END OF CHANGE --- */
+            margin-bottom: 0.25rem;
+        }
+        .cue-dialogue {
+            font-size: 1.1em;
+            line-height: 1.6;
+        }
+        .cue-dialogue::selection { background: rgba(162, 35, 35, 0.4); }
+    </style>
+</head>
+<body>
+    <div class="container">
+        {% if cues %}
+            {% for cue in cues %}
+            <div class="cue" id="cue-{{ cue.sequence }}">
+                <div class="cue-timestamp">{{ cue.timestamp }}</div>
+                <div class="cue-dialogue">{{ cue.dialogue }}</div>
+            </div>
+            {% endfor %}
+        {% else %}
+            <p>No subtitle content could be parsed from this file.</p>
+        {% endif %}
+    </div>
+
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const docId = {{ doc_id }};
+        const container = document.querySelector('.container');
+
+        const handleInteraction = (event) => {
+            const cueElement = event.target.closest('.cue');
+            if (!cueElement) return;
+
+            if (event.type === 'contextmenu') {
+                event.preventDefault();
+            }
+            
+            const selection = window.getSelection();
+            let selectedText = selection.toString().trim().replace(/\s+/g, ' ');
+
+            if (selection.isCollapsed || selectedText.length === 0) {
+                const dialogueElement = cueElement.querySelector('.cue-dialogue');
+                selectedText = dialogueElement ? dialogueElement.textContent.trim() : null;
+            }
+            
+            const pageNum = 1;
+
+            window.parent.postMessage({
+                type: 'textSelected',
+                x: event.clientX,
+                y: event.clientY,
+                payload: {
+                    selected_text: selectedText,
+                    source_doc_id: docId,
+                    page_number: pageNum
+                }
+            }, '*');
+        };
+
+        container.addEventListener('mouseup', handleInteraction);
+        container.addEventListener('contextmenu', handleInteraction);
+
+        function scrollToCue(cueSequence) {
+            const targetCue = document.getElementById(`cue-${cueSequence}`);
+            if (targetCue) {
+                targetCue.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                targetCue.style.transition = 'background-color 0.5s ease-in-out';
+                targetCue.style.backgroundColor = 'rgba(162, 35, 35, 0.3)';
+                
+                setTimeout(() => {
+                    targetCue.style.backgroundColor = '';
+                }, 2500);
+            }
+        }
+
+        const hash = window.location.hash;
+        if (hash && hash.startsWith('#cue=')) {
+            const cueNum = parseInt(hash.substring(5), 10);
+            if (!isNaN(cueNum)) {
+                setTimeout(() => scrollToCue(cueNum), 100);
+            }
+        }
+        
+        window.addEventListener('message', (event) => {
+            if (event.data.type === 'scrollToCue') {
+                scrollToCue(event.data.cue);
+            }
+        });
+    });
+    </script>
+</body>
+</html>

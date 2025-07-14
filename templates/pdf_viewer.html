@@ -1,0 +1,175 @@
+<!-- File: ./templates/pdf_viewer.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>PDF Viewer: {{ doc_title }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        .pdf-viewer-body { margin: 0; background-color: var(--background-dark, #121218); text-align: center; }
+        #viewer-container { padding-top: 50px; }
+        .textLayer ::selection { background: rgba(162, 35, 35, 0.4); }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@2.16.105/build/pdf.min.js"></script>
+</head>
+<body class="pdf-viewer-body">
+    
+    <div class="pdf-viewer-toolbar">
+        <button id="prev-page-btn">◄</button>
+        <input type="number" id="page-num-input" min="1">
+        <span id="page-count-display" class="page-display">/ --</span>
+        <button id="next-page-btn">►</button>
+    </div>
+
+    <div id="viewer-container"></div>
+    <div id="error-message" class="pdf-viewer-error" style="display: none;"></div>
+
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@2.16.105/build/pdf.worker.min.js`;
+
+        const pdfUrl = {{ pdf_url|tojson }};
+        const docId = {{ doc_id }};
+        const viewerContainer = document.getElementById('viewer-container');
+        // ... (rest of the variable declarations are the same)
+        const prevBtn = document.getElementById('prev-page-btn');
+        const nextBtn = document.getElementById('next-page-btn');
+        const pageNumInput = document.getElementById('page-num-input');
+        const pageCountDisplay = document.getElementById('page-count-display');
+
+        let pdfDoc = null;
+        let currentPageNum = 1;
+        
+        // --- All functions (renderPage, updateToolbarUI, etc.) remain the same ---
+        async function renderPage(pageNum, container) {
+            try {
+                const page = await pdfDoc.getPage(pageNum);
+                const scale = 1.5;
+                const viewport = page.getViewport({ scale });
+                
+                const canvas = document.createElement('canvas');
+                const textLayer = document.createElement('div');
+                textLayer.className = 'text-layer';
+
+                while (container.firstChild) container.removeChild(container.firstChild);
+                container.appendChild(canvas);
+                container.appendChild(textLayer);
+                
+                canvas.height = viewport.height;
+                canvas.width = viewport.width;
+                
+                const renderContext = { canvasContext: canvas.getContext('2d'), viewport: viewport };
+                
+                await page.render(renderContext).promise;
+                const textContent = await page.getTextContent();
+                await pdfjsLib.renderTextLayer({ textContent, container: textLayer, viewport, textDivs: [] }).promise;
+            } catch (error) {
+                console.error(`Failed to render page ${pageNum}:`, error);
+                container.textContent = `Error rendering page ${pageNum}.`;
+            }
+        }
+        function updateToolbarUI(num) {
+            currentPageNum = num;
+            if (document.activeElement !== pageNumInput) pageNumInput.value = currentPageNum;
+            prevBtn.disabled = currentPageNum <= 1;
+            nextBtn.disabled = currentPageNum >= pdfDoc.numPages;
+            window.parent.postMessage({ type: 'pageChanged', currentPage: currentPageNum }, '*');
+        }
+        function goToPage(num, behavior = 'smooth') {
+            const pageElement = document.getElementById(`page-container-${num}`);
+            if (pageElement) pageElement.scrollIntoView({ behavior, block: 'start' });
+        }
+        const renderObserver = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting && entry.target.dataset.rendered !== 'true') {
+                    const pageNum = parseInt(entry.target.dataset.pageNum, 10);
+                    entry.target.dataset.rendered = 'true';
+                    renderPage(pageNum, entry.target);
+                }
+            });
+        }, { rootMargin: '200px 0px 200px 0px' });
+        const uiObserver = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) updateToolbarUI(parseInt(entry.target.dataset.pageNum, 10));
+            });
+        }, { rootMargin: '-40% 0px -40% 0px', threshold: 0.1 });
+        
+        // --- INITIALIZATION (Unchanged) ---
+        (async function init() {
+            try {
+                pdfDoc = await pdfjsLib.getDocument(pdfUrl).promise;
+                pageNumInput.max = pdfDoc.numPages;
+                pageCountDisplay.textContent = `/ ${pdfDoc.numPages}`;
+                const viewports = await Promise.all(Array.from({ length: pdfDoc.numPages }, (_, i) => pdfDoc.getPage(i + 1).then(p => p.getViewport({ scale: 1.5 }))));
+                const fragment = document.createDocumentFragment();
+                for (let i = 0; i < pdfDoc.numPages; i++) {
+                    const div = document.createElement('div');
+                    div.id = `page-container-${i + 1}`;
+                    div.dataset.pageNum = i + 1;
+                    div.dataset.rendered = 'false';
+                    div.className = 'page-placeholder';
+                    div.style.width = `${viewports[i].width}px`;
+                    div.style.height = `${viewports[i].height}px`;
+                    fragment.appendChild(div);
+                }
+                viewerContainer.appendChild(fragment);
+                document.querySelectorAll('.page-placeholder').forEach(el => { renderObserver.observe(el); uiObserver.observe(el); });
+                const hashPage = parseInt(window.location.hash.substring(6), 10);
+                if (hashPage > 1 && hashPage <= pdfDoc.numPages) setTimeout(() => goToPage(hashPage, 'auto'), 100);
+            } catch (reason) {
+                console.error('Error loading PDF:', reason);
+                document.querySelector('.pdf-viewer-toolbar').style.display = 'none';
+                viewerContainer.style.display = 'none';
+                document.getElementById('error-message').textContent = 'Error: Could not load the PDF file.';
+                document.getElementById('error-message').style.display = 'block';
+            }
+        })();
+        
+        // === UPDATED: Event listeners for "Cite This" ===
+
+        // Scenario A: Highlighting text
+        document.addEventListener('mouseup', (e) => {
+            const selection = document.getSelection();
+            if (selection.isCollapsed) return;
+            const selectedText = selection.toString().trim().replace(/\s+/g, ' ');
+            const range = selection.getRangeAt(0);
+            const container = range.commonAncestorContainer;
+            const pageElement = container.nodeType === 3 ? container.parentElement.closest('.page-placeholder') : container.closest('.page-placeholder');
+            if (selectedText && pageElement) {
+                const pageNum = parseInt(pageElement.dataset.pageNum, 10);
+                const rect = range.getBoundingClientRect();
+                window.parent.postMessage({
+                    type: 'textSelected',
+                    x: e.clientX, y: e.clientY, // Use mouse coordinates for more reliable positioning
+                    payload: { selected_text: selectedText, source_doc_id: docId, page_number: pageNum }
+                }, '*');
+            }
+        });
+
+        // Scenario B: Right-clicking for bad OCR
+        viewerContainer.addEventListener('contextmenu', (e) => {
+            e.preventDefault(); // Prevent default browser context menu
+            const pageElement = e.target.closest('.page-placeholder');
+            if (pageElement) {
+                const pageNum = parseInt(pageElement.dataset.pageNum, 10);
+                window.parent.postMessage({
+                    type: 'textSelected', // Use the same event type to trigger the popup
+                    x: e.clientX, y: e.clientY,
+                    payload: { selected_text: null, source_doc_id: docId, page_number: pageNum } // No text
+                }, '*');
+            }
+        });
+
+        // Communication for scrolling from parent
+        window.addEventListener('message', (event) => {
+            if (event.data.type === 'scrollToPage') {
+                goToPage(event.data.page, 'auto');
+            }
+        });
+
+        // --- Unchanged event listeners for toolbar ---
+        prevBtn.addEventListener('click', () => { if (currentPageNum > 1) goToPage(currentPageNum - 1); });
+        nextBtn.addEventListener('click', () => { if (currentPageNum < pdfDoc.numPages) goToPage(currentPageNum + 1); });
+        pageNumInput.addEventListener('change', () => { const desiredPage = parseInt(pageNumInput.value, 10); if (desiredPage >= 1 && desiredPage <= pdfDoc.numPages) goToPage(desiredPage, 'auto'); });
+    </script>
+</body>
+</html>

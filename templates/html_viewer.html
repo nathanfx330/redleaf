@@ -1,0 +1,80 @@
+<!-- File: ./templates/html_viewer.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HTML Content: {{ doc_title }}</title>
+    <style>
+        :root {
+            --bg-color: #1e1e24; --text-color: #E8E8EA; --page-border: #383842;
+        }
+        body, html { margin: 0; padding: 0; background-color: var(--bg-color); color: var(--text-color); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+        .container { max-width: 800px; margin: 2rem auto; padding: 1rem; }
+        .page-content { white-space: pre-wrap; word-wrap: break-word; line-height: 1.7; font-size: 1.1em; }
+        .page-content::selection { background: rgba(162, 35, 35, 0.4); }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="page-content" id="page-1">
+            {# 
+              The 'pages' variable from the controller contains the extracted text. 
+              We display the first (and only) item for HTML files.
+              Jinja2 automatically escapes any HTML characters in the text, which is safe.
+            #}
+            {{ pages[0] if pages else "No content was extracted from this HTML document." }}
+        </div>
+    </div>
+
+    <!-- ===== FIX START: ADDED INTERACTIVE SCRIPT ===== -->
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const docId = {{ doc_id }};
+        const container = document.querySelector('.container');
+
+        // This function handles both text selection and right-clicks.
+        const handleInteraction = (event) => {
+            let selectedText = null;
+            
+            // On mouse up, check for a text selection.
+            if (event.type === 'mouseup') {
+                const selection = window.getSelection();
+                if (selection.isCollapsed) return; // Ignore simple clicks with no selection.
+                
+                selectedText = selection.toString().trim().replace(/\s+/g, ' ');
+                // Only proceed if there is actual text selected.
+                if (!selectedText) return;
+            }
+
+            // On right-click, always prevent the default menu.
+            if (event.type === 'contextmenu') {
+                event.preventDefault();
+            }
+
+            // Since all extracted HTML content is treated as a single page,
+            // the page number is always 1.
+            const pageNum = 1;
+
+            // Send the constructed payload to the parent window (synthesis.js).
+            window.parent.postMessage({
+                type: 'textSelected', // This is the event type synthesis.js is listening for.
+                x: event.clientX,
+                y: event.clientY,
+                payload: {
+                    selected_text: selectedText, // This will be null on right-click, which is intended.
+                    source_doc_id: docId,
+                    page_number: pageNum
+                }
+            }, '*');
+        };
+
+        // Attach the listeners to the main content container.
+        container.addEventListener('mouseup', handleInteraction);
+        container.addEventListener('contextmenu', handleInteraction);
+    });
+    </script>
+    <!-- ===== FIX END ===== -->
+
+</body>
+</html>

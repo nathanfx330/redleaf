@@ -1,0 +1,250 @@
+{% extends 'layout.html' %}
+{% block title %}Tags - Redleaf{% endblock %}
+
+{% block content %}
+<div class="page-heading">
+    <h1>Tags</h1>
+</div>
+
+<div class="panel">
+    <div class="panel-body">
+        {# This hidden form provides a reliable place to get the CSRF token for all JS on this page #}
+        <form id="csrf-form-container" style="display: none;">{{ form.hidden_tag() }}</form>
+
+        <!-- Tab Navigation -->
+        <nav class="tabs-nav">
+            <button class="tab-link active" data-tab="filter">Filter Documents</button>
+            {% if g.user.role == 'admin' %}
+            <button class="tab-link" data-tab="manage">Manage Tags</button>
+            {% endif %}
+        </nav>
+
+        <!-- Tab Content: Filter -->
+        <div id="tab-filter" class="tab-content active">
+            <div class="filter-controls-area">
+                <div class="row">
+                    <div class="col-md-5">
+                        <label class="form-label">Filter by Tags</label>
+                        {% if tags %}
+                            <div class="tag-cloud" id="available-tags-container">
+                                {% for tag in tags %}{% if tag.doc_count > 0 %}
+                                    <button class="tag-cloud-item" data-tag-name="{{ tag.name }}">
+                                        {{ tag.name }} <span class="tag-cloud-count">({{ tag.doc_count }})</span>
+                                    </button>
+                                {% endif %}{% endfor %}
+                            </div>
+                        {% else %}
+                            <p class="text-muted">No tags have been added to any documents yet.</p>
+                        {% endif %}
+                    </div>
+                    <div class="col-md-4">
+                        <label for="catalog-filter" class="form-label">Filter by Catalog</label>
+                        <select id="catalog-filter" class="form-control">
+                            <option value="">-- All Catalogs --</option>
+                            {% for catalog in catalogs %}
+                            <option value="{{ catalog.id }}">{{ catalog.name | e }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">Filter by Color</label>
+                        <div class="color-palette" id="color-filter-palette">
+                            <span class="palette-color" data-color="#d93a3e" style="background-color: #d93a3e;" title="Red"></span>
+                            <span class="palette-color" data-color="#e0843a" style="background-color: #e0843a;" title="Orange"></span>
+                            <span class="palette-color" data-color="#e8c63b" style="background-color: #e8c63b;" title="Yellow"></span>
+                            <span class="palette-color" data-color="#4caf50" style="background-color: #4caf50;" title="Green"></span>
+                            <span class="palette-color" data-color="#2196f3" style="background-color: #2196f3;" title="Blue"></span>
+                            <span class="palette-color" data-color="#9c27b0" style="background-color: #9c27b0;" title="Purple"></span>
+                            <span class="palette-color palette-clear" data-color="" title="Clear Color">×</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+    
+            <div class="mb-3">
+                <strong>Active Filters:</strong>
+                <span id="active-filters-container">
+                    <em class="text-muted">None selected</em>
+                </span>
+            </div>
+    
+            <div id="results-container">
+                <p class="text-muted empty-state">Select one or more filters above to see matching documents.</p>
+            </div>
+        </div>
+
+        <!-- Tab Content: Manage (Admin Only) -->
+        {% if g.user.role == 'admin' %}
+        <div id="tab-manage" class="tab-content">
+            <p class="text-muted">Rename or permanently delete tags from the system. These actions cannot be undone.</p>
+            <div class="table-container">
+                <table class="data-table manage-tags-table">
+                    <thead>
+                        <tr>
+                            <th>Tag Name</th>
+                            <th>Document Count</th>
+                            <th style="width: 200px;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    {% for tag in tags %}
+                        <tr data-tag-name="{{ tag.name }}">
+                            <td>{{ tag.name }}</td>
+                            <td>{{ tag.doc_count }}</td>
+                            <td class="action-cell">
+                                <button class="button button-small rename-tag-btn">Rename</button>
+                                <button class="button button-danger button-small delete-tag-btn" data-doc-count="{{ tag.doc_count }}">Delete</button>
+                            </td>
+                        </tr>
+                    {% else %}
+                        <tr><td colspan="3" class="table-empty-message">No tags found.</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endif %}
+
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    // === COMMON VARIABLES ===
+    const csrfToken = document.querySelector('#csrf-form-container input[name="csrf_token"]').value;
+
+    // === TAB SWITCHING LOGIC ===
+    const tabLinks = document.querySelectorAll('.tab-link');
+    const tabContents = document.querySelectorAll('.tab-content');
+
+    tabLinks.forEach(link => {
+        link.addEventListener('click', () => {
+            const tabId = link.dataset.tab;
+            tabLinks.forEach(l => l.classList.remove('active'));
+            link.classList.add('active');
+            tabContents.forEach(content => {
+                content.classList.toggle('active', content.id === `tab-${tabId}`);
+            });
+        });
+    });
+
+    // === FILTERING LOGIC ===
+    const filterTab = document.getElementById('tab-filter');
+    if (filterTab) {
+        const availableTagsContainer = document.getElementById('available-tags-container');
+        const colorFilterPalette = document.getElementById('color-filter-palette');
+        const catalogFilterSelect = document.getElementById('catalog-filter');
+        const activeFiltersContainer = document.getElementById('active-filters-container');
+        const resultsContainer = document.getElementById('results-container');
+        let activeTagFilters = new Set();
+        let activeColorFilter = null;
+        let activeCatalogFilter = null;
+
+        function renderActiveFilters() {
+            activeFiltersContainer.innerHTML = '';
+            let hasFilters = false;
+            if (activeCatalogFilter) { hasFilters = true; const el = document.createElement('span'); el.className = 'tag-item'; el.innerHTML = `<span style="opacity: 0.8; margin-right: 4px;">🗂️</span> ${activeCatalogFilter.name} <button class="tag-remove-btn" id="remove-catalog-filter" title="Remove catalog filter">×</button>`; activeFiltersContainer.appendChild(el); }
+            if (activeColorFilter) { hasFilters = true; const el = document.createElement('span'); el.className = 'color-filter-item'; el.innerHTML = `<span class="color-dot" style="background-color: ${activeColorFilter};"></span> Color <button class="tag-remove-btn" id="remove-color-filter" title="Remove color filter">×</button>`; activeFiltersContainer.appendChild(el); }
+            activeTagFilters.forEach(tag => { hasFilters = true; const el = document.createElement('span'); el.className = 'tag-item'; el.textContent = tag; const removeBtn = document.createElement('button'); removeBtn.className = 'tag-remove-btn'; removeBtn.innerHTML = '×'; removeBtn.title = `Remove filter: ${tag}`; removeBtn.dataset.tagName = tag; el.appendChild(removeBtn); activeFiltersContainer.appendChild(el); });
+            if (!hasFilters) { activeFiltersContainer.innerHTML = '<em class="text-muted">None selected</em>'; }
+        }
+
+        async function fetchAndRenderDocuments() {
+            const queryParts = [];
+            activeTagFilters.forEach(tag => queryParts.push(`tag=${encodeURIComponent(tag)}`));
+            if (activeColorFilter) { queryParts.push(`color=${encodeURIComponent(activeColorFilter)}`); }
+            if (activeCatalogFilter) { queryParts.push(`catalog_id=${activeCatalogFilter.id}`); }
+            if (queryParts.length === 0) { resultsContainer.innerHTML = '<p class="text-muted empty-state">Select one or more filters above to see matching documents.</p>'; return; }
+            resultsContainer.innerHTML = '<p class="text-muted empty-state"><em>Loading...</em></p>';
+            const finalQuery = queryParts.join('&');
+            try {
+                const response = await fetch(`/api/documents_by_tags?${finalQuery}`);
+                if (!response.ok) throw new Error('Network response was not ok');
+                const documents = await response.json();
+                if (documents.length === 0) { resultsContainer.innerHTML = '<p class="text-muted empty-state">No documents match all selected filters.</p>'; return; }
+                let html = '<ul class="simple-list">';
+                documents.forEach(doc => {
+                    const colorDot = doc.color ? `<span class="color-dot" style="background-color: ${doc.color};"></span>` : '';
+                    const noteIcon = doc.has_personal_note ? '<span class="chip" title="You have a private note">📝</span>' : '';
+                    const commentIcon = doc.comment_count > 0 ? `<span class="chip" title="${doc.comment_count} public comment(s)">💬 ${doc.comment_count}</span>` : '';
+                    html += `<li>${colorDot}<a href="/document/${doc.id}">${doc.relative_path}</a><span class="ms-2">${noteIcon} ${commentIcon}</span></li>`;
+                });
+                html += '</ul>';
+                resultsContainer.innerHTML = html;
+            } catch (error) { console.error('Fetch error:', error); resultsContainer.innerHTML = '<p class="text-danger empty-state">Error loading documents. Please try again.</p>'; }
+        }
+        
+        function updateView() { renderActiveFilters(); fetchAndRenderDocuments(); }
+        function toggleTagInCloud(tagName, select) { const tagButton = availableTagsContainer.querySelector(`button[data-tag-name="${CSS.escape(tagName)}"]`); if (tagButton) { tagButton.disabled = select; tagButton.classList.toggle('active', select); } }
+        function toggleColorInPalette(color, select) { colorFilterPalette.querySelectorAll('.palette-color').forEach(el => el.classList.remove('selected')); if (select && color) { const colorButton = colorFilterPalette.querySelector(`span[data-color="${color}"]`); if (colorButton) { colorButton.classList.add('selected'); } } else { const clearButton = colorFilterPalette.querySelector('.palette-clear'); if (clearButton) clearButton.classList.add('selected'); } }
+
+        if (availableTagsContainer) { availableTagsContainer.addEventListener('click', (e) => { const tagButton = e.target.closest('.tag-cloud-item'); if (!tagButton || tagButton.disabled) return; const tagName = tagButton.dataset.tagName; if (!activeTagFilters.has(tagName)) { activeTagFilters.add(tagName); toggleTagInCloud(tagName, true); updateView(); } }); }
+        if (colorFilterPalette) { colorFilterPalette.addEventListener('click', (e) => { const colorButton = e.target.closest('.palette-color'); if (!colorButton) return; const color = colorButton.dataset.color; activeColorFilter = color ? color : null; toggleColorInPalette(activeColorFilter, true); updateView(); }); }
+        if (catalogFilterSelect) { catalogFilterSelect.addEventListener('change', (e) => { const selectedOption = e.target.options[e.target.selectedIndex]; if (selectedOption.value) { activeCatalogFilter = { id: selectedOption.value, name: selectedOption.text }; } else { activeCatalogFilter = null; } updateView(); }); }
+        if (activeFiltersContainer) { activeFiltersContainer.addEventListener('click', (e) => { const target = e.target.closest('.tag-remove-btn'); if (!target) return; if (target.dataset.tagName) { const tagName = target.dataset.tagName; if (activeTagFilters.has(tagName)) { activeTagFilters.delete(tagName); toggleTagInCloud(tagName, false); updateView(); } } else if (target.id === 'remove-color-filter') { activeColorFilter = null; toggleColorInPalette(null, false); updateView(); } else if (target.id === 'remove-catalog-filter') { activeCatalogFilter = null; catalogFilterSelect.value = ""; updateView(); } }); }
+        if (colorFilterPalette) { toggleColorInPalette(null, false); }
+    }
+
+
+    // === TAG MANAGEMENT LOGIC ===
+    const manageTab = document.getElementById('tab-manage');
+    if (manageTab) {
+        const manageTableBody = manageTab.querySelector('.manage-tags-table tbody');
+
+        async function handleRenameTag(oldName) {
+            const newName = prompt(`Enter a new name for the tag "${oldName}":`, oldName);
+            if (newName === null || newName.trim() === '' || newName.trim().toLowerCase() === oldName) return;
+            
+            const response = await fetch('/api/tags/rename', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+                body: JSON.stringify({ old_name: oldName, new_name: newName.trim().toLowerCase() })
+            });
+            const result = await response.json();
+            if (response.ok) {
+                alert("Tag renamed successfully. The page will now reload.");
+                window.location.reload();
+            } else {
+                alert(`Error: ${result.message}`);
+            }
+        }
+
+        async function handleDeleteTag(tagName, docCount) {
+            const confirmationMessage = `Are you sure you want to permanently delete the tag "${tagName}"?\n\nThis will remove the tag from ${docCount} document(s). This action cannot be undone.`;
+            if (!confirm(confirmationMessage)) return;
+
+            const response = await fetch('/api/tags/delete', {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+                body: JSON.stringify({ name: tagName })
+            });
+            const result = await response.json();
+            if (response.ok) {
+                const row = manageTableBody.querySelector(`tr[data-tag-name="${CSS.escape(tagName)}"]`);
+                if (row) row.remove();
+            } else {
+                alert(`Error: ${result.message}`);
+            }
+        }
+
+        if (manageTableBody) {
+            manageTableBody.addEventListener('click', (event) => {
+                const button = event.target;
+                const row = button.closest('tr');
+                if (!row) return;
+
+                const tagName = row.dataset.tagName;
+                if (button.classList.contains('rename-tag-btn')) {
+                    handleRenameTag(tagName);
+                } else if (button.classList.contains('delete-tag-btn')) {
+                    const docCount = button.dataset.docCount;
+                    handleDeleteTag(tagName, docCount);
+                }
+            });
+        }
+    }
+});
+</script>
+{% endblock %}
