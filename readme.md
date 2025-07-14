@@ -1,61 +1,40 @@
 Redleaf Engine v2.0
 <p align="center">
+<br>
 <strong>A local-first, full-stack application to index, search, and explore your personal document collection.</strong>
 </p>
 
 <p align="center">
-<img src="https://img.shields.io/badge/python-3.7+-blue.svg" alt="Python 3.7+">
-<img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License: MIT">
+<a href="https://www.python.org/downloads/release/python-370/"><img src="https://img.shields.io/badge/python-3.7+-blue.svg" alt="Python 3.7+"></a>
+<a href="https://github.com/<your-username>/<your-repo>/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License: MIT"></a>
+<!-- Optional: Add a build status badge -->
+<!-- <a href="#"><img src="https://img.shields.io/github/actions/workflow/status/<your-username>/<your-repo>/main.yml" alt="Build Status"></a> -->
 </p>
 
 
-Redleaf transforms a directory of PDFs, HTML, and text files into a searchable, interconnected knowledge graph that runs entirely on your local machine. It uses a robust Python Flask backend for heavy NLP tasks and a lightweight JavaScript frontend for a fast, responsive user experience.
+<!-- <p align="center">
+<img src="path/to/your/screenshot.gif" alt="Redleaf Engine Demo">
+</p> -->
 
-Table of Contents
+✨ Key Features
 
-Key Features
+📄 Document Indexing: Ingests .pdf, .html, and .txt files from a local directory.
 
-Getting Started
+🔍 Full-Text Search: Powered by SQLite FTS5 for fast, relevant content search.
 
-Prerequisites
+🤖 Automatic Entity Extraction: Uses spaCy to automatically find and link People, Organizations, Locations, and more.
 
-Installation
+🕸️ Relationship Discovery: Infers and visualizes relationships between entities.
 
-Usage
+✍️ Curation Tools: Add custom tags, organize into "Catalogs," and leave comments or private notes.
 
-Configuration
+👥 Multi-User Support: Full authentication with admin/user roles and an invitation-based system.
 
-Secret Key
+⚡ Concurrent Processing: A background task manager processes new documents without blocking the UI.
 
-In-App Settings
+🚀 GPU Acceleration: Optionally leverages an NVIDIA GPU (with CUDA) to speed up NLP tasks.
 
-Management Script
-
-Technology Stack
-
-About the Developer
-
-License
-
-Key Features
-
-📄 Document Indexing: Ingests and processes .pdf, .html, and .txt files.
-
-🔍 Full-Text Search: Powered by SQLite FTS5 for fast and relevant content search.
-
-🤖 Automatic Entity Extraction: Uses spaCy to automatically identify and link entities (People, Organizations, Locations, etc.).
-
-🕸️ Relationship Discovery: Infers and displays relationships between entities based on co-occurrence.
-
-✍️ Document Curation: Add custom tags, organize documents into "Catalogs," and leave comments or private notes.
-
-👥 Multi-User Support: Full authentication system with admin/user roles and invitation-based registration.
-
-⚡ Concurrent Processing: A background task manager processes documents without blocking the web UI.
-
-🚀 Optional GPU Acceleration: Supports NVIDIA GPUs (CUDA) to accelerate NLP tasks.
-
-Getting Started
+🚀 Getting Started
 
 Follow these steps to get the Redleaf Engine running on your local machine.
 
@@ -67,14 +46,21 @@ pip for installing Python packages
 
 2. Installation
 
-First, clone the repository to your local machine:
+First, clone the repository:
 
 Generated bash
 git clone <your-repository-url>
 cd <repository-directory>
 
+<br>
 
-Next, it is highly recommended to create and activate a Python virtual environment:
+
+[!NOTE]
+It is highly recommended to use a Python virtual environment to avoid conflicts with other projects.
+
+<details>
+<summary><strong>Click to view commands for creating a virtual environment</strong></summary>
+
 
 On macOS / Linux:
 
@@ -99,21 +85,18 @@ download
 Use code with caution.
 Bash
 IGNORE_WHEN_COPYING_END
+</details>
 
-Install the required Python packages from requirements.txt:
+<br>
+
+
+Install the required packages and the NLP model:
 
 Generated bash
+# Install Python dependencies
 pip install -r requirements.txt
-IGNORE_WHEN_COPYING_START
-content_copy
-download
-Use code with caution.
-Bash
-IGNORE_WHEN_COPYING_END
 
-Finally, download the necessary spaCy NLP model:
-
-Generated bash
+# Download the spaCy English model
 python -m spacy download en_core_web_lg
 IGNORE_WHEN_COPYING_START
 content_copy
@@ -123,9 +106,9 @@ Bash
 IGNORE_WHEN_COPYING_END
 3. Usage
 
-Add Documents: Create a documents folder in the project's root directory. Place all the files you want to index inside this folder. Subdirectories are also supported.
+Add Your Documents: Create a documents folder in the project's root directory. Place all the files you want to index here.
 
-Run the Application: Start the Flask development server:
+Run the Application:
 
 Generated bash
 python app.py
@@ -136,25 +119,39 @@ Use code with caution.
 Bash
 IGNORE_WHEN_COPYING_END
 
-First-Time Setup: Open your web browser and go to http://127.0.0.1:5000. You will be guided through creating your primary admin account.
+First-Time Setup: Open your browser to http://127.0.0.1:5000. You will be redirected to a setup page to create your admin account.
 
-Log In and Explore:
+Log In and Index:
 
-Click "1. Discover Docs" to find and register your files.
+Click "1. Discover Docs" to register your files.
 
-Click "2. Process All 'New'" to start indexing.
+Click "2. Process All 'New'" to begin indexing.
 
-Configuration
+⚙️ Configuration
 Secret Key
 
-For security, you must set a private secret key. The application will warn you if you are using the insecure default key.
+[!WARNING]
+For production use, you must set a secure, private FLASK_SECRET_KEY. The application will warn you if the default key is being used.
 
-Set it as an environment variable before running the app:
+<details>
+<summary><strong>Click to view commands for setting the Secret Key</strong></summary>
+
 
 On macOS / Linux:
 
 Generated bash
 export FLASK_SECRET_KEY='your-very-long-and-random-secret-key'
+IGNORE_WHEN_COPYING_START
+content_copy
+download
+Use code with caution.
+Bash
+IGNORE_WHEN_COPYING_END
+
+On Windows (Command Prompt):
+
+Generated bash
+set FLASK_SECRET_KEY="your-very-long-and-random-secret-key"
 IGNORE_WHEN_COPYING_START
 content_copy
 download
@@ -172,13 +169,23 @@ download
 Use code with caution.
 Powershell
 IGNORE_WHEN_COPYING_END
+</details>
+
 In-App Settings
 
-Settings like the number of worker processes, GPU usage, and parsing strategies can be configured directly from the Settings page within the app (admin access required).
+Other settings (worker processes, GPU acceleration, etc.) can be configured from the Settings page within the application after logging in as an admin.
 
-Management Script
+💻 Technology Stack
+Category	Technology
+Backend	Python, Flask
+Database	SQLite (with FTS5 for search)
+NLP	spaCy
+Document Parsing	PyMuPDF (for PDFs), BeautifulSoup4
+Frontend	HTML5, CSS3, Vanilla JavaScript (ES6+)
+Security	Flask-WTF (CSRF Protection)
+🛠️ Management Script
 
-The manage.py script is included for command-line administrative tasks.
+A command-line tool, manage.py, is included for admin tasks.
 
 Example: Reset a user's password
 
@@ -190,35 +197,36 @@ download
 Use code with caution.
 Bash
 IGNORE_WHEN_COPYING_END
-
-You will be securely prompted to enter a new password.
-
-Technology Stack
-
-Backend: Python, Flask
-
-Database: SQLite
-
-NLP: spaCy
-
-Document Parsing: PyMuPDF, BeautifulSoup4
-
-Frontend: HTML5, CSS3, Vanilla JavaScript (ES6+)
-
-CSRF Protection: Flask-WTF
-
-About the Developer
+👨‍💻 About the Developer
 
 This project was created by Nathaniel Westveer as a personal tool for knowledge exploration. It is open source and free to use, distribute, and modify.
 
-License
+📜 License
 
-This project is licensed under the MIT License. See the LICENSE file for details.
+This project is licensed under the MIT License.
+
+<details>
+<summary><strong>Click to read the full license text</strong></summary>
+
 
 Copyright (c) 2025 Nathaniel Westveer
 
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+</details>
