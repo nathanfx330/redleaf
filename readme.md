@@ -161,10 +161,3 @@ This utility confirms whether spaCy can access your NVIDIA GPU for acceleration.
 ## 📜 License
 
 This project is licensed under the **MIT License**. See the [LICENSE](https://github.com/nathanfx330/redleaf/blob/main/LICENSE) file for details.
-
----
-
-Let me know if you'd like me to:
-- Add screenshots/GIFs once ready
-- Generate a one-line badge-rich header
-- Write a short project summary for GitHub’s repository description or topics section
