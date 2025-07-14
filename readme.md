@@ -1,54 +1,100 @@
-# Redleaf Engine
+Redleaf Engine
+<p align="center">
+<strong>Index, search, and explore a personal collection of documents.</strong>
+</p>
 
-Redleaf is a full-stack web application designed to help you index, search, and explore a personal collection of documents. It turns a directory of PDFs, HTML, and text files into a searchable, interconnected knowledge graph that runs entirely on your local machine.
+Redleaf is a full-stack web application designed to help you index, search, and explore a personal collection of documents. It transforms a directory of PDFs, HTML, and text files into a searchable, interconnected knowledge graph that runs entirely on your local machine.
 
 The application uses a robust Python Flask backend with a multi-process task manager to handle heavy NLP tasks, and a lightweight, responsive JavaScript frontend for a fast user experience.
+Table of Contents
 
-## Key Features
+    Key Features
 
-- **Document Indexing**: Ingests and processes `.pdf`, `.html`, and `.txt` files from a local directory.
-- **Full-Text Search**: Powered by SQLite FTS5 for fast and relevant content search across all documents.
-- **Automatic Entity Extraction**: Uses spaCy to automatically identify and link entities like People, Organizations, Locations, and Dates.
-- **Relationship Discovery**: Infers and displays relationships between entities based on their proximity within the text.
-- **Document Curation**:
-    - Add custom tags to documents.
-    - Organize documents into user-defined "Catalogs".
-    - Leave public comments or private notes on any document.
-- **Multi-User Support**: Includes a full authentication system with admin/user roles and an invitation-based registration process.
-- **Concurrent Processing**: A background task manager processes new documents without blocking the web interface.
-- **Optional GPU Acceleration**: Can leverage a compatible NVIDIA GPU (with CUDA) to speed up NLP tasks.
+    Getting Started
 
-## Getting Started
+        Prerequisites
+
+        Installation
+
+        Usage
+
+    Configuration
+
+    Management Script
+
+    Technology Stack
+
+    About the Developer
+
+    License
+
+Key Features
+
+    Document Indexing: Ingests and processes .pdf, .html, and .txt files from a local directory.
+
+    Full-Text Search: Powered by SQLite FTS5 for fast and relevant content search across all documents.
+
+    Automatic Entity Extraction: Uses spaCy to automatically identify and link entities like People, Organizations, Locations, and Dates.
+
+    Relationship Discovery: Infers and displays relationships between entities based on their proximity within the text.
+
+    Document Curation:
+
+        Add custom tags to documents.
+
+        Organize documents into user-defined "Catalogs".
+
+        Leave public comments or private notes on any document.
+
+    Multi-User Support: Includes a full authentication system with admin/user roles and an invitation-based registration process.
+
+    Concurrent Processing: A background task manager processes new documents without blocking the web interface.
+
+    Optional GPU Acceleration: Can leverage a compatible NVIDIA GPU (with CUDA) to speed up NLP tasks.
+
+Getting Started
 
 Follow these steps to set up and run the Redleaf Engine on your local machine.
+1. Prerequisites
 
-### 1. Prerequisites
+    Python 3.7 or newer
 
-- Python 3.7 or newer
-- `pip` for installing packages
+    pip for installing packages
 
-### 2. Installation
+2. Installation
 
 First, clone the repository to your local machine:
-```bash
+Generated bash
+
+      
 git clone <your-repository-url>
 cd <repository-directory>
 
     
 
 IGNORE_WHEN_COPYING_START
-Use code with caution. Markdown
+Use code with caution. Bash
 IGNORE_WHEN_COPYING_END
 
 Next, it is highly recommended to create and activate a Python virtual environment:
+
+On macOS / Linux:
 Generated bash
 
       
-# On macOS / Linux
 python3 -m venv venv
 source venv/bin/activate
 
-# On Windows
+    
+
+IGNORE_WHEN_COPYING_START
+Use code with caution. Bash
+IGNORE_WHEN_COPYING_END
+
+On Windows:
+Generated bash
+
+      
 python -m venv venv
 .\venv\Scripts\activate
 
@@ -112,22 +158,41 @@ Secret Key
 For production use, it is critical to set a secure, private secret key. The application will warn you if you are using the insecure default key.
 
 Set the key as an environment variable before running the app:
+
+On macOS / Linux:
 Generated bash
 
       
-# On macOS / Linux
 export FLASK_SECRET_KEY='your-very-long-and-random-secret-key'
-
-# On Windows (Command Prompt)
-set FLASK_SECRET_KEY="your-very-long-and-random-secret-key"
-
-# On Windows (PowerShell)
-$env:FLASK_SECRET_KEY="your-very-long-and-random-secret-key"
 
     
 
 IGNORE_WHEN_COPYING_START
 Use code with caution. Bash
+IGNORE_WHEN_COPYING_END
+
+On Windows (Command Prompt):
+Generated bash
+
+      
+set FLASK_SECRET_KEY="your-very-long-and-random-secret-key"
+
+    
+
+IGNORE_WHEN_COPYING_START
+Use code with caution. Bash
+IGNORE_WHEN_COPYING_END
+
+On Windows (PowerShell):
+Generated powershell
+
+      
+$env:FLASK_SECRET_KEY="your-very-long-and-random-secret-key"
+
+    
+
+IGNORE_WHEN_COPYING_START
+Use code with caution. Powershell
 IGNORE_WHEN_COPYING_END
 In-App Settings
 
@@ -166,3 +231,26 @@ Technology Stack
 About the Developer
 
 This project was created by Nathaniel Westveer as a personal tool for knowledge exploration. It is open source and free to use, distribute, and modify.
+License
+
+This project is licensed under the MIT License.
+
+Copyright (c) 2025 Nathaniel Westveer
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
