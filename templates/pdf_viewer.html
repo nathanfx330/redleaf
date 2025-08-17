@@ -13,7 +13,6 @@
         #viewer-container { padding-top: 50px; }
         .textLayer ::selection { background: rgba(162, 35, 35, 0.4); }
         
-        /* --- THIS IS THE CORRECT, ISOLATED STYLING FOR THE TOOLBAR --- */
         .pdf-viewer-toolbar {
             position: fixed;
             top: 0;
@@ -29,7 +28,7 @@
             justify-content: center;
             gap: 12px;
             box-shadow: 0 2px 5px rgba(0,0,0,0.3);
-            box-sizing: border-box; /* Ensures padding is included in the width */
+            box-sizing: border-box;
         }
         .pdf-viewer-toolbar button { font-size: 0.9rem; line-height: 1; }
         .pdf-viewer-toolbar input { width: 60px; text-align: center; background-color: var(--background-dark); color: var(--text-light); border: 1px solid var(--border-color); border-radius: 4px; padding: 5px; -moz-appearance: textfield; }
@@ -47,7 +46,6 @@
         .search-snippet { font-size: 0.9em; }
         .search-snippet mark { background-color: var(--brand-red-cool); color: #fff; padding: 1px 3px; border-radius: 3px; font-weight: 600; }
         .search-page-ref { display: block; font-size: 0.8em; color: var(--text-muted); margin-top: 4px; text-align: right; }
-        /* --- END OF ISOLATED STYLING --- */
 
         .page-placeholder {
             position: relative;
@@ -170,7 +168,7 @@
         function highlightResult(result) {
             const pageContainer = document.getElementById(`page-container-${result.pageNum}`);
             const highlightLayer = pageContainer ? pageContainer.querySelector('.highlight-layer') : null;
-            if (!highlightLayer) return;
+            if (!pageContainer || !highlightLayer) return;
 
             document.querySelectorAll('.search-highlight').forEach(h => h.remove());
 
@@ -200,11 +198,8 @@
             highlight.style.height = `${fontHeight}px`;
 
             highlightLayer.appendChild(highlight);
-
-            highlight.scrollIntoView({
-                behavior: 'smooth',
-                block: 'center'
-            });
+            
+            highlight.scrollIntoView({ behavior: 'smooth', block: 'center' });
             
             setTimeout(() => {
                 highlight.classList.add('fading');
@@ -302,7 +297,7 @@
             searchResultsDropdown.style.display = 'block';
         }
         
-        function navigateResults(direction) {
+        async function navigateResults(direction) {
             if (searchResults.length === 0) return;
             
             currentResultIndex += direction;
@@ -310,6 +305,12 @@
             if (currentResultIndex >= searchResults.length) currentResultIndex = 0;
             
             const result = searchResults[currentResultIndex];
+            const pageContainer = document.getElementById(`page-container-${result.pageNum}`);
+
+            if (pageContainer && pageContainer.dataset.rendered !== 'true') {
+                pageContainer.dataset.rendered = 'true';
+                await renderPage(result.pageNum, pageContainer);
+            }
 
             highlightResult(result);
 
@@ -350,12 +351,14 @@
                 }
                 viewerContainer.appendChild(fragment);
                 document.querySelectorAll('.page-placeholder').forEach(el => { renderObserver.observe(el); uiObserver.observe(el); });
-                const hashPage = parseInt(window.location.hash.substring(6), 10);
-                if (hashPage > 1 && hashPage <= pdfDoc.numPages) { setTimeout(() => goToPage(hashPage, 'auto'), 100); }
+
+                window.parent.postMessage({ type: 'viewerReady' }, '*');
+
                 const textPromises = Array.from({ length: pdfDoc.numPages }, (_, i) => pdfDoc.getPage(i + 1).then(p => p.getTextContent()));
                 allPagesTextContent = await Promise.all(textPromises);
                 searchInput.disabled = false; searchBtn.disabled = false;
                 searchInput.placeholder = "Search in document...";
+
             } catch (reason) {
                 console.error('Error loading PDF:', reason);
                 document.querySelector('.pdf-viewer-toolbar').style.display = 'none';
@@ -378,7 +381,16 @@
             const pageElement = e.target.closest('.page-placeholder');
             if (pageElement) { const pageNum = parseInt(pageElement.id.split('-')[2], 10); window.parent.postMessage({ type: 'textSelected', x: e.clientX, y: e.clientY, payload: { selected_text: null, source_doc_id: docId, page_number: pageNum } }, '*'); }
         });
-        window.addEventListener('message', (event) => { if (event.data.type === 'scrollToPage') { goToPage(event.data.page, 'auto'); } });
+        
+        window.addEventListener('message', (event) => {
+            if (event.data && event.data.type === 'scrollToPage') {
+                const pageNum = parseInt(event.data.page, 10);
+                if (!isNaN(pageNum) && pdfDoc && pageNum >= 1 && pageNum <= pdfDoc.numPages) {
+                    goToPage(pageNum, 'auto');
+                }
+            }
+        });
+
         prevBtn.addEventListener('click', () => { if (currentPageNum > 1) goToPage(currentPageNum - 1); });
         nextBtn.addEventListener('click', () => { if (currentPageNum < pdfDoc.numPages) goToPage(currentPageNum + 1); });
         pageNumInput.addEventListener('change', () => { const desiredPage = parseInt(pageNumInput.value, 10); if (desiredPage >= 1 && desiredPage <= pdfDoc.numPages) goToPage(desiredPage, 'auto'); else { updateToolbarUI(currentPageNum); } });
@@ -388,13 +400,18 @@
         zoomPercentInput.addEventListener('change', () => { let value = parseInt(zoomPercentInput.value, 10); if (isNaN(value)) { zoomPercentInput.value = Math.round(currentScale * 100); return; } value = Math.max(10, Math.min(500, value)); currentScale = value / 100.0; updateAllPages(); });
         searchBtn.addEventListener('click', performSearch);
         searchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') performSearch(); });
-        searchResultsDropdown.addEventListener('click', (e) => { 
+        
+        searchResultsDropdown.addEventListener('click', async (e) => { // Make the listener async
             const item = e.target.closest('.search-result-item');
-            if (item) { currentResultIndex = parseInt(item.dataset.index, 10); navigateResults(0); searchResultsDropdown.style.display = 'none'; }
+            if (item) {
+                currentResultIndex = parseInt(item.dataset.index, 10);
+                await navigateResults(0); // Await the navigation function
+                searchResultsDropdown.style.display = 'none';
+            }
         });
         document.addEventListener('click', function(event) { if (searchResultsDropdown.style.display === 'block' && !searchContainer.contains(event.target)) { searchResultsDropdown.style.display = 'none'; } });
-        searchPrevBtn.addEventListener('click', () => navigateResults(-1));
-        searchNextBtn.addEventListener('click', () => navigateResults(1));
+        searchPrevBtn.addEventListener('click', async () => await navigateResults(-1)); // Make these async
+        searchNextBtn.addEventListener('click', async () => await navigateResults(1)); // Make these async
     </script>
 </body>
 </html>
