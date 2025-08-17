@@ -278,7 +278,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const iframe = document.getElementById('doc-viewer');
     if (!iframe) return;
 
-    const handleIframeLoad = () => {
+    // --- START OF FIX: ROBUST MESSAGE HANDLING ---
+    const sendScrollCommand = () => {
         const hash = window.location.hash;
         if (!hash) return;
 
@@ -296,8 +297,22 @@ document.addEventListener('DOMContentLoaded', () => {
             }, '*');
         }
     };
-    
-    iframe.addEventListener('load', handleIframeLoad);
+
+    // Listen for the 'viewerReady' message from the iframe.
+    const messageHandler = (event) => {
+        // You could add an origin check here for security
+        if (event.source !== iframe.contentWindow) return;
+
+        if (event.data && event.data.type === 'viewerReady') {
+            // The viewer is ready, now we can safely send the scroll command.
+            sendScrollCommand();
+            // We can remove the listener now as it has served its purpose for this load.
+            window.removeEventListener('message', messageHandler);
+        }
+    };
+
+    window.addEventListener('message', messageHandler);
+    // --- END OF FIX ---
 });
 </script>
 <script src="{{ url_for('static', filename='js/document_view.js') }}" defer></script>
