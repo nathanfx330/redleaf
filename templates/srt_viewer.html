@@ -121,6 +121,16 @@
             </div>
         </div>
     </main>
+    
+    <!-- ===== START OF FIX ===== -->
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+        // This message tells the parent window (document_view) that this
+        // iframe has loaded and its JavaScript is ready to receive commands.
+        window.parent.postMessage({ type: 'viewerReady' }, '*');
+    });
+    </script>
+    <!-- ===== END OF FIX ===== -->
 
     <script>
     document.addEventListener('DOMContentLoaded', () => {
