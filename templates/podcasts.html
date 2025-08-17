@@ -1,0 +1,81 @@
+<!-- File: ./templates/podcasts.html -->
+{% extends 'layout.html' %}
+{% block title %}Podcast Collections - Redleaf{% endblock %}
+{% block content %}
+<div class="page-heading"><h1>Podcast Collections</h1></div>
+<p class="text-muted">These collections are automatically generated based on the 'Podcast / Publication Series' metadata of your documents.</p>
+
+<div class="accordion" id="podcasts-container">
+    <div class="panel">
+        <div class="panel-body text-muted">
+            <em>Loading podcast collections...</em>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const container = document.getElementById('podcasts-container');
+
+    async function loadPodcasts() {
+        try {
+            const response = await fetch('/api/podcasts/collections');
+            if (!response.ok) throw new Error('Network error');
+            const podcasts = await response.json();
+
+            if (podcasts.length === 0) {
+                container.innerHTML = `
+                    <div class="panel"><div class="panel-body empty-state">
+                        <p>No podcast collections found.</p>
+                        <p class="text-muted">To create one, process an SRT transcript and add bibliographic metadata, making sure to fill in the "Podcast / Publication Series" field.</p>
+                    </div></div>`;
+                return;
+            }
+
+            container.innerHTML = ''; // Clear loading message
+            podcasts.forEach(podcast => {
+                const details = document.createElement('details');
+                details.className = 'accordion-item';
+
+                let episodesHtml = `
+                    <div class="table-container">
+                        <table class="data-table">
+                            <thead><tr><th>Date</th><th>Episode Title</th><th>Author</th></tr></thead>
+                            <tbody>`;
+
+                podcast.episodes.forEach(ep => {
+                    episodesHtml += `
+                        <tr>
+                            <td style="white-space: nowrap;">${ep.date || 'N/A'}</td>
+                            <td><a href="/document/${ep.doc_id}">${ep.title}</a></td>
+                            <td>${ep.author}</td>
+                        </tr>`;
+                });
+
+                episodesHtml += '</tbody></table></div>';
+                
+                details.innerHTML = `
+                    <summary class="accordion-header">
+                        <span>${podcast.title}</span>
+                        <span class="chip">${podcast.episodes.length} episodes</span>
+                    </summary>
+                    <div class="accordion-body">
+                        ${episodesHtml}
+                    </div>
+                `;
+                container.appendChild(details);
+            });
+
+        } catch (error) {
+            console.error("Failed to load podcast collections:", error);
+            container.innerHTML = '<div class="panel"><div class="panel-body text-danger">Could not load podcast data.</div></div>';
+        }
+    }
+
+    loadPodcasts();
+});
+</script>
+{% endblock %}

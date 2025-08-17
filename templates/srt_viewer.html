@@ -1,0 +1,398 @@
+<!-- File: ./templates/srt_viewer.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SRT Viewer: {{ doc_title }}</title>
+    <style>
+        :root {
+            --bg-color: #1e1e24; --text-color: #E8E8EA; --text-muted: #828290;
+            --page-border: #383842; --highlight-bg: rgba(162, 35, 35, 0.3);
+            --toolbar-bg: #2a2a32; --brand-red: #A22323; --brand-red-dark: #801818;
+            --button-bg: #383842; --button-hover: #4f4f4a; --input-bg: #121218;
+        }
+        html, body { height: 100%; overflow: hidden; margin: 0; padding: 0; background-color: var(--bg-color); color: var(--text-color); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+        body { display: flex; flex-direction: column; }
+        
+        .viewer-header { flex-shrink: 0; background-color: var(--toolbar-bg); box-shadow: 0 2px 5px rgba(0,0,0,0.3); z-index: 100; display: flex; flex-direction: column; }
+        .viewer-main { flex-grow: 1; display: flex; flex-direction: column; min-height: 0; }
+        .tabs-nav { flex-shrink: 0; display: flex; background-color: var(--toolbar-bg); border-bottom: 1px solid var(--page-border); }
+        .tab-link { padding: 0.6rem 1.25rem; cursor: pointer; border: none; background: none; color: var(--text-muted); border-bottom: 3px solid transparent; margin-bottom: -1px; font-size: 1rem; font-weight: 500; }
+        .tab-link:hover { color: var(--text-color); }
+        .tab-link.active { color: var(--text-color); border-bottom-color: var(--brand-red); }
+        .tab-content { display: none; flex-grow: 1; min-height: 0; overflow-y: auto; }
+        .tab-content.active { display: flex; flex-direction: column; }
+        .tab-content-inner { padding: 1.5rem; max-width: 800px; width: 100%; margin: 0 auto; box-sizing: border-box; }
+        
+        .search-form { display: flex; gap: 0.5rem; flex-shrink: 0; margin-bottom: 1rem; }
+        .search-form input { flex-grow: 1; background-color: var(--input-bg); color: var(--text-color); border: 1px solid var(--page-border); border-radius: 4px; padding: 5px 10px; }
+        .search-form button { background-color: var(--button-bg); color: var(--text-color); border: 1px solid var(--page-border); border-radius: 4px; padding: 5px 10px; cursor: pointer; transition: background-color: 0.15s; }
+        .search-status { color: var(--text-muted); font-size: 0.9em; flex-shrink: 0; margin-bottom: 1rem; }
+        #search-results-list { list-style: none; padding: 0; margin: 0; }
+        .search-result-item { padding: 10px 15px; cursor: pointer; border-bottom: 1px solid var(--page-border); }
+        .search-result-item:hover { background-color: var(--button-hover); }
+        .result-timestamp { font-family: monospace; color: var(--text-muted); font-size: 0.9em; }
+        .result-snippet { font-size: 1em; }
+        .result-snippet mark { background-color: var(--brand-red); color: white; padding: 1px 3px; border-radius: 3px; }
+
+        .media-container { background-color: #000; overflow: hidden; flex-grow: 1; min-height: 50px; }
+        .viewer-header.is-audio .media-container { flex-grow: 0; height: auto; min-height: 0; }
+        #media-player { width: 100%; height: 100%; object-fit: contain; display: block; }
+        audio#media-player { height: auto; }
+
+        .media-controls { padding: 8px 12px; display: flex; align-items: center; gap: 12px; height: 40px; box-sizing: border-box; visibility: hidden; border-top: 1px solid var(--page-border); }
+        .media-controls.visible { visibility: visible; }
+        .play-pause-btn { background: none; border: none; color: var(--text-color); cursor: pointer; width: 24px; height: 24px; padding: 0; display: flex; align-items: center; justify-content: center; } .play-pause-btn svg { width: 100%; height: 100%; fill: currentColor; } .play-pause-btn .icon-pause { display: none; } .play-pause-btn.playing .icon-play { display: none; } .play-pause-btn.playing .icon-pause { display: block; }
+        .seek-bar, .volume-slider { -webkit-appearance: none; appearance: none; height: 4px; background: var(--page-border); outline: none; transition: opacity .2s; cursor: pointer; } .seek-bar { flex-grow: 0.9; } .seek-bar::-webkit-slider-thumb, .volume-slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 14px; height: 14px; background: var(--text-color); cursor: pointer; border-radius: 50%; border: 0; transition: background-color: 0.15s ease-in-out; } .seek-bar::-moz-range-thumb, .volume-slider::-moz-range-thumb { width: 14px; height: 14px; background: var(--text-color); cursor: pointer; border-radius: 50%; border: 0; transition: background-color: 0.15s ease-in-out; } .seek-bar:hover::-webkit-slider-thumb, .volume-slider:hover::-webkit-slider-thumb { background: var(--brand-red); } .seek-bar:hover::-moz-range-thumb, .volume-slider:hover::-moz-range-thumb { background: var(--brand-red); }
+        .time-display { font-family: monospace; font-size: 0.9em; color: var(--text-muted); }
+        .volume-container { display: flex; align-items: center; gap: 8px; min-width: 120px; } .volume-btn { background: none; border: none; color: var(--text-color); cursor: pointer; width: 24px; height: 24px; padding: 0; } .volume-btn svg { width: 100%; height: 100%; fill: currentColor; } .volume-btn .icon-volume-mute { display: none; } .volume-btn.muted .icon-volume-up { display: none; } .volume-btn.muted .icon-volume-mute { display: block; } .volume-slider { flex-grow: 1; }
+        .cue { margin-bottom: 1.5rem; cursor: pointer; padding: 0.5rem; border-radius: 4px; border: 1px solid transparent; transition: background-color 0.3s ease-in-out, border-color 0.3s ease-in-out; display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; } .cue-content { flex-grow: 1; } .cue-actions { flex-shrink: 0; } .add-to-comment-btn { background: #383842; color: var(--text-muted); border: none; border-radius: 50%; width: 28px; height: 28px; font-size: 20px; line-height: 28px; text-align: center; cursor: pointer; transition: all 0.2s ease; font-weight: bold; } .add-to-comment-btn:hover { background-color: var(--brand-red); color: white; transform: scale(1.1); } .cue.highlight { background-color: var(--highlight-bg); } .cue-timestamp { font-family: monospace; color: var(--text-muted); font-size: 1.3em; margin-bottom: 0.25rem; transition: color 0.2s ease-in-out; } .cue.active-cue .cue-timestamp { color: var(--brand-red); font-weight: bold; } .cue.paused-at-cue .cue-timestamp { color: var(--brand-red-dark); font-weight: bold; } .cue.paused-by-click .cue-timestamp { color: var(--brand-red-dark); transition: color 0.1s ease-in-out; } .cue-dialogue { font-size: 1.1em; line-height: 1.6; } .cue-dialogue::selection { background: rgba(162, 35, 35, 0.4); }
+
+        #resizer-handle {
+            flex-shrink: 0;
+            height: 5px;
+            background-color: var(--page-border);
+            cursor: row-resize;
+            transition: background-color 0.2s ease;
+        }
+        #resizer-handle:hover {
+            background-color: var(--brand-red);
+        }
+        body.is-resizing {
+            cursor: row-resize;
+            user-select: none;
+        }
+        body.is-resizing * {
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    
+    <header class="viewer-header {% if doc.linked_video_path %}is-video{% else %}is-audio{% endif %}">
+        <div class="media-container">
+            {% if doc.linked_video_path %}
+                <video id="media-player"><source src="{{ url_for('main.serve_document', relative_path=doc.linked_video_path) }}" type="video/mp4"></video>
+            {% elif doc.linked_audio_path %}
+                <audio id="media-player" style="width: 100%;"><source src="{{ url_for('main.serve_document', relative_path=doc.linked_audio_path) }}" type="audio/mpeg"></source></audio>
+            {% endif %}
+        </div>
+        <div id="media-player-bar" class="media-controls">
+            <button id="play-pause-btn" class="play-pause-btn" title="Play/Pause"><svg class="icon-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"></path></svg><svg class="icon-pause" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"></path></svg></button>
+            <span id="current-time" class="time-display">00:00</span>
+            <input type="range" id="seek-bar" class="seek-bar" value="0" step="0.1">
+            <span id="total-duration" class="time-display">00:00</span>
+            <div class="volume-container"><button id="volume-btn" class="volume-btn" title="Mute/Unmute"><svg class="icon-volume-up" viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"></path></svg><svg class="icon-volume-mute" viewBox="0 0 24 24"><path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"></path></svg></button><input type="range" id="volume-slider" class="volume-slider" min="0" max="1" step="0.05" value="1"></div>
+        </div>
+    </header>
+    
+    {% if doc.linked_video_path %}
+    <div id="resizer-handle"></div>
+    {% endif %}
+
+    <main class="viewer-main">
+        <nav class="tabs-nav">
+            <button class="tab-link active" data-tab="transcript">Transcript</button>
+            <button class="tab-link" data-tab="search">Search</button>
+        </nav>
+
+        <div id="transcript-tab-content" class="tab-content active">
+            <div class="tab-content-inner">
+            {% if cues %}
+                {% for cue in cues %}
+                <div class="cue" id="cue-{{ cue.sequence }}" data-timestamp="{{ cue.timestamp }}">
+                    <div class="cue-content"><div class="cue-timestamp">{{ cue.timestamp }}</div><div class="cue-dialogue">{{ cue.dialogue }}</div></div>
+                    <div class="cue-actions"><button class="add-to-comment-btn" title="Add to comment">+</button></div>
+                </div>
+                {% endfor %}
+            {% else %}<p>No subtitle content could be parsed from this file.</p>{% endif %}
+            </div>
+        </div>
+
+        <div id="search-tab-content" class="tab-content">
+            <div class="tab-content-inner">
+                <div class="search-form">
+                    <input type="search" id="srt-search-input" placeholder="Search transcript...">
+                    <button id="srt-search-btn">Search</button>
+                </div>
+                <div id="search-status" class="search-status"></div>
+                <ul id="search-results-list"></ul>
+            </div>
+        </div>
+    </main>
+
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const docId = {{ doc.id }};
+        const CSRF_TOKEN = "{{ form.csrf_token._value() }}";
+        const mediaPlayer = document.getElementById('media-player');
+        
+        const transcriptContainer = document.querySelector('#transcript-tab-content .tab-content-inner');
+        const mediaContainer = document.querySelector('.media-container');
+        const topBar = document.getElementById('media-player-bar');
+        const playPauseBtn = document.getElementById('play-pause-btn');
+        const seekBar = document.getElementById('seek-bar');
+        const currentTimeEl = document.getElementById('current-time');
+        const totalDurationEl = document.getElementById('total-duration');
+        const volumeBtn = document.getElementById('volume-btn');
+        const volumeSlider = document.getElementById('volume-slider');
+        const searchInput = document.getElementById('srt-search-input');
+        const searchBtn = document.getElementById('srt-search-btn');
+        const searchStatus = document.getElementById('search-status');
+        const searchResultsList = document.getElementById('search-results-list');
+        const tabsNav = document.querySelector('.tabs-nav');
+        const tabContents = document.querySelectorAll('.tab-content');
+
+        let cuesData = [], lastActiveCue = null, isMediaReady = false, seekbarMousedown = false, lastVolume = 1, lastBroadcastedCueNum = -1;
+        const originalCueHTML = {};
+        document.querySelectorAll('.cue .cue-dialogue').forEach(el => { originalCueHTML[el.closest('.cue').id] = el.innerHTML; });
+        
+        const debounce = (f, w) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => f.apply(this, a), w); }; };
+        const parseSRTTimestamp = ts => { const [t, ms] = ts.split(','); const [h, m, s] = t.split(':').map(Number); return h*3600 + m*60 + s + ms/1000; };
+        const formatTime = s => isNaN(s) ? '00:00' : `${String(Math.floor(s/60)).padStart(2,'0')}:${String(Math.floor(s%60)).padStart(2,'0')}`;
+        
+        let isSaving = false;
+        async function savePositionNow() {
+            if (!mediaPlayer || !isMediaReady || isSaving) return;
+            const position = mediaPlayer.currentTime;
+            if (isNaN(position) || position < 0) return;
+            isSaving = true;
+            try {
+                await fetch(`/api/document/${docId}/save_audio_position`, { 
+                    method: 'POST', 
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN }, 
+                    body: JSON.stringify({ position: position }) 
+                });
+            } catch(e) { 
+                console.error("Failed to save media position:", e); 
+            } finally {
+                setTimeout(() => { isSaving = false; }, 100);
+            }
+        }
+        const debouncedSavePosition = debounce(savePositionNow, 500);
+
+        function prepareCueData() { document.querySelectorAll('.cue').forEach(el => { const ts = el.dataset.timestamp.replace('→', '-->'); const [start, end] = ts.split(' --> '); if (start && end) cuesData.push({ element: el, start: parseSRTTimestamp(start.trim()), end: parseSRTTimestamp(end.trim()) }); }); }
+        
+        function scrollToCue(sequence, behavior = 'smooth') {
+            const cueEl = document.getElementById(`cue-${sequence}`);
+            if (cueEl) {
+                const transcriptTab = document.querySelector('.tab-link[data-tab="transcript"]');
+                if (!transcriptTab.classList.contains('active')) transcriptTab.click();
+                
+                const container = document.getElementById('transcript-tab-content');
+                const contRect = container.getBoundingClientRect();
+                const elRect = cueEl.getBoundingClientRect();
+                const offset = elRect.top - contRect.top - (contRect.height * 0.25) + (elRect.height / 2);
+                
+                container.scrollBy({ top: offset, behavior: behavior });
+                cueEl.classList.add('highlight');
+                setTimeout(() => cueEl.classList.remove('highlight'), 2500);
+            }
+        }
+        
+        async function performSearch() {
+            const query = searchInput.value.trim();
+            if (query.length < 2) { clearSearch(); return; }
+            searchBtn.disabled = true; searchStatus.textContent = 'Searching...';
+            try {
+                const res = await fetch(`/api/document/${docId}/search_srt?q=${encodeURIComponent(query)}`);
+                const data = await res.json();
+                if (!data.success) throw new Error(data.message);
+                renderSearchResults(data.results);
+                highlightAllMatchesInTranscript(query);
+            } catch(e) { console.error("Search failed:", e); searchStatus.textContent = 'Error!'; }
+            finally { searchBtn.disabled = false; }
+        }
+        function renderSearchResults(results) {
+            searchResultsList.innerHTML = '';
+            if (results.length === 0) { searchStatus.textContent = '0 results'; return; }
+            searchStatus.textContent = `${results.length} results`;
+            results.forEach(res => {
+                const item = document.createElement('li');
+                item.className = 'search-result-item';
+                item.dataset.sequence = res.sequence;
+                item.innerHTML = `<div class="result-timestamp">${res.timestamp.replace('-->',' → ')}</div><div class="result-snippet">${res.snippet}</div>`;
+                searchResultsList.appendChild(item);
+            });
+        }
+        function highlightAllMatchesInTranscript(query) {
+            document.querySelectorAll('.cue .cue-dialogue').forEach(el => { el.innerHTML = originalCueHTML[el.closest('.cue').id] || el.innerHTML; });
+            if (!query) return;
+            const pattern = new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+            document.querySelectorAll('.cue .cue-dialogue').forEach(el => { if (el.textContent.toLowerCase().includes(query.toLowerCase())) el.innerHTML = el.innerHTML.replace(pattern, `<mark>$1</mark>`); });
+        }
+        function clearSearch() { searchInput.value = ''; searchStatus.textContent = ''; searchResultsList.innerHTML = ''; highlightAllMatchesInTranscript(null); }
+
+        function updateAllControls() { if (!mediaPlayer || !isMediaReady) return; const isPlaying = !mediaPlayer.paused, time = mediaPlayer.currentTime, dur = mediaPlayer.duration; currentTimeEl.textContent = formatTime(time); if (!seekbarMousedown) seekBar.value = time; if (!isNaN(dur)) { totalDurationEl.textContent = formatTime(dur); seekBar.max = dur; } playPauseBtn.classList.toggle('playing', isPlaying); }
+        function syncManualHighlight() {
+            if (!mediaPlayer) return;
+            const time = mediaPlayer.currentTime;
+            const cueData = cuesData.find(c => time >= c.start && time < c.end);
+            const newActiveEl = cueData ? cueData.element : null;
+            if (lastActiveCue && lastActiveCue !== newActiveEl) lastActiveCue.classList.remove('active-cue', 'paused-at-cue');
+            if (newActiveEl) {
+                const currentCueNum = parseInt(newActiveEl.id.split('-')[1], 10);
+                if (!mediaPlayer.paused && lastActiveCue !== newActiveEl) {
+                    scrollToCue(currentCueNum, 'smooth');
+                }
+                if (currentCueNum !== lastBroadcastedCueNum) {
+                    window.parent.postMessage({ type: 'pageChanged', currentPage: currentCueNum }, '*');
+                    lastBroadcastedCueNum = currentCueNum;
+                }
+                newActiveEl.classList.toggle('active-cue', !mediaPlayer.paused);
+                newActiveEl.classList.toggle('paused-at-cue', mediaPlayer.paused);
+            } else if (lastBroadcastedCueNum !== -1) {
+                // When between cues, send a signal that no cue is active (optional)
+                // window.parent.postMessage({ type: 'pageChanged', currentPage: null }, '*');
+                lastBroadcastedCueNum = -1;
+            }
+            lastActiveCue = newActiveEl;
+        }
+        function handleHash() {
+            const hash = window.location.hash;
+            let cueNum = null;
+            if (hash) {
+                if (hash.startsWith('#cue=')) { cueNum = parseInt(hash.substring(5), 10); } 
+                else if (hash.startsWith('#page=')) { cueNum = parseInt(hash.substring(6), 10); }
+            }
+            if (cueNum && !isNaN(cueNum)) {
+                const targetCue = cuesData.find(c => c.element.id === `cue-${cueNum}`);
+                if (targetCue) return targetCue.start;
+            }
+            return null;
+        }
+        function setupMediaPlayer() { 
+            if (!mediaPlayer) { topBar.style.display = 'none'; return; } 
+            mediaPlayer.controls = false; topBar.classList.add('visible'); 
+            const urlParams = new URLSearchParams(window.location.search); 
+            const posParam = parseFloat(urlParams.get('position')); 
+            const dbPos = {{ doc.last_audio_position or 0.0 }}; 
+            const hashSeekTime = handleHash();
+            let seekTarget = dbPos;
+            if (hashSeekTime !== null) seekTarget = hashSeekTime;
+            else if (!isNaN(posParam)) seekTarget = posParam;
+            
+            const onMeta = () => { 
+                isMediaReady = true; 
+                updateAllControls(); 
+                if (seekTarget > 0) mediaPlayer.currentTime = seekTarget; 
+                const targetCueData = cuesData.find(c => seekTarget >= c.start && seekTarget < c.end); 
+                if (targetCueData) scrollToCue(parseInt(targetCueData.element.id.split('-')[1], 10), 'auto'); 
+                syncManualHighlight(); 
+            }; 
+            if (mediaPlayer.readyState >= 1) onMeta(); else mediaPlayer.addEventListener('loadedmetadata', onMeta, { once: true }); 
+        }
+
+        tabsNav.addEventListener('click', e => { if (!e.target.classList.contains('tab-link')) return; const tabId = e.target.dataset.tab; tabsNav.querySelectorAll('.tab-link').forEach(l => l.classList.remove('active')); e.target.classList.add('active'); tabContents.forEach(c => c.classList.toggle('active', c.id === `${tabId}-tab-content`)); });
+        searchBtn.addEventListener('click', performSearch);
+        searchInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); performSearch(); } else if (e.key === 'Escape') clearSearch(); });
+        searchResultsList.addEventListener('click', e => {
+            const item = e.target.closest('.search-result-item');
+            if (!item) return;
+            const sequence = item.dataset.sequence;
+            scrollToCue(sequence, 'smooth');
+            if (mediaPlayer && isMediaReady) {
+                const targetCueData = cuesData.find(cue => cue.element.id === `cue-${sequence}`);
+                if (targetCueData) {
+                    const seekTime = targetCueData.start;
+                    mediaPlayer.addEventListener('seeked', () => mediaPlayer.play(), { once: true });
+                    mediaPlayer.currentTime = seekTime;
+                }
+            }
+        });
+        
+        if (mediaPlayer) { 
+            mediaPlayer.addEventListener('play', updateAllControls); 
+            mediaPlayer.addEventListener('pause', () => { updateAllControls(); savePositionNow(); syncManualHighlight(); }); 
+            mediaPlayer.addEventListener('timeupdate', () => { updateAllControls(); syncManualHighlight(); debouncedSavePosition(); }); 
+            mediaPlayer.addEventListener('seeked', () => { syncManualHighlight(); savePositionNow(); });
+            mediaPlayer.addEventListener('volumechange', () => { volumeSlider.value = mediaPlayer.volume; volumeBtn.classList.toggle('muted', mediaPlayer.volume === 0 || mediaPlayer.muted); }); 
+            mediaContainer.addEventListener('click', () => mediaPlayer.paused ? mediaPlayer.play() : mediaPlayer.pause()); 
+            playPauseBtn.addEventListener('click', () => mediaPlayer.paused ? mediaPlayer.play() : mediaPlayer.pause()); 
+            seekBar.addEventListener('input', () => { currentTimeEl.textContent = formatTime(seekBar.value); }); 
+            seekBar.addEventListener('change', () => { const t = parseFloat(seekBar.value); mediaPlayer.currentTime = t; }); 
+            seekBar.addEventListener('mousedown', () => { seekbarMousedown = true; }); 
+            seekBar.addEventListener('mouseup', () => { seekbarMousedown = false; }); 
+            volumeSlider.addEventListener('input', e => { mediaPlayer.volume = e.target.value; mediaPlayer.muted = e.target.value === '0'; }); 
+            volumeBtn.addEventListener('click', () => { mediaPlayer.muted = !mediaPlayer.muted; if (mediaPlayer.muted) { lastVolume = mediaPlayer.volume; mediaPlayer.volume = 0; } else { mediaPlayer.volume = lastVolume > 0.05 ? lastVolume : 1; } }); 
+        }
+        
+        transcriptContainer.addEventListener('click', e => {
+            const cueEl = e.target.closest('.cue');
+            if (!cueEl) return;
+            if (e.target.classList.contains('add-to-comment-btn')) {
+                const text = `[${cueEl.dataset.timestamp}] ${cueEl.querySelector('.cue-dialogue').textContent}`;
+                window.parent.postMessage({ type: 'insertIntoComment', text }, '*');
+                return;
+            }
+            if (!mediaPlayer || !isMediaReady) return;
+            if (!mediaPlayer.paused && cueEl.classList.contains('active-cue')) { 
+                mediaPlayer.pause(); 
+                cueEl.classList.add('paused-by-click'); 
+                setTimeout(() => cueEl.classList.remove('paused-by-click'), 800); 
+            } else { 
+                const fullTimestamp = cueEl.dataset.timestamp.replace('→', '-->');
+                const [startStr] = fullTimestamp.split(' --> ');
+                if (startStr) {
+                    const seekTime = parseSRTTimestamp(startStr.trim());
+                    mediaPlayer.addEventListener('seeked', () => mediaPlayer.play(), { once: true });
+                    mediaPlayer.currentTime = seekTime;
+                }
+            }
+        });
+
+        const handleInteraction = e => { const sel = window.getSelection(); if (e.type === 'contextmenu') e.preventDefault(); else if (sel.isCollapsed) return; const text = sel.toString().trim().replace(/\s+/g, ' '); if (e.type !== 'contextmenu' && !text) return; const range = sel.rangeCount > 0 ? sel.getRangeAt(0) : null; let startCueEl = null; if (range) startCueEl = (range.startContainer.nodeType === 3 ? range.startContainer.parentElement : range.startContainer).closest('.cue'); else if (e.type === 'contextmenu') startCueEl = e.target.closest('.cue'); if (startCueEl) { const seq = parseInt(startCueEl.id.split('-')[1], 10); window.parent.postMessage({ type: 'textSelected', x: e.clientX, y: e.clientY, payload: { selected_text: text || null, source_doc_id: docId, page_number: seq } }, '*'); } };
+        transcriptContainer.addEventListener('mouseup', handleInteraction);
+        transcriptContainer.addEventListener('contextmenu', handleInteraction);
+        
+        window.addEventListener('message', e => { if (e.data.type === 'seekToTimestamp' && e.data.timestamp) { const t = parseSRTTimestamp(e.data.timestamp); if (!isNaN(t) && isMediaReady) { mediaPlayer.currentTime = t; mediaPlayer.play(); } } else if (e.data.type === 'loadMedia' && e.data.url) window.location.reload(); else if (e.data && (e.data.type === 'scrollToCue' || e.data.type === 'scrollToPage')) { const num = parseInt(e.data.cue || e.data.page, 10); if (!isNaN(num)) scrollToCue(num); } });
+        
+        window.addEventListener('beforeunload', () => {
+            if (mediaPlayer && isMediaReady) {
+                savePositionNow();
+            }
+        });
+        
+        const resizerHandle = document.getElementById('resizer-handle');
+        const viewerHeader = document.querySelector('.viewer-header');
+
+        if (resizerHandle) {
+            let initialHeight, initialY;
+            const onMouseMove = (e) => {
+                const deltaY = e.clientY - initialY;
+                let newHeight = initialHeight + deltaY;
+                const minHeight = 120, maxHeight = window.innerHeight * 0.9;
+                if (newHeight < minHeight) newHeight = minHeight;
+                if (newHeight > maxHeight) newHeight = maxHeight;
+                viewerHeader.style.height = `${newHeight}px`;
+            };
+            const onMouseUp = () => {
+                document.body.classList.remove('is-resizing');
+                window.removeEventListener('mousemove', onMouseMove);
+                window.removeEventListener('mouseup', onMouseUp);
+                localStorage.setItem('redleaf-srt-viewer-height', viewerHeader.style.height);
+            };
+            resizerHandle.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                initialY = e.clientY;
+                initialHeight = viewerHeader.offsetHeight;
+                document.body.classList.add('is-resizing');
+                window.addEventListener('mousemove', onMouseMove);
+                window.addEventListener('mouseup', onMouseUp);
+            });
+
+            const savedHeight = localStorage.getItem('redleaf-srt-viewer-height');
+            if (savedHeight) {
+                viewerHeader.style.height = savedHeight;
+            } else {
+                viewerHeader.style.height = '40vh';
+            }
+        }
+        
+        prepareCueData();
+        setupMediaPlayer();
+    });
+    </script>
+</body>
+</html>

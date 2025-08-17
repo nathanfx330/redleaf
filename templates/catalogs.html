@@ -1,0 +1,309 @@
+{% extends 'layout.html' %}
+{% block title %}Collections - Redleaf{% endblock %}
+{% block content %}
+<div class="page-heading"><h1>Collections</h1></div>
+<p>Organize and browse your documents in user-created collections or automatically generated groups.</p>
+
+<div class="panel">
+    <div class="panel-body">
+        <form id="csrf-form-container" style="display: none;">{{ form.hidden_tag() }}</form>
+
+        <nav class="tabs-nav">
+            <button class="tab-link active" data-tab="view">Manual Collections</button>
+            <button class="tab-link" data-tab="podcasts">Podcast Collections</button>
+            {% if g.user.role == 'admin' %}
+            <button class="tab-link" data-tab="manage">Manage</button>
+            {% endif %}
+        </nav>
+
+        <!-- Tab 1: Manual User Collections -->
+        <div id="tab-view" class="tab-content active">
+            <div class="row">
+                <div class="col-md-8">
+                    <h3 class="mt-3">Your Collections</h3>
+                    <div class="accordion">
+                        {% if catalogs_for_view %}
+                            {% for catalog in catalogs_for_view %}
+                            <details class="accordion-item" data-catalog-id="{{ catalog.id }}">
+                                <summary class="accordion-header">
+                                    <span class="catalog-name">{{ catalog.name }}</span>
+                                    <div class="catalog-controls">
+                                        <span class="chip">{{ catalog.documents|length }} docs</span>
+                                    </div>
+                                </summary>
+                                <div class="accordion-body">
+                                    {% if catalog.description %}<p class="text-muted"><em>{{ catalog.description }}</em></p>{% endif %}
+                                    {% if catalog.documents %}
+                                        <ul class="simple-list">
+                                        {% for doc in catalog.documents %}
+                                            <li>
+                                                {% if doc.color %}<span class="color-dot" style="background-color: {{ doc.color }};"></span>{% endif %}
+                                                <a href="{{ url_for('main.document_view', doc_id=doc.id) }}">{{ doc.relative_path }}</a>
+                                                <span class="ms-2">
+                                                    {% if doc.has_tags %}<span class="chip" title="This document has tags">🏷️</span>{% endif %}
+                                                    {% if doc.has_personal_note %}<span class="chip" title="You have a private note">📝</span>{% endif %}
+                                                    {% if doc.comment_count > 0 %}<span class="chip" title="{{ doc.comment_count }} public comment(s)">💬 {{ doc.comment_count }}</span>{% endif %}
+                                                </span>
+                                            </li>
+                                        {% endfor %}
+                                        </ul>
+                                    {% else %}<p class="text-muted">This catalog is empty.</p>{% endif %}
+                                </div>
+                            </details>
+                            {% endfor %}
+                        {% else %}<p class="text-muted">No catalogs created yet.</p>{% endif %}
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="panel mt-3">
+                        <div class="panel-header">Create New Collection</div>
+                        <div class="panel-body">
+                            <form id="create-catalog-form" method="POST" action="{{ url_for('main.create_catalog') }}">
+                                {{ form.hidden_tag() }}
+                                <div class="form-group">
+                                    <label for="new-catalog-name" class="form-label">Collection Name</label>
+                                    <input type="text" class="form-control" name="name" id="new-catalog-name" required>
+                                </div>
+                                <div class="form-group">
+                                    <label for="new-catalog-desc" class="form-label">Description (Optional)</label>
+                                    <textarea class="form-control" name="description" id="new-catalog-desc" rows="3"></textarea>
+                                </div>
+                                <button type="submit" class="button button-primary" id="create-catalog-btn">Create Collection</button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab 2: Automatic Podcast Collections -->
+        <div id="tab-podcasts" class="tab-content">
+            <h3 class="mt-3">Podcast Collections</h3>
+            <p class="text-muted">These collections are automatically generated based on the 'Podcast / Publication Series' metadata of your documents.</p>
+            <div class="accordion" id="podcasts-container">
+                <div class="panel">
+                    <div class="panel-body text-muted">
+                        <em>Loading podcast collections...</em>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab 3: Admin Management View -->
+        {% if g.user.role == 'admin' %}
+        <div id="tab-manage" class="tab-content">
+            <h3 class="mt-3">Manage Manual Collections</h3>
+            <p class="text-muted">Edit or permanently delete user-created collections from the system. These actions cannot be undone.</p>
+            <div class="table-container">
+                <table class="data-table manage-catalogs-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Description</th>
+                            <th style="width: 150px;">Document Count</th>
+                            <th style="width: 200px;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    {% for catalog in catalogs_for_management %}
+                        <tr data-catalog-id="{{ catalog.id }}" data-catalog-name="{{ catalog.name }}" data-catalog-description="{{ catalog.description or '' }}">
+                            <td class="catalog-name-cell">{{ catalog.name }}</td>
+                            <td class="catalog-desc-cell">{{ catalog.description or '' }}</td>
+                            <td>{{ catalog.doc_count }}</td>
+                            <td class="action-cell">
+                                {% if catalog.name != '⭐ Favorites' %}
+                                    <button class="button button-small edit-catalog-btn">Edit</button>
+                                    <button class="button button-danger button-small delete-catalog-btn" data-doc-count="{{ catalog.doc_count }}">Delete</button>
+                                {% else %}
+                                    <span class="text-muted">—</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const csrfToken = document.querySelector('#csrf-form-container input[name="csrf_token"]').value;
+    let podcastTabLoaded = false;
+
+    // --- Tab Switching Logic ---
+    const tabLinks = document.querySelectorAll('.tab-link');
+    const tabContents = document.querySelectorAll('.tab-content');
+    tabLinks.forEach(link => {
+        link.addEventListener('click', () => {
+            const tabId = link.dataset.tab;
+            tabLinks.forEach(l => l.classList.remove('active'));
+            link.classList.add('active');
+            tabContents.forEach(content => {
+                content.classList.toggle('active', content.id === `tab-${tabId}`);
+            });
+
+            if (tabId === 'podcasts' && !podcastTabLoaded) {
+                loadPodcasts();
+            }
+        });
+    });
+
+    // --- Podcast Tab Logic ---
+    async function loadPodcasts() {
+        podcastTabLoaded = true;
+        const container = document.getElementById('podcasts-container');
+        try {
+            const response = await fetch('/api/podcasts/collections');
+            if (!response.ok) throw new Error('Network error');
+            const podcasts = await response.json();
+
+            if (podcasts.length === 0) {
+                container.innerHTML = `
+                    <div class="panel"><div class="panel-body empty-state">
+                        <p>No podcast collections found.</p>
+                        <p class="text-muted">To create one, process an SRT transcript and add bibliographic metadata, making sure to fill in the "Podcast / Publication Series" field.</p>
+                    </div></div>`;
+                return;
+            }
+
+            container.innerHTML = ''; // Clear loading message
+            podcasts.forEach(podcast => {
+                const details = document.createElement('details');
+                details.className = 'accordion-item';
+
+                let episodesHtml = `
+                    <div class="table-container">
+                        <table class="data-table">
+                            <thead><tr>
+                                <th>Episode Title</th>
+                                <th>Date</th>
+                                <th>Author</th>
+                                <th>Attributes</th>
+                            </tr></thead>
+                            <tbody>`;
+
+                podcast.episodes.forEach(ep => {
+                    const colorDot = ep.color ? `<span class="color-dot" style="background-color: ${ep.color};"></span>` : '';
+                    const tagChip = ep.tag_count > 0 ? `<span class="chip" title="${ep.tag_count} tag(s)">🏷️</span>` : '';
+                    const attributesHtml = `${colorDot} ${tagChip}`;
+
+                    episodesHtml += `
+                        <tr>
+                            <td><a href="/document/${ep.doc_id}">${ep.title}</a></td>
+                            <td style="white-space: nowrap;">${ep.date || 'N/A'}</td>
+                            <td>${ep.author}</td>
+                            <td>${attributesHtml}</td>
+                        </tr>`;
+                });
+                episodesHtml += '</tbody></table></div>';
+                
+                details.innerHTML = `
+                    <summary class="accordion-header">
+                        <span>${podcast.title}</span>
+                        <span class="chip">${podcast.episodes.length} episodes</span>
+                    </summary>
+                    <div class="accordion-body">
+                        ${episodesHtml}
+                    </div>
+                `;
+                container.appendChild(details);
+            });
+        } catch (error) {
+            console.error("Failed to load podcast collections:", error);
+            container.innerHTML = '<div class="panel"><div class="panel-body text-danger">Could not load podcast data.</div></div>';
+        }
+    }
+
+    // --- Admin Management Logic for Manual Catalogs ---
+    const manageTable = document.querySelector('.manage-catalogs-table');
+    if (manageTable) {
+        const tableBody = manageTable.querySelector('tbody');
+        const revertRowToViewMode = (row) => {
+            const name = row.dataset.catalogName;
+            const description = row.dataset.catalogDescription;
+            const docCount = row.querySelector('.delete-catalog-btn')?.dataset.docCount || 0;
+            
+            row.querySelector('.catalog-name-cell').innerHTML = name;
+            row.querySelector('.catalog-desc-cell').innerHTML = description;
+            
+            row.querySelector('.action-cell').innerHTML = `
+                <button class="button button-small edit-catalog-btn">Edit</button>
+                <button class="button button-danger button-small delete-catalog-btn" data-doc-count="${docCount}">Delete</button>
+            `;
+        };
+
+        tableBody.addEventListener('click', async (event) => {
+            const button = event.target;
+            const row = button.closest('tr');
+            if (!row) return;
+
+            const catalogId = row.dataset.catalogId;
+            const catalogName = row.dataset.catalogName;
+            
+            if (button.classList.contains('edit-catalog-btn')) {
+                const nameCell = row.querySelector('.catalog-name-cell');
+                const descCell = row.querySelector('.catalog-desc-cell');
+                const actionCell = row.querySelector('.action-cell');
+                nameCell.innerHTML = `<input type="text" class="form-control" value="${catalogName}">`;
+                descCell.innerHTML = `<input type="text" class="form-control" value="${row.dataset.catalogDescription}">`;
+                actionCell.innerHTML = `
+                    <button class="button button-primary button-small save-catalog-btn">Save</button>
+                    <button class="button button-small cancel-edit-btn">Cancel</button>
+                `;
+            }
+
+            if (button.classList.contains('cancel-edit-btn')) {
+                revertRowToViewMode(row);
+            }
+
+            if (button.classList.contains('save-catalog-btn')) {
+                const newName = row.querySelector('.catalog-name-cell input').value.trim();
+                const newDesc = row.querySelector('.catalog-desc-cell input').value.trim();
+                if (!newName) {
+                    alert('Catalog name cannot be empty.');
+                    return;
+                }
+                try {
+                    const response = await fetch(`/api/catalogs/${catalogId}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+                        body: JSON.stringify({ name: newName, description: newDesc })
+                    });
+                    const result = await response.json();
+                    if (!response.ok) throw new Error(result.message);
+                    alert('Catalog updated successfully. The page will now reload to reflect changes.');
+                    window.location.reload();
+                } catch (error) {
+                    alert(`Error: ${error.message}`);
+                    revertRowToViewMode(row);
+                }
+            }
+            
+            if (button.classList.contains('delete-catalog-btn')) {
+                const docCount = button.dataset.docCount;
+                const confirmMsg = `Are you sure you want to delete the catalog "${catalogName}"? It is used by ${docCount} document(s). This action cannot be undone.`;
+                if (!confirm(confirmMsg)) return;
+                try {
+                    const response = await fetch(`/api/catalogs/${catalogId}`, {
+                        method: 'DELETE',
+                        headers: { 'X-CSRFToken': csrfToken }
+                    });
+                    const result = await response.json();
+                    if (!response.ok) throw new Error(result.message);
+                    row.remove();
+                    alert(result.message);
+                } catch (error) {
+                    alert(`Error: ${error.message}`);
+                }
+            }
+        });
+    }
+});
+</script>
+{% endblock %}
