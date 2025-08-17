@@ -71,118 +71,155 @@ It’s **local-first**, **privacy-respecting**, and designed to let you focus on
 
 ---
 
-## Quickstart
+##  Quickstart
+
+### 1. Clone the Repository
 
 ```bash
 git clone <your-repository-url>
 cd <repository-directory>
+```
 
-# Create environment
+### 2. Set Up Environment
+
+#### Using `venv`:
+
+```bash
 python3 -m venv venv
-source venv/bin/activate   # (Linux/macOS)
+
+# Activate virtual environment
+source venv/bin/activate       # Linux/macOS
 # OR
-.\venv\Scripts\activate    # (Windows)
+.\venv\Scripts\activate        # Windows
+```
 
-# Install dependencies
+#### Or using `conda`:
+
+```bash
+conda env create -f environment.yml
+conda activate <env-name>
+```
+
+### 3. Install Dependencies
+
+```bash
 pip install -r requirements.txt
-
-# Download NLP model
 python -m spacy download en_core_web_lg
+```
 
-# Run
+### 4. Run the Application
+
+```bash
 python run.py
+```
 
-Then open: http://127.0.0.1:5000
-Getting Started
-1. Prerequisites
+Then open your browser to:
+[http://127.0.0.1:5000](http://127.0.0.1:5000)
 
-    Python 3.9+
+---
 
-    A C compiler
+## 🛠️ Getting Started
 
-        Windows: Microsoft C++ Build Tools
+### Prerequisites
 
-        macOS: Xcode Command Line Tools
+* **Python** 3.9+
+* **C Compiler**
 
-        Linux: build-essential
+  * **Windows**: Microsoft C++ Build Tools
+  * **macOS**: Xcode Command Line Tools
+  * **Linux**: `build-essential`
 
-2. Installation
+---
 
-git clone <your-repository-url>
-cd <repository-directory>
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-python -m spacy download en_core_web_lg
+## ▶️ Running the Application
 
-(Or use conda env create -f environment.yml if preferred.)
-3. Running the Application
+1. Place documents inside the `documents/` directory.
 
-    Place documents in the documents/ directory.
+2. Start the app:
 
-    Start the app:
+   ```bash
+   python run.py
+   ```
 
-    python run.py
+3. On first run, create an admin account.
 
-    First run will ask you to create an admin account.
+4. Log in with your new credentials.
 
-    Then log in with your credentials.
+---
 
-Core Workflow
+## 🔄 Core Workflow
 
-    Discover Docs → Scan documents/ for new/updated files.
+1. **Discover Docs**: Scans the `documents/` folder for new or updated files.
+2. **Process All "New"**: Queues new files for background NLP parsing.
+3. **Update Browse Cache**: Builds entity index for faster navigation.
 
-    Process All "New" → Queue new files for background NLP + parsing.
+---
 
-    Update Browse Cache → Build entity index for faster browsing.
+## ✨ Advanced Features
 
-Advanced Features
-Synthesis Environment
+### 🧠 Synthesis Environment
 
-    Dual-pane view: write on the left, browse documents on the right.
+* Dual-pane: write on the left, browse on the right.
+* Highlighting text auto-generates formatted citations.
+* Export to `.odt` with a complete bibliography.
 
-    Highlight text in documents → automatically creates a formatted citation in your report.
+### 🎧 Transcript & Media Sync
 
-    Export to .odt with bibliography included.
+* Matches `.srt` files with `.mp3`/`.mp4` using filename prefixes.
+* Transcript auto-scrolls with playback.
+* Click any line to jump to that timestamp.
+* Add timestamped comments.
 
-Transcript & Media Sync
+### ⚡ GPU Acceleration
 
-    Automatically pairs .srt with matching .mp3/.mp4 (same filename prefix).
+1. Install CuPy:
 
-    Transcript scrolls with playback.
+   ```bash
+   pip install cupy-cuda11x
+   ```
 
-    Click any line to jump to that timestamp.
+2. Run the check:
 
-    Add comments tied to exact moments in the media.
+   ```bash
+   python check_gpu.py
+   ```
 
-GPU Acceleration
+3. If GPU is available, enable it in:
+   `Settings → System & Processing` (admin only)
 
-    Install CUDA-compatible CuPy (pip install cupy-cuda11x).
+---
 
-    Run check:
+## ⚙️ Configuration
 
-    python check_gpu.py
+* **Secret Key**: Auto-generated on first run, stored in `instance/` (not tracked by Git).
+* **In-App Settings**:
 
-    If available, enable in Settings → System & Processing (admin only).
+  * Worker count
+  * GPU usage
+  * Parsing strategies
 
-Configuration
+---
 
-    Secret Key: Generated on first run, stored in instance/ (not committed to git).
+## 🔧 Management Script
 
-    In-App Settings: Control worker count, GPU acceleration, parsing strategy.
+Use `manage.py` for admin tasks.
 
-Management Script
+Example: Reset a user's password:
 
-manage.py provides admin tasks.
-
-Example: Reset a user’s password
-
+```bash
 python manage.py reset-password <username>
+```
 
-License
+---
 
-This project is open source under the MIT License.
-About the Developer
+## 📄 License
 
-Created by Nathaniel Westveer as a personal tool for knowledge exploration.
-It is free to use, distribute, and modify.
+This project is open source under the **MIT License**.
+
+---
+
+## 👤 About the Developer
+
+Created by **Nathaniel Westveer** as a personal knowledge exploration tool.
+Free to use, distribute, and modify.
+
