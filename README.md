@@ -12,7 +12,6 @@ Built for researchers, archivists, and knowledge workers, Redleaf makes it easy 
 - [Why Redleaf?](#why-redleaf)
 - [Key Features](#key-features)
 - [Technology Stack](#technology-stack)
-- [Quickstart](#quickstart)
 - [Getting Started](#getting-started)
   - [Prerequisites](#1-prerequisites)
   - [Installation](#2-installation)
@@ -71,155 +70,203 @@ It’s **local-first**, **privacy-respecting**, and designed to let you focus on
 
 ---
 
-##  Quickstart
+## Getting Started
 
-### 1. Clone the Repository
+### 1. Prerequisites
 
+- **Python 3.9+**
+- **Conda** (Recommended, via [Anaconda](https://www.anaconda.com/download) or [Miniconda](https://docs.conda.io/projects/miniconda/en/latest/))
+
+### 2. Installation
+
+The recommended setup uses the provided `environment.yml` file, which creates a self-contained Conda environment with all necessary dependencies.
+
+#### **Step 1: Clone the Repository**
 ```bash
 git clone <your-repository-url>
 cd <repository-directory>
-```
+Step 2: Create and Activate the Conda Environment
 
-### 2. Set Up Environment
+This single command creates the redleaf-env environment and installs all required packages from the environment.yml file.
 
-#### Using `venv`:
+code
+Bash
+download
+content_copy
+expand_less
+IGNORE_WHEN_COPYING_START
+IGNORE_WHEN_COPYING_END
+conda env create -f environment.yml
 
-```bash
+Then, activate it:
+
+code
+Bash
+download
+content_copy
+expand_less
+IGNORE_WHEN_COPYING_START
+IGNORE_WHEN_COPYING_END
+conda activate redleaf-env
+Step 3: Download the NLP Model
+
+Finally, you must download the spaCy language model that Redleaf uses for entity extraction.
+
+code
+Bash
+download
+content_copy
+expand_less
+IGNORE_WHEN_COPYING_START
+IGNORE_WHEN_COPYING_END
+python -m spacy download en_core_web_lg
+<details>
+<summary><b>Alternative Installation (using venv and pip)</b></summary>
+
+
+If you prefer not to use Conda, you can use a standard Python virtual environment. You may need to manually install a C++ compiler for your system if packages fail to build.
+
+Create and activate a virtual environment:
+
+code
+Bash
+download
+content_copy
+expand_less
+IGNORE_WHEN_COPYING_START
+IGNORE_WHEN_COPYING_END
+# Create the environment
 python3 -m venv venv
 
-# Activate virtual environment
-source venv/bin/activate       # Linux/macOS
-# OR
-.\venv\Scripts\activate        # Windows
-```
+# Activate it (Linux/macOS)
+source venv/bin/activate
 
-#### Or using `conda`:
+# Activate it (Windows)
+.\venv\Scripts\activate
 
-```bash
-conda env create -f environment.yml
-conda activate <env-name>
-```
+Install dependencies from requirements.txt:
 
-### 3. Install Dependencies
-
-```bash
+code
+Bash
+download
+content_copy
+expand_less
+IGNORE_WHEN_COPYING_START
+IGNORE_WHEN_COPYING_END
 pip install -r requirements.txt
+
+Download the NLP model:
+
+code
+Bash
+download
+content_copy
+expand_less
+IGNORE_WHEN_COPYING_START
+IGNORE_WHEN_COPYING_END
 python -m spacy download en_core_web_lg
-```
+</details>
 
-### 4. Run the Application
+3. Running the Application
 
-```bash
+Add your files: Place the documents you want to analyze into the documents/ directory.
+
+Start the server:
+
+code
+Bash
+download
+content_copy
+expand_less
+IGNORE_WHEN_COPYING_START
+IGNORE_WHEN_COPYING_END
 python run.py
-```
 
-Then open your browser to:
-[http://127.0.0.1:5000](http://127.0.0.1:5000)
+Open in browser: Navigate to http://127.0.0.1:5000
 
----
+First-time setup: The application will prompt you to create your administrator account.
 
-## 🛠️ Getting Started
+Core Workflow
 
-### Prerequisites
+The main workflow buttons are on the dashboard:
 
-* **Python** 3.9+
-* **C Compiler**
+Discover Docs: Scans the documents/ directory to find new or modified files and adds them to the registry.
 
-  * **Windows**: Microsoft C++ Build Tools
-  * **macOS**: Xcode Command Line Tools
-  * **Linux**: `build-essential`
+Process All "New": Queues all unregistered documents for background processing (text extraction, NLP, etc.).
 
----
+Update Browse Cache: After processing, this aggregates all extracted entities to make the Discovery page fast and responsive.
 
-## ▶️ Running the Application
+Advanced Features
+Synthesis Environment
 
-1. Place documents inside the `documents/` directory.
+A dual-pane workspace: write your report on the left while viewing and citing your source documents on the right.
 
-2. Start the app:
+Highlight text in a source document to automatically create a properly formatted in-text citation in your report.
 
-   ```bash
-   python run.py
-   ```
+Export your final report to .odt (OpenDocument Text) format, with a complete bibliography automatically generated.
 
-3. On first run, create an admin account.
+Transcript & Media Sync
 
-4. Log in with your new credentials.
+Automatically pairs .srt transcript files with matching .mp3 or .mp4 files (based on the same filename).
 
----
+The transcript automatically scrolls along with audio/video playback.
 
-## 🔄 Core Workflow
+Click any line in the transcript to jump the media to that exact timestamp.
 
-1. **Discover Docs**: Scans the `documents/` folder for new or updated files.
-2. **Process All "New"**: Queues new files for background NLP parsing.
-3. **Update Browse Cache**: Builds entity index for faster navigation.
+Add comments that are tied to specific timestamps in the media.
 
----
+GPU Acceleration
 
-## ✨ Advanced Features
+If you have an NVIDIA GPU with CUDA drivers, you can install the GPU-enabled version of CuPy. For CUDA 11.x:
 
-### 🧠 Synthesis Environment
+code
+Bash
+download
+content_copy
+expand_less
+IGNORE_WHEN_COPYING_START
+IGNORE_WHEN_COPYING_END
+pip install cupy-cuda11x
 
-* Dual-pane: write on the left, browse on the right.
-* Highlighting text auto-generates formatted citations.
-* Export to `.odt` with a complete bibliography.
+Run the included script to verify that spaCy can access your GPU:
 
-### 🎧 Transcript & Media Sync
+code
+Bash
+download
+content_copy
+expand_less
+IGNORE_WHEN_COPYING_START
+IGNORE_WHEN_COPYING_END
+python check_gpu.py
 
-* Matches `.srt` files with `.mp3`/`.mp4` using filename prefixes.
-* Transcript auto-scrolls with playback.
-* Click any line to jump to that timestamp.
-* Add timestamped comments.
+If the check is successful, enable the feature in Settings → System & Processing.
 
-### ⚡ GPU Acceleration
+Configuration
 
-1. Install CuPy:
+Secret Key: A unique secret key is automatically generated on the first run and stored in the instance/ folder. This file is not tracked by Git for security.
 
-   ```bash
-   pip install cupy-cuda11x
-   ```
+In-App Settings: The administrator can control the number of background worker processes, GPU acceleration, and HTML parsing strategy directly from the Settings page.
 
-2. Run the check:
+Management Script
 
-   ```bash
-   python check_gpu.py
-   ```
+The project includes manage.py for command-line administrative tasks.
 
-3. If GPU is available, enable it in:
-   `Settings → System & Processing` (admin only)
+Example: Reset a user's password.
 
----
-
-## ⚙️ Configuration
-
-* **Secret Key**: Auto-generated on first run, stored in `instance/` (not tracked by Git).
-* **In-App Settings**:
-
-  * Worker count
-  * GPU usage
-  * Parsing strategies
-
----
-
-## 🔧 Management Script
-
-Use `manage.py` for admin tasks.
-
-Example: Reset a user's password:
-
-```bash
+code
+Bash
+download
+content_copy
+expand_less
+IGNORE_WHEN_COPYING_START
+IGNORE_WHEN_COPYING_END
 python manage.py reset-password <username>
-```
+License
 
----
+This project is open source under the MIT License.
 
-## 📄 License
+About the Developer
 
-This project is open source under the **MIT License**.
-
----
-
-## 👤 About the Developer
-
-Created by **Nathaniel Westveer** as a personal knowledge exploration tool.
-Free to use, distribute, and modify.
+Created by Nathaniel Westveer as a personal tool for knowledge exploration.
+It is free to use, distribute, and modify.
 
