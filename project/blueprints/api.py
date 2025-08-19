@@ -939,3 +939,35 @@ def save_audio_position(doc_id):
     except sqlite3.Error as e:
         db.rollback()
         return jsonify({'success': False, 'message': f'Database error: {e}'}), 500
+
+@api_bp.route('/document/<int:doc_id>/save_pdf_zoom', methods=['POST'])
+@login_required
+def save_pdf_zoom(doc_id):
+    zoom_level = request.json.get('zoom')
+    if zoom_level is None or not isinstance(zoom_level, (int, float)):
+        return jsonify({'success': False, 'message': 'Valid zoom level not provided.'}), 400
+    
+    db = get_db()
+    try:
+        db.execute("UPDATE documents SET last_pdf_zoom = ? WHERE id = ?", (zoom_level, doc_id))
+        db.commit()
+        return jsonify({'success': True, 'message': 'Zoom level saved.'})
+    except sqlite3.Error as e:
+        db.rollback()
+        return jsonify({'success': False, 'message': f'Database error: {e}'}), 500
+
+@api_bp.route('/document/<int:doc_id>/save_pdf_page', methods=['POST'])
+@login_required
+def save_pdf_page(doc_id):
+    page = request.json.get('page')
+    if page is None or not isinstance(page, int):
+        return jsonify({'success': False, 'message': 'Valid page number not provided.'}), 400
+    
+    db = get_db()
+    try:
+        db.execute("UPDATE documents SET last_pdf_page = ? WHERE id = ?", (page, doc_id))
+        db.commit()
+        return jsonify({'success': True, 'message': 'Page position saved.'})
+    except sqlite3.Error as e:
+        db.rollback()
+        return jsonify({'success': False, 'message': f'Database error: {e}'}), 500
