@@ -1,3 +1,4 @@
+<!-- File: ./templates/dashboard.html -->
 {% extends 'layout.html' %}
 {% block title %}Dashboard - Redleaf{% endblock %}
 
@@ -147,11 +148,9 @@ document.addEventListener('DOMContentLoaded', () => {
             sortedDocs.forEach(doc => {
                 const colorDot = doc.color ? `<span class="color-dot" style="background-color: ${doc.color};"></span>` : '';
                 const pathLink = (doc.status === 'Indexed') ? `<a href="/document/${doc.id}">${doc.relative_path}</a>` : doc.relative_path;
-                const reprocessLink = `/dashboard/process/${doc.id}`;
                 const statusClass = doc.status ? doc.status.replace(' ', '') : 'New';
                 const commentsChip = doc.comment_count > 0 ? `<span class="chip" title="${doc.comment_count} public comment(s)">💬 ${doc.comment_count}</span>` : '<span class="text-muted">—</span>';
                 
-                // --- Start of New Attribute Logic ---
                 let attributesHtml = '';
                 if (doc.is_podcast_episode) {
                     attributesHtml += `<span class="chip" title="Podcast Episode">🎧</span> `;
@@ -162,7 +161,27 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (attributesHtml === '') {
                     attributesHtml = '<span class="text-muted">—</span>';
                 }
-                // --- End of New Attribute Logic ---
+
+                // DYNAMIC ACTION BUTTON LOGIC
+                let actionsHtml = '';
+                switch (doc.status) {
+                    case 'New':
+                        // --- THIS IS THE FIX ---
+                        // Use the standard dark 'button' class, not 'button-primary'
+                        actionsHtml = `<a href="/dashboard/process/${doc.id}" class="button button-small">Process</a>`;
+                        break;
+                    case 'Queued':
+                    case 'Indexing':
+                        actionsHtml = `<button class="button button-small disabled">Processing...</button>`;
+                        break;
+                    case 'Indexed':
+                    case 'Error':
+                        actionsHtml = `<a href="/dashboard/process/${doc.id}" class="button button-small">Re-Process</a>`;
+                        break;
+                    default:
+                        actionsHtml = `<span class="text-muted">—</span>`;
+                        break;
+                }
 
                 const fileSize = formatFileSize(doc.file_size_bytes);
                 const duration = formatDuration(doc.duration_seconds);
@@ -175,7 +194,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         <td>${duration}</td><td>${doc.page_count ?? 'N/A'}</td>
                         <td>${commentsChip}</td>
                         <td>${attributesHtml}</td>
-                        <td><a href="${reprocessLink}" class="button button-small">Re-Process</a></td>
+                        <td>${actionsHtml}</td>
                     </tr>`;
             });
         }
@@ -183,6 +202,7 @@ document.addEventListener('DOMContentLoaded', () => {
         updateSortButtonUI();
         docCountDisplay.textContent = allDocsData.length;
     }
+
     function updateSortButtonUI() {
         sortControls.querySelectorAll('.sort-btn').forEach(btn => {
             btn.classList.remove('active', 'sort-asc', 'sort-desc');
@@ -191,6 +211,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     }
+
     async function pollStatus() {
         clearTimeout(pollingTimer);
         try {
@@ -209,6 +230,7 @@ document.addEventListener('DOMContentLoaded', () => {
             pollingTimer = setTimeout(pollStatus, POLLING_INTERVAL);
         }
     }
+
     function updateActionButtons(taskStates) {
         Object.keys(workflowButtons).forEach(key => {
             const btn = workflowButtons[key];
@@ -222,6 +244,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (key === 'cache') btn.textContent = state === 'disabled' ? 'Updating Cache...' : '3. Update Browse Cache';
         });
     }
+
     sortControls.addEventListener('click', (e) => {
         const clickedButton = e.target.closest('.sort-btn');
         if (!clickedButton) return;
@@ -236,7 +259,9 @@ document.addEventListener('DOMContentLoaded', () => {
         catch (e) { console.error("Could not save sort state.", e); }
         sortAndRender();
     });
+
     window.addEventListener('beforeunload', () => clearTimeout(pollingTimer));
+    
     sortAndRender();
     pollStatus();
 });
