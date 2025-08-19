@@ -2,17 +2,20 @@
 import os
 import sqlite3
 import secrets
+from datetime import datetime
+from pathlib import Path
 
 from flask import (
-    Blueprint, render_template, request, redirect, url_for, flash, g, jsonify
+    Blueprint, render_template, request, redirect, url_for, flash, g, jsonify, current_app, send_file
 )
 from werkzeug.security import generate_password_hash
+from werkzeug.utils import secure_filename
 
 from ..database import get_db
 from ..background import restart_executor_event, get_system_settings
 from .auth import admin_required, login_required, SecureForm
+from ..export_import import export_knowledge_package, import_knowledge_package
 
-# We no longer need template_folder here.
 settings_bp = Blueprint('settings', __name__, url_prefix='/settings')
 
 @settings_bp.route('/')
@@ -34,6 +37,79 @@ def settings_page():
         cpu_count=os.cpu_count(),
         html_parsing_mode=system_settings['html_parsing_mode']
     )
+
+# === UPDATED ROUTE FOR EXPORTING ===
+@settings_bp.route('/export', methods=['POST'])
+@admin_required
+def export_package():
+    form = SecureForm()
+    if not form.validate_on_submit():
+        flash("CSRF validation failed. Could not start export.", "danger")
+        return redirect(url_for('settings.settings_page'))
+
+    filename = f"redleaf_export_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.rklf"
+    
+    # === THIS IS THE FIX: The function is now called with no arguments ===
+    success, result_or_error = export_knowledge_package()
+    # ====================================================================
+    
+    if success:
+        # The result is the BytesIO buffer
+        memory_buffer = result_or_error
+        return send_file(
+            memory_buffer,
+            mimetype='application/zip',
+            as_attachment=True,
+            download_name=filename
+        )
+    else:
+        # The result is an error message
+        flash(f"Export failed: {result_or_error}", "danger")
+        return redirect(url_for('settings.settings_page'))
+
+
+# === ROUTE FOR IMPORTING (Unchanged but included for completeness) ===
+@settings_bp.route('/import', methods=['POST'])
+@admin_required
+def import_package():
+    form = SecureForm()
+    if not form.validate_on_submit():
+        flash("CSRF validation failed. Could not import.", "danger")
+        return redirect(url_for('settings.settings_page'))
+    
+    if 'package_file' not in request.files:
+        flash('No file part in the request.', 'danger')
+        return redirect(url_for('settings.settings_page'))
+        
+    file = request.files['package_file']
+    if file.filename == '':
+        flash('No file selected for upload.', 'danger')
+        return redirect(url_for('settings.settings_page'))
+
+    if file and (file.filename.endswith('.rklf') or file.filename.endswith('.zip')):
+        upload_dir = Path(current_app.instance_path) / "uploads"
+        upload_dir.mkdir(exist_ok=True)
+        
+        filename = secure_filename(file.filename)
+        temp_path = upload_dir / filename
+        file.save(temp_path)
+        
+        success, message = import_knowledge_package(temp_path)
+        
+        if success:
+            flash(message, 'success')
+        else:
+            flash(f"Import Failed: {message}", 'danger')
+            
+        # Clean up the uploaded file
+        if temp_path.exists():
+            temp_path.unlink()
+            
+        return redirect(url_for('settings.settings_page'))
+    else:
+        flash('Invalid file type. Please upload a .rklf or .zip package.', 'danger')
+        return redirect(url_for('settings.settings_page'))
+
 
 @settings_bp.route('/workers', methods=['POST'])
 @admin_required
