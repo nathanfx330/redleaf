@@ -15,6 +15,8 @@
             <button class="tab-link active" data-tab="access">Users & Access</button>
             <button class="tab-link" data-tab="system">System & Processing</button>
             <button class="tab-link" data-tab="archive">Archived Items</button>
+            <!-- NEW TAB BUTTON -->
+            <button class="tab-link" data-tab="transfer">Import / Export</button>
             <button class="tab-link" data-tab="danger">Reset</button>
         </nav>
 
@@ -182,6 +184,42 @@
             </div>
         </div>
 
+        <!-- NEW TAB CONTENT: Import / Export -->
+        <div id="tab-transfer" class="tab-content">
+            <h3 class="mt-4">Knowledge Package Transfer</h3>
+            <div class="panel">
+                <div class="panel-header">Export Knowledge Package</div>
+                <div class="panel-body">
+                    <p class="text-muted">
+                        Export the public knowledge from this instance into a single <code>.rklf</code> file. This file contains the sanitized database and a manifest of required documents.
+                        It **does not** contain user accounts, private notes, or synthesis reports.
+                        <br>
+                        <strong>Important:</strong> You must manually transfer your <code>documents/</code> directory alongside this file for the recipient to successfully import the package.
+                    </p>
+                    <form action="{{ url_for('settings.export_package') }}" method="POST" id="export-form">
+                        {{ form.hidden_tag() }}
+                        <button type="submit" class="button button-primary" id="export-btn">Export Knowledge Package</button>
+                    </form>
+                </div>
+            </div>
+            <div class="panel">
+                <div class="panel-header">Import Knowledge Package</div>
+                <div class="panel-body">
+                    <p class="text-muted">
+                        Import a <code>.rklf</code> package from another Redleaf instance. The system will verify that you have all the required files in your <code>documents/</code> directory with the correct content before merging the data.
+                    </p>
+                    <form action="{{ url_for('settings.import_package') }}" method="POST" enctype="multipart/form-data" id="import-form">
+                        {{ form.hidden_tag() }}
+                        <div class="form-group">
+                            <label for="package_file" class="form-label">Select a <code>.rklf</code> or <code>.zip</code> file:</label>
+                            <input type="file" name="package_file" id="package_file" class="form-control" accept=".rklf,.zip" required>
+                        </div>
+                        <button type="submit" class="button" id="import-btn">Upload and Import Package</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
         <!-- Tab Content: Reset Zone -->
         <div id="tab-danger" class="tab-content">
              <h3 class="mt-4">Reset</h3>
@@ -339,6 +377,32 @@ document.addEventListener('DOMContentLoaded', () => {
                 btn.textContent = 'Un-archive';
                 btn.disabled = false;
             }
+        });
+    }
+
+    // --- NEW SCRIPT FOR IMPORT/EXPORT FEEDBACK ---
+    const exportForm = document.getElementById('export-form');
+    if (exportForm) {
+        exportForm.addEventListener('submit', () => {
+            const btn = document.getElementById('export-btn');
+            btn.textContent = 'Generating Package...';
+            btn.disabled = true;
+            // The browser will handle the download, so we don't need to revert the button text.
+        });
+    }
+
+    const importForm = document.getElementById('import-form');
+    if (importForm) {
+        importForm.addEventListener('submit', () => {
+            const fileInput = document.getElementById('package_file');
+            if (fileInput.files.length === 0) {
+                alert('Please select a file to import.');
+                event.preventDefault();
+                return;
+            }
+            const btn = document.getElementById('import-btn');
+            btn.textContent = 'Importing... Please wait.';
+            btn.disabled = true;
         });
     }
 });
