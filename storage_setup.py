@@ -51,7 +51,9 @@ def create_unified_index(db_path):
             duration_seconds INTEGER,
             linked_audio_path TEXT,
             linked_video_path TEXT,
-            last_audio_position REAL DEFAULT 0.0
+            last_audio_position REAL DEFAULT 0.0,
+            last_pdf_zoom REAL,
+            last_pdf_page INTEGER
         );
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_doc_status ON documents (status);")
