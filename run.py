@@ -1,3 +1,4 @@
+# --- File: ./run.py ---
 import sqlite3
 import multiprocessing
 from pathlib import Path
@@ -28,15 +29,22 @@ def run_startup_logic():
         conn = None
         try:
             conn = sqlite3.connect(db_path)
-            # Find any documents that were 'Queued' but never finished (e.g., due to a shutdown).
-            count = conn.execute("SELECT COUNT(*) FROM documents WHERE status = 'Queued'").fetchone()[0]
+            
+            # --- START OF FIX: Check for both 'Queued' AND 'Indexing' ---
+            # Find any documents that were stuck in a transient state during a shutdown.
+            count_query = "SELECT COUNT(*) FROM documents WHERE status IN ('Queued', 'Indexing')"
+            count = conn.execute(count_query).fetchone()[0]
+            
             if count > 0:
-                print(f"Found {count} stale 'Queued' documents. Resetting them to 'New'...")
-                conn.execute("UPDATE documents SET status = 'New', status_message='Reset on startup' WHERE status = 'Queued'")
+                print(f"Found {count} stale 'Queued' or 'Indexing' documents. Resetting them to 'New'...")
+                update_query = "UPDATE documents SET status = 'New', status_message='Reset on startup' WHERE status IN ('Queued', 'Indexing')"
+                conn.execute(update_query)
                 conn.commit()
                 print("Cleanup complete.")
             else:
                 print("No stale documents found. System state is clean.")
+            # --- END OF FIX ---
+
         except Exception as e:
             print(f"!!! ERROR during startup cleanup: {e} !!!")
         finally:
