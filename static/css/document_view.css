@@ -87,12 +87,47 @@
     background-color: var(--background-medium);
     border: 1px solid var(--border-color);
     border-radius: var(--border-radius);
+    /* --- START OF CHANGES --- */
+    transition: all 0.2s ease-in-out; /* Smooth transition for collapsing */
+    /* --- END OF CHANGES --- */
 }
 .workbench-sidebar .panel-header {
     background-color: var(--background-light);
     padding: 0.5rem 1rem;
     font-weight: 500;
+    /* --- START OF CHANGES --- */
+    cursor: pointer; /* Change cursor to indicate it's clickable */
+    position: relative; /* For the expand/collapse icon */
+    user-select: none; /* Prevent text selection on click */
+    /* --- END OF CHANGES --- */
 }
+
+/* --- START OF NEW STYLES --- */
+/* Style for the expand/collapse icon */
+.workbench-sidebar .panel-header::after {
+    content: '−'; /* Minus sign for expanded state */
+    position: absolute;
+    right: 1rem;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 1.2em;
+    color: var(--text-muted);
+    transition: transform 0.2s ease-in-out;
+}
+
+/* Style for the icon when the panel is collapsed */
+.workbench-sidebar .panel.collapsed .panel-header::after {
+    content: '+'; /* Plus sign for collapsed state */
+}
+
+/* Hide the body and footer when the panel is collapsed */
+.workbench-sidebar .panel.collapsed .panel-body,
+.workbench-sidebar .panel.collapsed .panel-footer {
+    display: none;
+}
+/* --- END OF NEW STYLES --- */
+
+
 .workbench-sidebar .panel-body {
     padding: 1rem;
 }
@@ -147,8 +182,6 @@
     display: block;
 }
 
-/* --- START OF CHANGES --- */
-/* This is the interactive pill for the timestamp */
 .comment-quote-timestamp {
     display: inline-block;
     background-color: var(--background-medium);
@@ -163,8 +196,6 @@
     cursor: pointer;
     transition: all 0.2s ease;
 }
-
-/* The hover effect for the timestamp pill */
 .comment-quote-timestamp:hover {
     background-color: var(--brand-red-cool);
     border-color: var(--brand-red-cool-hover);
@@ -173,7 +204,6 @@
     box-shadow: 0 2px 4px rgba(0,0,0,0.2);
 }
 
-/* The dialogue text that follows the timestamp */
 .comment-quote-dialogue {
     font-style: italic;
     white-space: pre-wrap;
@@ -184,4 +214,3 @@
     margin-top: 0;
     margin-bottom: 0.75rem;
 }
-/* --- END OF CHANGES --- */
