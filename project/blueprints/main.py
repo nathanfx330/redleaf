@@ -3,7 +3,7 @@ import os
 import queue
 import re
 import sqlite3
-import time # <-- ADD THIS IMPORT
+import time
 from pathlib import Path
 from urllib.parse import unquote
 from datetime import datetime
@@ -334,7 +334,6 @@ def document_view(doc_id):
     if not doc:
         abort(404)
     form = SecureForm()
-    # --- ADDED: Pass a timestamp for cache-busting the SRT viewer iframe ---
     timestamp = int(time.time())
     return render_template('document_view.html', doc=doc, form=form, timestamp=timestamp)
 
@@ -350,11 +349,18 @@ def serve_document(relative_path):
 @login_required
 def view_pdf_document(doc_id):
     db = get_db()
-    doc_meta = db.execute("SELECT relative_path, file_type FROM documents WHERE id = ?", (doc_id,)).fetchone()
+    doc_meta = db.execute("SELECT relative_path, file_type, last_pdf_zoom, last_pdf_page FROM documents WHERE id = ?", (doc_id,)).fetchone()
     if not doc_meta or doc_meta['file_type'] != 'PDF':
         abort(404)
     pdf_url = url_for('main.serve_document', relative_path=doc_meta['relative_path'])
-    return render_template('pdf_viewer.html', pdf_url=pdf_url, doc_title=doc_meta['relative_path'], doc_id=doc_id)
+    form = SecureForm()
+    return render_template('pdf_viewer.html', 
+                           pdf_url=pdf_url, 
+                           doc_title=doc_meta['relative_path'], 
+                           doc_id=doc_id, 
+                           last_pdf_zoom=doc_meta['last_pdf_zoom'],
+                           last_pdf_page=doc_meta['last_pdf_page'],
+                           form=form)
 
 @main_bp.route('/view_text/<int:doc_id>')
 @login_required
@@ -385,7 +391,6 @@ def view_html_document(doc_id):
 def _parse_srt_for_viewer(srt_content):
     """Parses SRT content into a list of dicts for the viewer template."""
     cues = []
-    # Regex to capture sequence, timestamp, and text, accounting for multi-line text
     cue_pattern = re.compile(r'(\d+)\s*\n(\d{2}:\d{2}:\d{2},\d{3}\s*-->\s*\d{2}:\d{2}:\d{2},\d{3})\s*\n(.*?)(?=\n\n|\Z)', re.DOTALL)
     for match in cue_pattern.finditer(srt_content):
         cues.append({
@@ -399,7 +404,6 @@ def _parse_srt_for_viewer(srt_content):
 @login_required
 def view_srt_document(doc_id):
     db = get_db()
-    # Fetch the full document record, including the new audio position
     doc = db.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)).fetchone()
     if not doc or doc['file_type'] != 'SRT':
         abort(404)
@@ -414,7 +418,6 @@ def view_srt_document(doc_id):
     except Exception:
         cues = []
 
-    # Create the form needed for the CSRF token in the template
     form = SecureForm()
     
     return render_template('srt_viewer.html', 
