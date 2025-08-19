@@ -28,6 +28,19 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             });
         });
+
+        // --- START OF THE FIX ---
+        // Accordion/collapsing logic for sidebar panels
+        sidebar.addEventListener('click', (event) => {
+            const panelHeader = event.target.closest('.panel-header');
+            if (panelHeader) {
+                const panel = panelHeader.closest('.panel');
+                if (panel) {
+                    panel.classList.toggle('collapsed');
+                }
+            }
+        });
+        // --- END OF THE FIX ---
     }
 
     if (toggleHtmlViewBtn && docViewerIframe) {
