@@ -1,3 +1,4 @@
+<!-- File: ./templates/pdf_viewer.html -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -56,7 +57,7 @@
             border-radius: 4px;
             padding: 5px 10px;
             cursor: pointer;
-            transition: background-color 0.15s;
+            transition: background-color: 0.15s;
             line-height: 1; /* Aligns icons better */
         }
         .pdf-viewer-toolbar button:hover {
@@ -136,6 +137,7 @@
         const pdfUrl = {{ pdf_url|tojson }};
         const docId = {{ doc_id }};
         const savedZoom = {{ last_pdf_zoom|tojson }};
+        const savedPage = {{ last_pdf_page|tojson }};
         const csrfToken = document.querySelector('#csrf-form-container input[name="csrf_token"]').value;
 
         const viewerContainer = document.getElementById('viewer-container');
@@ -164,12 +166,21 @@
         const RENDER_BUFFER = 3; 
 
         const debounce = (func, wait) => { let timeout; return (...args) => { clearTimeout(timeout); timeout = setTimeout(() => func.apply(this, args), wait); }; };
+        
         const debouncedSaveCurrentZoom = debounce(() => {
             fetch(`/api/document/${docId}/save_pdf_zoom`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
                 body: JSON.stringify({ zoom: currentScale })
             }).catch(err => console.error("Failed to save zoom:", err));
+        }, 1500);
+
+        const debouncedSaveCurrentPage = debounce((pageNum) => {
+            fetch(`/api/document/${docId}/save_pdf_page`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+                body: JSON.stringify({ page: pageNum })
+            }).catch(err => console.error("Failed to save page position:", err));
         }, 1500);
 
         async function renderPage(pageNum, container) {
@@ -362,6 +373,7 @@
             prevBtn.disabled = num <= 1;
             nextBtn.disabled = num >= pdfDoc.numPages;
             window.parent.postMessage({ type: 'pageChanged', currentPage: num }, '*');
+            debouncedSaveCurrentPage(num);
         }
         
         function updateAllPagesZoom() {
@@ -399,14 +411,12 @@
                 const viewportPromises = Array.from({ length: pdfDoc.numPages }, (_, i) => pdfDoc.getPage(i + 1).then(p => p.getViewport({ scale: 1.0 })));
                 const originalViewports = await Promise.all(viewportPromises);
                 
-                // --- INTELLIGENT FIT LOGIC ---
                 const widths = originalViewports.map(vp => Math.round(vp.width));
                 const widthCounts = widths.reduce((acc, width) => { acc[width] = (acc[width] || 0) + 1; return acc; }, {});
                 const dominantWidth = Object.keys(widthCounts).reduce((a, b) => widthCounts[a] > widthCounts[b] ? a : b);
                 const desiredWidth = viewerContainer.clientWidth - 40;
                 initialScale = desiredWidth / dominantWidth;
                 
-                // --- APPLY SAVED ZOOM OR INTELLIGENT FIT ---
                 currentScale = savedZoom || initialScale;
                 
                 let totalHeight = 0;
@@ -425,6 +435,10 @@
                 scrollScaffolding.style.height = `${totalHeight}px`;
                 updateAllPagesZoom();
                 updateVirtualScroll();
+
+                if (savedPage && savedPage > 1) {
+                    goToPage(savedPage, 'auto');
+                }
 
                 viewerContainer.addEventListener('scroll', updateVirtualScroll);
                 window.parent.postMessage({ type: 'viewerReady' }, '*'); 
