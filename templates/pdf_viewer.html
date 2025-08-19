@@ -35,7 +35,6 @@
             background-color: var(--background-medium);
             border: 1px solid var(--border-color);
         }
-        /* (Other styles are largely the same) */
         .page-placeholder canvas,
         .page-placeholder .text-layer,
         .page-placeholder .highlight-layer {
@@ -46,9 +45,40 @@
         .search-highlight { position: absolute; background-color: rgba(162, 35, 35, 0.5); border-radius: 2px; transition: opacity 1s ease-in-out 1.5s; opacity: 1; }
         .search-highlight.fading { opacity: 0; }
         
-        /* Toolbar styles (unchanged but included for context) */
+        /* Toolbar styles */
         .pdf-viewer-toolbar { position: relative; z-index: 100; background-color: var(--background-light, #2A2A32); border-bottom: 1px solid var(--border-color); padding: 8px 16px; display: flex; align-items: center; justify-content: center; gap: 12px; box-shadow: 0 2px 5px rgba(0,0,0,0.3); box-sizing: border-box; flex-shrink: 0; }
-        .pdf-viewer-toolbar button { font-size: 0.9rem; line-height: 1; }
+        
+        /* --- START OF THE FIX --- */
+        .pdf-viewer-toolbar button {
+            background-color: var(--button-bg, #383842);
+            color: var(--text-color, #E8E8EA);
+            border: 1px solid var(--border-color, #3a3a3a);
+            border-radius: 4px;
+            padding: 5px 10px;
+            cursor: pointer;
+            transition: background-color 0.15s;
+            line-height: 1; /* Aligns icons better */
+        }
+        .pdf-viewer-toolbar button:hover {
+            background-color: var(--button-hover, #4f4f4a);
+        }
+        .pdf-viewer-toolbar button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            background-color: var(--button-bg, #383842);
+        }
+        /* Style the primary search button to match the main app */
+        .pdf-viewer-toolbar button.button-primary {
+             background-color: var(--brand-red-cool); 
+             border-color: var(--brand-red-cool); 
+             color: #fff;
+        }
+        .pdf-viewer-toolbar button.button-primary:hover {
+             background-color: var(--brand-red-cool-hover); 
+             border-color: var(--brand-red-cool-hover);
+        }
+        /* --- END OF THE FIX --- */
+
         .pdf-viewer-toolbar input { width: 60px; text-align: center; background-color: var(--background-dark); color: var(--text-light); border: 1px solid var(--border-color); border-radius: 4px; padding: 5px; -moz-appearance: textfield; }
         .pdf-viewer-toolbar input::-webkit-outer-spin-button, .pdf-viewer-toolbar input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
         .pdf-viewer-toolbar .page-display { font-family: monospace; font-size: 1rem; }
@@ -69,6 +99,8 @@
 </head>
 <body class="pdf-viewer-body">
     
+    <form id="csrf-form-container" style="display: none;">{{ form.hidden_tag() }}</form>
+
     <div class="pdf-viewer-toolbar">
         <button id="prev-page-btn">◄</button>
         <input type="number" id="page-num-input" min="1">
@@ -83,7 +115,7 @@
         <span class="toolbar-divider" style="width: 2px; height: 20px; background-color: var(--border-color, #3a3a3a); margin: 0 10px;"></span>
         <div class="search-container">
             <input type="search" id="search-input" class="form-control" placeholder="Indexing for search..." disabled>
-            <button id="search-btn" class="button button-primary" disabled>Go</button>
+            <button id="search-btn" class="button-primary" disabled>Go</button>
             <div id="search-results-container">
                  <span id="search-results-count"></span>
                  <button id="search-prev-btn" style="display:none;">▲</button>
@@ -103,6 +135,9 @@
         
         const pdfUrl = {{ pdf_url|tojson }};
         const docId = {{ doc_id }};
+        const savedZoom = {{ last_pdf_zoom|tojson }};
+        const csrfToken = document.querySelector('#csrf-form-container input[name="csrf_token"]').value;
+
         const viewerContainer = document.getElementById('viewer-container');
         const scrollScaffolding = document.getElementById('scroll-scaffolding');
         const searchInput = document.getElementById('search-input');
@@ -127,6 +162,15 @@
         let visiblePages = new Set(); 
         let tempCanvas = document.createElement('canvas').getContext('2d');
         const RENDER_BUFFER = 3; 
+
+        const debounce = (func, wait) => { let timeout; return (...args) => { clearTimeout(timeout); timeout = setTimeout(() => func.apply(this, args), wait); }; };
+        const debouncedSaveCurrentZoom = debounce(() => {
+            fetch(`/api/document/${docId}/save_pdf_zoom`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+                body: JSON.stringify({ zoom: currentScale })
+            }).catch(err => console.error("Failed to save zoom:", err));
+        }, 1500);
 
         async function renderPage(pageNum, container) {
             try {
@@ -276,11 +320,7 @@
                     div.style.height = `${pageDim.height}px`;
                     div.style.top = `${pageDim.yOffset}px`;
                     
-                    // ===================================
-                    // ===== THIS IS THE LINE I FIXED =====
-                    // ===================================
                     viewerContainer.appendChild(div);
-                    // ===================================
                     
                     setTimeout(() => renderPage(pageNum, div), 0);
                 }
@@ -347,6 +387,7 @@
                 }
             });
             if (document.activeElement !== zoomPercentInput) { zoomPercentInput.value = Math.round(currentScale * 100); }
+            debouncedSaveCurrentZoom();
         }
 
         (async function init() {
@@ -358,10 +399,15 @@
                 const viewportPromises = Array.from({ length: pdfDoc.numPages }, (_, i) => pdfDoc.getPage(i + 1).then(p => p.getViewport({ scale: 1.0 })));
                 const originalViewports = await Promise.all(viewportPromises);
                 
-                const firstPageVp = originalViewports[0];
-                const desiredWidth = viewerContainer.clientWidth - 40; 
-                initialScale = desiredWidth / firstPageVp.width;
-                currentScale = initialScale;
+                // --- INTELLIGENT FIT LOGIC ---
+                const widths = originalViewports.map(vp => Math.round(vp.width));
+                const widthCounts = widths.reduce((acc, width) => { acc[width] = (acc[width] || 0) + 1; return acc; }, {});
+                const dominantWidth = Object.keys(widthCounts).reduce((a, b) => widthCounts[a] > widthCounts[b] ? a : b);
+                const desiredWidth = viewerContainer.clientWidth - 40;
+                initialScale = desiredWidth / dominantWidth;
+                
+                // --- APPLY SAVED ZOOM OR INTELLIGENT FIT ---
+                currentScale = savedZoom || initialScale;
                 
                 let totalHeight = 0;
                 const pageMargin = 20; 
