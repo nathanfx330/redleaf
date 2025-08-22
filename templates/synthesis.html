@@ -84,5 +84,5 @@
     // Use 'null' if the doc doesn't exist, which is valid JSON.
     window.DOC_TO_LOAD = {{ doc_to_load | tojson | safe if doc_to_load else 'null' }};
 </script>
-<script type="module" src="{{ url_for('static', filename='js/synthesis.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='vendor/synthesis.bundle.js') }}"></script>
 {% endblock %}
