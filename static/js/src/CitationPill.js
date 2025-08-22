@@ -1,5 +1,4 @@
 // --- File: static/js/CitationPill.js ---
-// Reverted to use CDN via ES Modules
 
 import { Node, mergeAttributes } from '@tiptap/core';
 
