@@ -51,6 +51,7 @@ def create_unified_index(db_path):
             duration_seconds INTEGER,
             linked_audio_path TEXT,
             linked_video_path TEXT,
+            linked_audio_url TEXT,
             last_audio_position REAL DEFAULT 0.0,
             last_pdf_zoom REAL,
             last_pdf_page INTEGER
