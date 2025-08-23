@@ -4,10 +4,12 @@ import json
 import os
 import re
 import hashlib
+import requests
 from flask import Blueprint, jsonify, request, g, session, current_app, url_for
 from pathlib import Path
-import xml.etree.ElementTree as ET
+from lxml import etree as ET
 from email.utils import parsedate_to_datetime
+from typing import Union
 
 from ..database import get_db
 from ..utils import _get_dashboard_state, _create_manual_snippet, _truncate_long_snippet
@@ -21,19 +23,19 @@ def escape_like(s):
     """Escapes strings for use in a SQL LIKE clause."""
     if not s:
         return ""
-    # Order matters here.
     s = s.replace('\\', '\\\\')
     s = s.replace('%', '\\%')
     s = s.replace('_', '\\_')
     return s
 
-def _parse_podcast_xml_to_csl(item_element: ET.Element, channel_title_text: str = None, channel_author_text: str = None) -> dict:
+def _parse_podcast_xml_to_csl(item_element: ET.Element, channel_title_text: str = None, channel_author_text: str = None) -> tuple[dict, Union[str, None]]:
     """
-    Parses a single <item> XML element from a podcast RSS feed into a CSL-JSON dict.
+    Parses a single <item> XML element from a podcast RSS feed into a CSL-JSON dict
+    and also extracts the enclosure URL for the media file.
     """
     csl_data = {}
     if item_element is None:
-        return None
+        return None, None
 
     namespaces = {'itunes': 'http://www.itunes.com/dtds/podcast-1.0.dtd'}
 
@@ -68,10 +70,15 @@ def _parse_podcast_xml_to_csl(item_element: ET.Element, channel_title_text: str 
     link_tag = item_element.find('link')
     if link_tag is not None and link_tag.text:
         csl_data['URL'] = link_tag.text.strip()
+        
+    enclosure_url = None
+    enclosure_tag = item_element.find('enclosure')
+    if enclosure_tag is not None and enclosure_tag.get('url'):
+        enclosure_url = enclosure_tag.get('url').strip()
 
     csl_data['type'] = 'interview'
     
-    return csl_data
+    return csl_data, enclosure_url
 
 def _sanitize_for_matching(text: str) -> str:
     """Removes common separators, extensions, and makes lowercase for loose matching."""
@@ -146,43 +153,20 @@ def get_document_entities(doc_id):
 @api_bp.route('/document/<int:doc_id>/search_srt')
 @login_required
 def search_srt_cues(doc_id):
-    """
-    Performs a full-text search within the dialogue of a specific SRT document.
-    """
     query = request.args.get('q', '').strip()
     if not query:
         return jsonify({'success': False, 'message': 'Search query cannot be empty.'}), 400
-
     db = get_db()
-    
     doc_type = db.execute("SELECT file_type FROM documents WHERE id = ?", (doc_id,)).fetchone()
     if not doc_type or doc_type['file_type'] != 'SRT':
         return jsonify({'success': False, 'message': 'This document is not an SRT file.'}), 404
-
-    search_term = f'%{query}%'
-    
-    # Use the LIKE operator with an ESCAPE clause for safety
-    sql_query = """
-        SELECT sequence, timestamp, dialogue
-        FROM srt_cues
-        WHERE doc_id = ? AND dialogue LIKE ? ESCAPE '\\'
-        ORDER BY sequence ASC
-    """
-    
+    sql_query = "SELECT sequence, timestamp, dialogue FROM srt_cues WHERE doc_id = ? AND dialogue LIKE ? ESCAPE '\\' ORDER BY sequence ASC"
     matches = db.execute(sql_query, (doc_id, f'%{escape_like(query)}%')).fetchall()
-
     results = []
     highlight_pattern = re.compile(f'({re.escape(query)})', re.IGNORECASE)
-    
     for row in matches:
         snippet = highlight_pattern.sub(r'<mark>\1</mark>', row['dialogue'])
-        
-        results.append({
-            'sequence': row['sequence'],
-            'timestamp': row['timestamp'],
-            'snippet': snippet
-        })
-
+        results.append({'sequence': row['sequence'], 'timestamp': row['timestamp'], 'snippet': snippet})
     return jsonify({'success': True, 'results': results})
 
 @api_bp.route('/relationships/detail')
@@ -215,28 +199,17 @@ def get_relationship_details():
         row_dict = dict(row)
         if row_dict['file_type'] == 'SRT':
             doc_id = row_dict['doc_id']
-            # Use LIKE with ESCAPE for safety
             safe_subject = f'%{escape_like(subject_text)}%'
             safe_object = f'%{escape_like(object_text)}%'
             safe_phrase = f'%{escape_like(phrase)}%'
-            cue_query = """
-                SELECT sequence, timestamp, dialogue 
-                FROM srt_cues 
-                WHERE doc_id = ? AND dialogue LIKE ? ESCAPE '\\' AND dialogue LIKE ? ESCAPE '\\' AND dialogue LIKE ? ESCAPE '\\'
-                ORDER BY sequence
-            """
+            cue_query = "SELECT sequence, timestamp, dialogue FROM srt_cues WHERE doc_id = ? AND dialogue LIKE ? ESCAPE '\\' AND dialogue LIKE ? ESCAPE '\\' AND dialogue LIKE ? ESCAPE '\\' ORDER BY sequence"
             containing_cue = db.execute(cue_query, (doc_id, safe_subject, safe_object, safe_phrase)).fetchone()
             if containing_cue:
                 row_dict['srt_cue_sequence'] = containing_cue['sequence']
                 row_dict['srt_timestamp'] = containing_cue['timestamp']
                 row_dict['snippet'] = _create_manual_snippet(containing_cue['dialogue'], subject_text, object_text, phrase)
             else:
-                row_dict['snippet'] = "<em>Could not locate specific cue. Retrying with broader search...</em>"
-                fallback_cue = db.execute("SELECT sequence, timestamp, dialogue FROM srt_cues WHERE doc_id = ? AND dialogue LIKE ? ESCAPE '\\' LIMIT 1", (doc_id, safe_phrase)).fetchone()
-                if fallback_cue:
-                    row_dict['srt_cue_sequence'] = fallback_cue['sequence']
-                    row_dict['srt_timestamp'] = fallback_cue['timestamp']
-                    row_dict['snippet'] = _create_manual_snippet(fallback_cue['dialogue'], subject_text, object_text, phrase)
+                row_dict['snippet'] = "<em>Could not locate specific cue.</em>"
         else:
             page_content = row_dict.pop('page_content', '')
             row_dict['snippet'] = _create_manual_snippet(page_content, subject_text, object_text, phrase)
@@ -655,7 +628,7 @@ def find_document_audio(doc_id):
     path_in_same_dir = doc_path.parent / audio_filename
     if (DOCUMENTS_DIR / path_in_same_dir).is_file():
         relative_audio_path_str = path_in_same_dir.as_posix()
-        db.execute("UPDATE documents SET linked_audio_path = ?, linked_video_path = NULL WHERE id = ?", (relative_audio_path_str, doc_id))
+        db.execute("UPDATE documents SET linked_audio_path = ?, linked_video_path = NULL, linked_audio_url = NULL WHERE id = ?", (relative_audio_path_str, doc_id))
         db.commit()
         return jsonify({'success': True, 'media_url': url_for('main.serve_document', relative_path=relative_audio_path_str)})
     found_files = list(DOCUMENTS_DIR.rglob(audio_filename))
@@ -663,7 +636,7 @@ def find_document_audio(doc_id):
         first_match_path = found_files[0]
         relative_audio_path = first_match_path.relative_to(DOCUMENTS_DIR)
         relative_audio_path_str = relative_audio_path.as_posix()
-        db.execute("UPDATE documents SET linked_audio_path = ?, linked_video_path = NULL WHERE id = ?", (relative_audio_path_str, doc_id))
+        db.execute("UPDATE documents SET linked_audio_path = ?, linked_video_path = NULL, linked_audio_url = NULL WHERE id = ?", (relative_audio_path_str, doc_id))
         db.commit()
         return jsonify({'success': True, 'media_url': url_for('main.serve_document', relative_path=relative_audio_path_str)})
     return jsonify({'success': False, 'message': f"No '{audio_filename}' file found."}), 404
@@ -680,7 +653,7 @@ def find_document_video(doc_id):
     path_in_same_dir = doc_path.parent / video_filename
     if (DOCUMENTS_DIR / path_in_same_dir).is_file():
         relative_video_path_str = path_in_same_dir.as_posix()
-        db.execute("UPDATE documents SET linked_video_path = ?, linked_audio_path = NULL WHERE id = ?", (relative_video_path_str, doc_id))
+        db.execute("UPDATE documents SET linked_video_path = ?, linked_audio_path = NULL, linked_audio_url = NULL WHERE id = ?", (relative_video_path_str, doc_id))
         db.commit()
         return jsonify({'success': True, 'media_url': url_for('main.serve_document', relative_path=relative_video_path_str)})
     found_files = list(DOCUMENTS_DIR.rglob(video_filename))
@@ -688,31 +661,38 @@ def find_document_video(doc_id):
         first_match_path = found_files[0]
         relative_video_path = first_match_path.relative_to(DOCUMENTS_DIR)
         relative_video_path_str = relative_video_path.as_posix()
-        db.execute("UPDATE documents SET linked_video_path = ?, linked_audio_path = NULL WHERE id = ?", (relative_video_path_str, doc_id))
+        db.execute("UPDATE documents SET linked_video_path = ?, linked_audio_path = NULL, linked_audio_url = NULL WHERE id = ?", (relative_video_path_str, doc_id))
         db.commit()
         return jsonify({'success': True, 'media_url': url_for('main.serve_document', relative_path=relative_video_path_str)})
     return jsonify({'success': False, 'message': f"No '{video_filename}' file found."}), 404
-
 
 @api_bp.route('/document/<int:doc_id>/find_metadata_xml', methods=['POST'])
 @login_required
 def find_metadata_xml(doc_id):
     db = get_db()
-    doc = db.execute("SELECT relative_path, linked_audio_path FROM documents WHERE id = ?", (doc_id,)).fetchone()
-    if not doc or not doc['linked_audio_path']:
-        return jsonify({'success': False, 'message': 'Please sync an audio file before scanning for XML metadata.'}), 400
+    doc = db.execute("SELECT relative_path FROM documents WHERE id = ?", (doc_id,)).fetchone()
+    if not doc:
+        return jsonify({'success': False, 'message': 'Document not found.'}), 404
 
-    audio_filename = os.path.basename(doc['linked_audio_path'])
+    audio_filename = os.path.basename(doc['relative_path'])
     sanitized_target_name = _sanitize_for_matching(audio_filename)
     
     matches = []
     all_xml_files = list(DOCUMENTS_DIR.rglob('*.xml'))
     xml_files_scanned = len(all_xml_files)
     
+    parser = ET.XMLParser(recover=True)
+    
     for xml_path in all_xml_files:
         try:
-            tree = ET.parse(xml_path)
+            tree_bytes = xml_path.read_bytes()
+            tree = ET.fromstring(tree_bytes, parser=parser)
             
+            if parser.error_log:
+                first_error = parser.error_log[0]
+                print(f"Warning: XML file '{xml_path}' has parsing errors. Attempting to recover.")
+                print(f"  - Error Details: {first_error.message} (Line: {first_error.line}, Column: {first_error.column})")
+
             channel_title_element = tree.find('channel/title')
             channel_title = channel_title_element.text if channel_title_element is not None else ""
             
@@ -722,7 +702,6 @@ def find_metadata_xml(doc_id):
             
             for item in tree.findall('channel/item'):
                 is_match = False
-                
                 itunes_title_element = item.find('itunes:title', namespaces)
                 title_element = item.find('title')
                 
@@ -736,40 +715,39 @@ def find_metadata_xml(doc_id):
                     sanitized_xml_title = _sanitize_for_matching(xml_title_text)
                     if sanitized_xml_title and sanitized_xml_title in sanitized_target_name:
                         is_match = True
-
                 if not is_match:
                     enclosure = item.find('enclosure')
                     if enclosure is not None and enclosure.get('url'):
                         url_filename = enclosure.get('url').split('/')[-1].split('?')[0]
                         if sanitized_target_name in _sanitize_for_matching(url_filename):
                             is_match = True
-                
                 if not is_match:
                     target_digits = "".join(re.findall(r'\d+', sanitized_target_name))
                     if target_digits and xml_title_text:
                         if target_digits in xml_title_text:
                             is_match = True
-
                 if is_match:
-                    preview_data = _parse_podcast_xml_to_csl(item, channel_title, channel_author)
+                    preview_data, enclosure_url = _parse_podcast_xml_to_csl(item, channel_title, channel_author)
                     if not preview_data:
                         continue
-
                     guid_element = item.find('guid')
                     hash_content = (guid_element.text if guid_element is not None and guid_element.text else preview_data.get('title', ''))
                     item_hash = hashlib.md5(hash_content.encode()).hexdigest()
-
                     matches.append({
                         'xml_path': xml_path.relative_to(DOCUMENTS_DIR).as_posix(),
                         'preview': preview_data,
-                        'item_hash': item_hash
+                        'item_hash': item_hash,
+                        'enclosure_url': enclosure_url
                     })
                     continue
-                    
-        except Exception as e:
-            print(f"Warning: Could not process XML file '{xml_path}'. Error: {type(e).__name__}: {e}")
+        except ET.XMLSyntaxError:
+            if parser.error_log:
+                first_error = parser.error_log[0]
+                print(f"Warning: Could not process XML file '{xml_path}'.")
+                print(f"  - Fatal Error: {first_error.message} (Line: {first_error.line}, Column: {first_error.column})")
+            else:
+                 print(f"Warning: Could not process severely malformed XML file '{xml_path}'.")
             continue
-
     return jsonify({'success': True, 'matches': matches, 'xml_files_scanned': xml_files_scanned})
 
 @api_bp.route('/document/<int:doc_id>/import_from_xml', methods=['POST'])
@@ -778,44 +756,36 @@ def import_metadata_from_xml(doc_id):
     data = request.json
     xml_path_str = data.get('xml_path')
     item_hash = data.get('item_hash')
-
     if not xml_path_str or not item_hash:
         return jsonify({'success': False, 'message': 'Missing XML path or item identifier.'}), 400
-
     full_xml_path = DOCUMENTS_DIR / xml_path_str
     if not full_xml_path.is_file():
         return jsonify({'success': False, 'message': 'XML file not found at the specified path.'}), 404
-
     try:
-        tree = ET.parse(full_xml_path)
+        parser = ET.XMLParser(recover=True)
+        tree_bytes = full_xml_path.read_bytes()
+        tree = ET.fromstring(tree_bytes, parser=parser)
         channel_title_element = tree.find('channel/title')
         channel_title = channel_title_element.text if channel_title_element is not None else ""
-        
         namespaces = {'itunes': 'http://www.itunes.com/dtds/podcast-1.0.dtd'}
         channel_author_element = tree.find('channel/itunes:author', namespaces)
         channel_author = channel_author_element.text if channel_author_element is not None and channel_author_element.text else ""
-        
         found_item = None
         for item in tree.findall('channel/item'):
             title_element = item.find('title')
             guid_element = item.find('guid')
             hash_content = (guid_element.text if guid_element is not None and guid_element.text else (title_element.text if title_element is not None else ''))
             current_hash = hashlib.md5(hash_content.encode()).hexdigest()
-
             if current_hash == item_hash:
                 found_item = item
                 break
-
         if not found_item:
             return jsonify({'success': False, 'message': 'Could not find the selected item within the XML file.'}), 404
-
-        csl_data = _parse_podcast_xml_to_csl(found_item, channel_title, channel_author)
+        csl_data, _ = _parse_podcast_xml_to_csl(found_item, channel_title, channel_author)
         if not csl_data:
             return jsonify({'success': False, 'message': 'Failed to parse the found XML item into CSL data.'}), 500
-
         csl_data['id'] = f"doc-{doc_id}"
         csl_json_text = json.dumps(csl_data, indent=2)
-
         db = get_db()
         db.execute("""
             INSERT INTO document_metadata (doc_id, csl_json, last_updated, updated_by_user_id)
@@ -826,13 +796,7 @@ def import_metadata_from_xml(doc_id):
                 updated_by_user_id=excluded.updated_by_user_id;
         """, (doc_id, csl_json_text, g.user['id']))
         db.commit()
-
-        return jsonify({
-            'success': True, 
-            'message': 'Metadata imported successfully.',
-            'csl_json': csl_json_text
-        })
-
+        return jsonify({'success': True, 'message': 'Metadata imported successfully.', 'csl_json': csl_json_text})
     except Exception as e:
         db.rollback()
         current_app.logger.error(f"Error during XML import: {e}")
@@ -842,86 +806,84 @@ def import_metadata_from_xml(doc_id):
 @login_required
 def get_media_status(doc_id):
     db = get_db()
-    doc = db.execute("SELECT linked_audio_path, linked_video_path, last_audio_position FROM documents WHERE id = ?", (doc_id,)).fetchone()
+    doc = db.execute("SELECT linked_audio_path, linked_video_path, linked_audio_url, last_audio_position FROM documents WHERE id = ?", (doc_id,)).fetchone()
+    if doc and doc['linked_audio_url']:
+        return jsonify({'linked': True, 'type': 'audio', 'path': doc['linked_audio_url'], 'source': 'web', 'position': doc['last_audio_position']})
     if doc and doc['linked_video_path']:
-        return jsonify({'linked': True, 'type': 'video', 'path': doc['linked_video_path'], 'position': doc['last_audio_position']})
+        return jsonify({'linked': True, 'type': 'video', 'path': url_for('main.serve_document', relative_path=doc['linked_video_path'], _external=True), 'source': 'local', 'position': doc['last_audio_position']})
     if doc and doc['linked_audio_path']:
-        return jsonify({'linked': True, 'type': 'audio', 'path': doc['linked_audio_path'], 'position': doc['last_audio_position']})
+        return jsonify({'linked': True, 'type': 'audio', 'path': url_for('main.serve_document', relative_path=doc['linked_audio_path'], _external=True), 'source': 'local', 'position': doc['last_audio_position']})
     return jsonify({'linked': False})
 
 @api_bp.route('/document/<int:doc_id>/unlink_media', methods=['POST'])
 @login_required
 def unlink_document_media(doc_id):
     db = get_db()
-    db.execute("UPDATE documents SET linked_audio_path = NULL, linked_video_path = NULL, last_audio_position = 0.0 WHERE id = ?", (doc_id,))
+    db.execute("UPDATE documents SET linked_audio_path = NULL, linked_video_path = NULL, linked_audio_url = NULL, last_audio_position = 0.0 WHERE id = ?", (doc_id,))
     db.commit()
     return jsonify({'success': True, 'message': 'Media link removed.'})
 
+@api_bp.route('/document/<int:doc_id>/link_audio_from_url', methods=['POST'])
+@login_required
+def link_audio_from_url(doc_id):
+    url = request.json.get('url')
+    if not url:
+        return jsonify({'success': False, 'message': 'URL is required.'}), 400
+    db = get_db()
+    db.execute("UPDATE documents SET linked_audio_url = ?, linked_audio_path = NULL, linked_video_path = NULL WHERE id = ?", (url, doc_id))
+    db.commit()
+    return jsonify({'success': True, 'media_url': url})
+
+@api_bp.route('/document/<int:doc_id>/check_url_status', methods=['POST'])
+@login_required
+def check_url_status(doc_id):
+    url = request.json.get('url')
+    if not url:
+        return jsonify({'success': False, 'message': 'URL not provided.'}), 400
+    try:
+        response = requests.head(url, allow_redirects=True, timeout=5)
+        if response.ok:
+            content_type = response.headers.get('Content-Type', '')
+            if 'audio' in content_type or 'video' in content_type or 'octet-stream' in content_type:
+                 return jsonify({'success': True, 'status': 'online', 'message': f'Link is online. (Content-Type: {content_type})'})
+            else:
+                 return jsonify({'success': True, 'status': 'warning', 'message': f'Link is online, but may not be audio/video. (Content-Type: {content_type})'})
+        else:
+            return jsonify({'success': True, 'status': 'offline', 'message': f'Link is offline or inaccessible (Status: {response.status_code}).'})
+    except requests.exceptions.RequestException as e:
+        return jsonify({'success': False, 'status': 'error', 'message': f'Error checking URL: {e}'})
 
 @api_bp.route('/podcasts/collections')
 @login_required
 def get_podcast_collections():
     db = get_db()
     query = """
-        SELECT
-            c.id as catalog_id,
-            c.name as podcast_title,
-            d.id as doc_id,
-            d.relative_path,
-            d.color,
-            (SELECT COUNT(*) FROM document_tags WHERE doc_id = d.id) as tag_count,
-            m.csl_json
-        FROM catalogs c
-        JOIN document_catalogs dc ON c.id = dc.catalog_id
-        JOIN documents d ON dc.doc_id = d.id
+        SELECT c.id as catalog_id, c.name as podcast_title, d.id as doc_id, d.relative_path, d.color,
+               (SELECT COUNT(*) FROM document_tags WHERE doc_id = d.id) as tag_count, m.csl_json
+        FROM catalogs c JOIN document_catalogs dc ON c.id = dc.catalog_id JOIN documents d ON dc.doc_id = d.id
         LEFT JOIN document_metadata m ON d.id = m.doc_id
-        WHERE c.catalog_type = 'podcast'
-        ORDER BY c.name, d.relative_path;
+        WHERE c.catalog_type = 'podcast' ORDER BY c.name, d.relative_path;
     """
-    
     rows = db.execute(query).fetchall()
-    
     podcasts = {}
     for row in rows:
         podcast_title = row['podcast_title']
         if podcast_title not in podcasts:
-            podcasts[podcast_title] = {
-                "id": row['catalog_id'],
-                "title": podcast_title,
-                "episodes": []
-            }
-        
-        ep_title = row['relative_path']
-        ep_author = "N/A"
-        ep_date = None
-        ep_date_sort = "0"
-
+            podcasts[podcast_title] = {"id": row['catalog_id'], "title": podcast_title, "episodes": []}
+        ep_title, ep_author, ep_date, ep_date_sort = row['relative_path'], "N/A", None, "0"
         if row['csl_json']:
             try:
                 csl = json.loads(row['csl_json'])
                 ep_title = csl.get('title', ep_title)
-                if csl.get('author') and csl['author'][0].get('literal'):
-                    ep_author = csl['author'][0]['literal']
+                if csl.get('author') and csl['author'][0].get('literal'): ep_author = csl['author'][0]['literal']
                 if csl.get('issued') and csl['issued'].get('date-parts'):
                     parts = csl['issued']['date-parts'][0]
                     ep_date_sort = "-".join(str(p).zfill(2) for p in parts)
                     ep_date = ep_date_sort
-            except (json.JSONDecodeError, IndexError, TypeError):
-                pass
-        
-        podcasts[podcast_title]['episodes'].append({
-            "doc_id": row['doc_id'],
-            "title": ep_title,
-            "author": ep_author,
-            "date": ep_date,
-            "sort_key": ep_date_sort,
-            "color": row['color'],
-            "tag_count": row['tag_count']
-        })
-        
+            except (json.JSONDecodeError, IndexError, TypeError): pass
+        podcasts[podcast_title]['episodes'].append({"doc_id": row['doc_id'], "title": ep_title, "author": ep_author, "date": ep_date, "sort_key": ep_date_sort, "color": row['color'], "tag_count": row['tag_count']})
     for podcast in podcasts.values():
         podcast['episodes'].sort(key=lambda x: x['sort_key'], reverse=True)
-
     return jsonify(sorted(podcasts.values(), key=lambda x: x['title']))
 
 @api_bp.route('/document/<int:doc_id>/save_audio_position', methods=['POST'])
@@ -930,7 +892,6 @@ def save_audio_position(doc_id):
     position = request.json.get('position', 0.0)
     if position is None:
         return jsonify({'success': False, 'message': 'Position not provided.'}), 400
-    
     db = get_db()
     try:
         db.execute("UPDATE documents SET last_audio_position = ? WHERE id = ?", (position, doc_id))
@@ -946,7 +907,6 @@ def save_pdf_zoom(doc_id):
     zoom_level = request.json.get('zoom')
     if zoom_level is None or not isinstance(zoom_level, (int, float)):
         return jsonify({'success': False, 'message': 'Valid zoom level not provided.'}), 400
-    
     db = get_db()
     try:
         db.execute("UPDATE documents SET last_pdf_zoom = ? WHERE id = ?", (zoom_level, doc_id))
@@ -962,7 +922,6 @@ def save_pdf_page(doc_id):
     page = request.json.get('page')
     if page is None or not isinstance(page, int):
         return jsonify({'success': False, 'message': 'Valid page number not provided.'}), 400
-    
     db = get_db()
     try:
         db.execute("UPDATE documents SET last_pdf_page = ? WHERE id = ?", (page, doc_id))
