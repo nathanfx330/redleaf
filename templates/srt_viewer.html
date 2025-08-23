@@ -70,13 +70,10 @@
 </head>
 <body>
     
+    {% if doc.linked_audio_path or doc.linked_video_path or doc.linked_audio_url %}
     <header class="viewer-header {% if doc.linked_video_path %}is-video{% else %}is-audio{% endif %}">
         <div class="media-container">
-            {% if doc.linked_video_path %}
-                <video id="media-player"><source src="{{ url_for('main.serve_document', relative_path=doc.linked_video_path) }}" type="video/mp4"></video>
-            {% elif doc.linked_audio_path %}
-                <audio id="media-player" style="width: 100%;"><source src="{{ url_for('main.serve_document', relative_path=doc.linked_audio_path) }}" type="audio/mpeg"></source></audio>
-            {% endif %}
+            {# The media element will be dynamically created by JS #}
         </div>
         <div id="media-player-bar" class="media-controls">
             <button id="play-pause-btn" class="play-pause-btn" title="Play/Pause"><svg class="icon-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"></path></svg><svg class="icon-pause" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"></path></svg></button>
@@ -89,6 +86,7 @@
     
     {% if doc.linked_video_path %}
     <div id="resizer-handle"></div>
+    {% endif %}
     {% endif %}
 
     <main class="viewer-main">
@@ -122,21 +120,17 @@
         </div>
     </main>
     
-    <!-- ===== START OF FIX ===== -->
     <script>
     document.addEventListener('DOMContentLoaded', () => {
-        // This message tells the parent window (document_view) that this
-        // iframe has loaded and its JavaScript is ready to receive commands.
         window.parent.postMessage({ type: 'viewerReady' }, '*');
     });
     </script>
-    <!-- ===== END OF FIX ===== -->
 
     <script>
     document.addEventListener('DOMContentLoaded', () => {
         const docId = {{ doc.id }};
         const CSRF_TOKEN = "{{ form.csrf_token._value() }}";
-        const mediaPlayer = document.getElementById('media-player');
+        let mediaPlayer = null; // Initialize as null
         
         const transcriptContainer = document.querySelector('#transcript-tab-content .tab-content-inner');
         const mediaContainer = document.querySelector('.media-container');
@@ -180,7 +174,7 @@
                 setTimeout(() => { isSaving = false; }, 100);
             }
         }
-        const debouncedSavePosition = debounce(savePositionNow, 500);
+        const debouncedSavePosition = debounce(savePositionNow, 1500);
 
         function prepareCueData() { document.querySelectorAll('.cue').forEach(el => { const ts = el.dataset.timestamp.replace('→', '-->'); const [start, end] = ts.split(' --> '); if (start && end) cuesData.push({ element: el, start: parseSRTTimestamp(start.trim()), end: parseSRTTimestamp(end.trim()) }); }); }
         
@@ -253,8 +247,6 @@
                 newActiveEl.classList.toggle('active-cue', !mediaPlayer.paused);
                 newActiveEl.classList.toggle('paused-at-cue', mediaPlayer.paused);
             } else if (lastBroadcastedCueNum !== -1) {
-                // When between cues, send a signal that no cue is active (optional)
-                // window.parent.postMessage({ type: 'pageChanged', currentPage: null }, '*');
                 lastBroadcastedCueNum = -1;
             }
             lastActiveCue = newActiveEl;
@@ -272,136 +264,119 @@
             }
             return null;
         }
-        function setupMediaPlayer() { 
-            if (!mediaPlayer) { topBar.style.display = 'none'; return; } 
+
+        function initializePlayerEvents() {
+            if (!mediaPlayer) return;
+            mediaPlayer.addEventListener('play', updateAllControls); 
+            mediaPlayer.addEventListener('pause', () => { updateAllControls(); savePositionNow(); syncManualHighlight(); }); 
+            mediaPlayer.addEventListener('timeupdate', () => { updateAllControls(); syncManualHighlight(); debouncedSavePosition(); }); 
+            mediaPlayer.addEventListener('seeked', () => { syncManualHighlight(); savePositionNow(); });
+            mediaPlayer.addEventListener('volumechange', () => { volumeSlider.value = mediaPlayer.volume; volumeBtn.classList.toggle('muted', mediaPlayer.volume === 0 || mediaPlayer.muted); }); 
+        }
+
+        function setupMediaPlayer(mediaUrl, mediaType, startPosition) {
+            if (!mediaUrl || !mediaContainer) {
+                const header = document.querySelector('.viewer-header');
+                if (header) header.style.display = 'none';
+                const resizer = document.getElementById('resizer-handle');
+                if (resizer) resizer.style.display = 'none';
+                return;
+            }
+            
+            const playerEl = document.createElement(mediaType);
+            playerEl.id = 'media-player';
+            const sourceEl = document.createElement('source');
+            sourceEl.src = mediaUrl;
+            playerEl.appendChild(sourceEl);
+
+            mediaContainer.innerHTML = '';
+            mediaContainer.appendChild(playerEl);
+            mediaPlayer = playerEl;
+            
+            document.querySelector('.viewer-header').className = `viewer-header is-${mediaType}`;
+            
             mediaPlayer.controls = false; topBar.classList.add('visible'); 
-            const urlParams = new URLSearchParams(window.location.search); 
-            const posParam = parseFloat(urlParams.get('position')); 
-            const dbPos = {{ doc.last_audio_position or 0.0 }}; 
-            const hashSeekTime = handleHash();
-            let seekTarget = dbPos;
-            if (hashSeekTime !== null) seekTarget = hashSeekTime;
-            else if (!isNaN(posParam)) seekTarget = posParam;
             
             const onMeta = () => { 
                 isMediaReady = true; 
                 updateAllControls(); 
-                if (seekTarget > 0) mediaPlayer.currentTime = seekTarget; 
-                const targetCueData = cuesData.find(c => seekTarget >= c.start && seekTarget < c.end); 
+                if (startPosition > 0) mediaPlayer.currentTime = startPosition; 
+                const targetCueData = cuesData.find(c => startPosition >= c.start && startPosition < c.end); 
                 if (targetCueData) scrollToCue(parseInt(targetCueData.element.id.split('-')[1], 10), 'auto'); 
                 syncManualHighlight(); 
             }; 
-            if (mediaPlayer.readyState >= 1) onMeta(); else mediaPlayer.addEventListener('loadedmetadata', onMeta, { once: true }); 
+            if (mediaPlayer.readyState >= 1) onMeta(); else mediaPlayer.addEventListener('loadedmetadata', onMeta, { once: true });
+            
+            initializePlayerEvents();
         }
 
         tabsNav.addEventListener('click', e => { if (!e.target.classList.contains('tab-link')) return; const tabId = e.target.dataset.tab; tabsNav.querySelectorAll('.tab-link').forEach(l => l.classList.remove('active')); e.target.classList.add('active'); tabContents.forEach(c => c.classList.toggle('active', c.id === `${tabId}-tab-content`)); });
         searchBtn.addEventListener('click', performSearch);
         searchInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); performSearch(); } else if (e.key === 'Escape') clearSearch(); });
         searchResultsList.addEventListener('click', e => {
-            const item = e.target.closest('.search-result-item');
-            if (!item) return;
-            const sequence = item.dataset.sequence;
-            scrollToCue(sequence, 'smooth');
+            const item = e.target.closest('.search-result-item'); if (!item) return;
+            const sequence = item.dataset.sequence; scrollToCue(sequence, 'smooth');
             if (mediaPlayer && isMediaReady) {
                 const targetCueData = cuesData.find(cue => cue.element.id === `cue-${sequence}`);
-                if (targetCueData) {
-                    const seekTime = targetCueData.start;
-                    mediaPlayer.addEventListener('seeked', () => mediaPlayer.play(), { once: true });
-                    mediaPlayer.currentTime = seekTime;
-                }
+                if (targetCueData) { const seekTime = targetCueData.start; mediaPlayer.addEventListener('seeked', () => mediaPlayer.play(), { once: true }); mediaPlayer.currentTime = seekTime; }
             }
         });
         
-        if (mediaPlayer) { 
-            mediaPlayer.addEventListener('play', updateAllControls); 
-            mediaPlayer.addEventListener('pause', () => { updateAllControls(); savePositionNow(); syncManualHighlight(); }); 
-            mediaPlayer.addEventListener('timeupdate', () => { updateAllControls(); syncManualHighlight(); debouncedSavePosition(); }); 
-            mediaPlayer.addEventListener('seeked', () => { syncManualHighlight(); savePositionNow(); });
-            mediaPlayer.addEventListener('volumechange', () => { volumeSlider.value = mediaPlayer.volume; volumeBtn.classList.toggle('muted', mediaPlayer.volume === 0 || mediaPlayer.muted); }); 
-            mediaContainer.addEventListener('click', () => mediaPlayer.paused ? mediaPlayer.play() : mediaPlayer.pause()); 
-            playPauseBtn.addEventListener('click', () => mediaPlayer.paused ? mediaPlayer.play() : mediaPlayer.pause()); 
-            seekBar.addEventListener('input', () => { currentTimeEl.textContent = formatTime(seekBar.value); }); 
-            seekBar.addEventListener('change', () => { const t = parseFloat(seekBar.value); mediaPlayer.currentTime = t; }); 
-            seekBar.addEventListener('mousedown', () => { seekbarMousedown = true; }); 
-            seekBar.addEventListener('mouseup', () => { seekbarMousedown = false; }); 
-            volumeSlider.addEventListener('input', e => { mediaPlayer.volume = e.target.value; mediaPlayer.muted = e.target.value === '0'; }); 
-            volumeBtn.addEventListener('click', () => { mediaPlayer.muted = !mediaPlayer.muted; if (mediaPlayer.muted) { lastVolume = mediaPlayer.volume; mediaPlayer.volume = 0; } else { mediaPlayer.volume = lastVolume > 0.05 ? lastVolume : 1; } }); 
-        }
+        playPauseBtn.addEventListener('click', () => mediaPlayer && (mediaPlayer.paused ? mediaPlayer.play() : mediaPlayer.pause())); 
+        seekBar.addEventListener('input', () => { if(mediaPlayer) currentTimeEl.textContent = formatTime(seekBar.value); }); 
+        seekBar.addEventListener('change', () => { if(mediaPlayer) mediaPlayer.currentTime = parseFloat(seekBar.value); }); 
+        seekBar.addEventListener('mousedown', () => { seekbarMousedown = true; }); 
+        seekBar.addEventListener('mouseup', () => { seekbarMousedown = false; }); 
+        volumeSlider.addEventListener('input', e => { if(mediaPlayer) { mediaPlayer.volume = e.target.value; mediaPlayer.muted = e.target.value === '0'; } }); 
+        volumeBtn.addEventListener('click', () => { if(mediaPlayer) { mediaPlayer.muted = !mediaPlayer.muted; if (mediaPlayer.muted) { lastVolume = mediaPlayer.volume; mediaPlayer.volume = 0; } else { mediaPlayer.volume = lastVolume > 0.05 ? lastVolume : 1; } } });
         
         transcriptContainer.addEventListener('click', e => {
-            const cueEl = e.target.closest('.cue');
-            if (!cueEl) return;
-            if (e.target.classList.contains('add-to-comment-btn')) {
-                const text = `[${cueEl.dataset.timestamp}] ${cueEl.querySelector('.cue-dialogue').textContent}`;
-                window.parent.postMessage({ type: 'insertIntoComment', text }, '*');
-                return;
-            }
+            const cueEl = e.target.closest('.cue'); if (!cueEl) return;
+            if (e.target.classList.contains('add-to-comment-btn')) { const text = `[${cueEl.dataset.timestamp}] ${cueEl.querySelector('.cue-dialogue').textContent}`; window.parent.postMessage({ type: 'insertIntoComment', text }, '*'); return; }
             if (!mediaPlayer || !isMediaReady) return;
-            if (!mediaPlayer.paused && cueEl.classList.contains('active-cue')) { 
-                mediaPlayer.pause(); 
-                cueEl.classList.add('paused-by-click'); 
-                setTimeout(() => cueEl.classList.remove('paused-by-click'), 800); 
-            } else { 
-                const fullTimestamp = cueEl.dataset.timestamp.replace('→', '-->');
-                const [startStr] = fullTimestamp.split(' --> ');
-                if (startStr) {
-                    const seekTime = parseSRTTimestamp(startStr.trim());
-                    mediaPlayer.addEventListener('seeked', () => mediaPlayer.play(), { once: true });
-                    mediaPlayer.currentTime = seekTime;
-                }
-            }
+            if (!mediaPlayer.paused && cueEl.classList.contains('active-cue')) { mediaPlayer.pause(); cueEl.classList.add('paused-by-click'); setTimeout(() => cueEl.classList.remove('paused-by-click'), 800); } 
+            else { const fullTimestamp = cueEl.dataset.timestamp.replace('→', '-->'); const [startStr] = fullTimestamp.split(' --> '); if (startStr) { const seekTime = parseSRTTimestamp(startStr.trim()); mediaPlayer.addEventListener('seeked', () => mediaPlayer.play(), { once: true }); mediaPlayer.currentTime = seekTime; } }
         });
-
+        
         const handleInteraction = e => { const sel = window.getSelection(); if (e.type === 'contextmenu') e.preventDefault(); else if (sel.isCollapsed) return; const text = sel.toString().trim().replace(/\s+/g, ' '); if (e.type !== 'contextmenu' && !text) return; const range = sel.rangeCount > 0 ? sel.getRangeAt(0) : null; let startCueEl = null; if (range) startCueEl = (range.startContainer.nodeType === 3 ? range.startContainer.parentElement : range.startContainer).closest('.cue'); else if (e.type === 'contextmenu') startCueEl = e.target.closest('.cue'); if (startCueEl) { const seq = parseInt(startCueEl.id.split('-')[1], 10); window.parent.postMessage({ type: 'textSelected', x: e.clientX, y: e.clientY, payload: { selected_text: text || null, source_doc_id: docId, page_number: seq } }, '*'); } };
         transcriptContainer.addEventListener('mouseup', handleInteraction);
         transcriptContainer.addEventListener('contextmenu', handleInteraction);
         
-        window.addEventListener('message', e => { if (e.data.type === 'seekToTimestamp' && e.data.timestamp) { const t = parseSRTTimestamp(e.data.timestamp); if (!isNaN(t) && isMediaReady) { mediaPlayer.currentTime = t; mediaPlayer.play(); } } else if (e.data.type === 'loadMedia' && e.data.url) window.location.reload(); else if (e.data && (e.data.type === 'scrollToCue' || e.data.type === 'scrollToPage')) { const num = parseInt(e.data.cue || e.data.page, 10); if (!isNaN(num)) scrollToCue(num); } });
-        
-        window.addEventListener('beforeunload', () => {
-            if (mediaPlayer && isMediaReady) {
-                savePositionNow();
-            }
+        window.addEventListener('message', async (event) => {
+            if (event.data.type === 'seekToTimestamp' && event.data.timestamp) { const t = parseSRTTimestamp(event.data.timestamp); if (!isNaN(t) && isMediaReady) { mediaPlayer.currentTime = t; mediaPlayer.play(); } } 
+            else if (event.data && (event.data.type === 'scrollToCue' || event.data.type === 'scrollToPage')) { const num = parseInt(event.data.cue || event.data.page, 10); if (!isNaN(num)) scrollToCue(num); }
         });
+
+        window.addEventListener('beforeunload', () => { if (mediaPlayer && isMediaReady) savePositionNow(); });
         
         const resizerHandle = document.getElementById('resizer-handle');
         const viewerHeader = document.querySelector('.viewer-header');
-
-        if (resizerHandle) {
+        if (resizerHandle && viewerHeader) {
             let initialHeight, initialY;
             const onMouseMove = (e) => {
-                const deltaY = e.clientY - initialY;
-                let newHeight = initialHeight + deltaY;
+                const deltaY = e.clientY - initialY; let newHeight = initialHeight + deltaY;
                 const minHeight = 120, maxHeight = window.innerHeight * 0.9;
-                if (newHeight < minHeight) newHeight = minHeight;
-                if (newHeight > maxHeight) newHeight = maxHeight;
+                if (newHeight < minHeight) newHeight = minHeight; if (newHeight > maxHeight) newHeight = maxHeight;
                 viewerHeader.style.height = `${newHeight}px`;
             };
-            const onMouseUp = () => {
-                document.body.classList.remove('is-resizing');
-                window.removeEventListener('mousemove', onMouseMove);
-                window.removeEventListener('mouseup', onMouseUp);
-                localStorage.setItem('redleaf-srt-viewer-height', viewerHeader.style.height);
-            };
-            resizerHandle.addEventListener('mousedown', (e) => {
-                e.preventDefault();
-                initialY = e.clientY;
-                initialHeight = viewerHeader.offsetHeight;
-                document.body.classList.add('is-resizing');
-                window.addEventListener('mousemove', onMouseMove);
-                window.addEventListener('mouseup', onMouseUp);
-            });
-
+            const onMouseUp = () => { document.body.classList.remove('is-resizing'); window.removeEventListener('mousemove', onMouseMove); window.removeEventListener('mouseup', onMouseUp); localStorage.setItem('redleaf-srt-viewer-height', viewerHeader.style.height); };
+            resizerHandle.addEventListener('mousedown', (e) => { e.preventDefault(); initialY = e.clientY; initialHeight = viewerHeader.offsetHeight; document.body.classList.add('is-resizing'); window.addEventListener('mousemove', onMouseMove); window.addEventListener('mouseup', onMouseUp); });
             const savedHeight = localStorage.getItem('redleaf-srt-viewer-height');
-            if (savedHeight) {
-                viewerHeader.style.height = savedHeight;
-            } else {
-                viewerHeader.style.height = '40vh';
+            if (savedHeight) viewerHeader.style.height = savedHeight; else viewerHeader.style.height = '40vh';
+        }
+
+        async function initialize() {
+            prepareCueData();
+            const res = await fetch(`/api/document/${docId}/media_status`);
+            const data = await res.json();
+            if (data.linked) {
+                const hashSeekTime = handleHash();
+                const startPosition = hashSeekTime !== null ? hashSeekTime : data.position;
+                setupMediaPlayer(data.path, data.type, startPosition);
             }
         }
         
-        prepareCueData();
-        setupMediaPlayer();
+        initialize();
     });
     </script>
 </body>
