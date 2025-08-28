@@ -230,8 +230,8 @@ Use this for powerful, system-wide data linking and management. Run `python bulk
 *   **Link from Archive.org:** Scans an Archive.org item and links all matching `.srt` files to the hosted audio. This will **overwrite** existing links.
     ```bash
     # Usage: python bulk_manage.py link-archive-org <archive-id>
-    # Example for archive.org/details/gaslit
-    python bulk_manage.py link-archive-org gaslit
+    # Example for archive.org/details/example
+    python bulk_manage.py link-archive-org Archive_Dot_Org_Identifier 
     ```
 
 *   **Reset Transcripts:** A destructive operation to remove all metadata and media links from every `.srt` file.
