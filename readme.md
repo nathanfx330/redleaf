@@ -1,5 +1,3 @@
-### File: `readme.md` (Updated)
-
 # Redleaf Engine
 
 **Redleaf is a private, local-first knowledge engine.**
