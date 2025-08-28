@@ -1,0 +1,28 @@
+{
+  "name": "redleaf",
+  "version": "1.0.0",
+  "description": "**Redleaf is a private, local-first knowledge engine.**\r It transforms a directory of documents (PDFs, text, HTML, and transcripts) into a searchable, interconnected knowledge graph — all running **entirely on your local machine**.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "esbuild static/js/src/synthesis.js --bundle --minify --format=esm --outfile=static/vendor/synthesis.bundle.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/your-username/redleaf-engine.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/your-username/redleaf-engine/issues"
+  },
+  "homepage": "https://github.com/your-username/redleaf-engine#readme",
+  "dependencies": {
+    "@tiptap/core": "^2.4.0",
+    "@tiptap/starter-kit": "^2.4.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.23.0"
+  }
+}

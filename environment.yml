@@ -1,0 +1,40 @@
+# Redleaf Engine Conda Environment
+#
+# To create this environment from the terminal, run:
+# > conda env create -f environment.yml
+#
+# Then, to activate it:
+# > conda activate redleaf-env
+#
+# Finally, you MUST download the required spaCy model:
+# > python -m spacy download en_core_web_lg
+
+name: redleaf-env
+
+channels:
+  - conda-forge
+  - defaults
+
+dependencies:
+  # Core Python version
+  - python=3.9
+
+  # Web Framework & Dependencies
+  - flask=2.3.3
+  - flask-wtf=1.1.1
+  - werkzeug=2.3.7
+
+  # Document Processing & NLP
+  - beautifulsoup4=4.12.2
+  - lxml=4.9.3
+  - spacy=3.6.1
+
+  # Pip is included to manage packages not on Conda
+  - pip
+  
+  # Pip-installed packages
+  - pip:
+    - PyMuPDF==1.23.5
+    - odfpy==1.4.1       
+    - citeproc-py==0.6.0
+    - requests==2.31.0

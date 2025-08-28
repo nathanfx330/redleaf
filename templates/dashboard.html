@@ -1,0 +1,250 @@
+<!-- File: ./templates/dashboard.html -->
+{% extends 'layout.html' %}
+{% block title %}Dashboard - Redleaf{% endblock %}
+
+{% block content %}
+<div class="page-heading">
+    <h1>Dashboard</h1>
+    <div class="toolbar">
+        <a href="{{ url_for('main.dashboard_discover') }}"
+           class="button workflow-btn {{ 'button-primary' if task_states.discover == 'primary' }} {{ 'disabled' if task_states.discover == 'disabled' }}"
+           id="discover-btn">
+           {{ 'Discovering...' if task_states.discover == 'disabled' else '1. Discover Docs' }}
+        </a>
+        <a href="{{ url_for('main.dashboard_process_all_new') }}"
+           class="button workflow-btn {{ 'button-primary' if task_states.process == 'primary' }} {{ 'disabled' if task_states.process == 'disabled' }}"
+           id="process-all-btn">
+           {{ 'Processing...' if task_states.process == 'disabled' else '2. Process All \'New\'' }}
+        </a>
+        <a href="{{ url_for('main.dashboard_update_cache') }}"
+           class="button workflow-btn {{ 'button-primary' if task_states.cache == 'primary' }} {{ 'disabled' if task_states.cache == 'disabled' }}"
+           id="update-cache-btn">
+           {% if task_states.cache == 'disabled' %}
+               Updating Cache...
+           {% else %}
+               3. Update Browse Cache
+           {% endif %}
+        </a>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-12">
+        <div class="panel">
+            <div class="panel-header"><h3>Quick Search</h3></div>
+            <div class="panel-body">
+                <form action="{{ url_for('main.search_results') }}" method="get">
+                    <div class="input-group">
+                        <input type="search" name="q" class="form-control" placeholder="Search all document content..." required>
+                        <button class="button button-primary" type="submit">Search</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        
+        <p class="text-muted mt-2">
+            Document Source: <code>{{ doc_dir }}</code>
+            <span class="queue-status ms-3">Tasks in queue: <span id="queue-size-display">{{ queue_size }}</span></span>
+            <span class="queue-status ms-3">Documents in registry: <span id="doc-count-display">{{ documents|length }}</span></span>
+        </p>
+    </div>
+</div>
+
+<h2>Document Registry</h2>
+
+<div class="sort-controls" id="registry-sort-controls">
+    <button class="button button-small sort-btn" data-sort-key="relative_path">Path</button>
+    <button class="button button-small sort-btn" data-sort-key="status">Status</button>
+    <button class="button button-small sort-btn" data-sort-key="file_type">Type</button>
+    <button class="button button-small sort-btn" data-sort-key="file_size_bytes">File Size</button>
+    <button class="button button-small sort-btn" data-sort-key="duration_seconds">Duration</button>
+    <button class="button button-small sort-btn" data-sort-key="page_count">Pages</button>
+    <button class="button button-small sort-btn" data-sort-key="comment_count">Comments</button>
+    <button class="button button-small sort-btn" data-sort-key="tag_count">Tags</button>
+</div>
+
+<div class="table-container">
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>#</th>
+                <th></th><!-- Column for color -->
+                <th>Path</th>
+                <th>Status</th>
+                <th>Message</th>
+                <th>Type</th>
+                <th>Size</th>
+                <th>Duration</th>
+                <th>Pages</th>
+                <th>Comments</th>
+                <th>Attributes</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="registry-table-body">
+            {# Body will be rendered by JS #}
+        </tbody>
+    </table>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    let allDocsData = {{ documents|tojson }};
+    let currentSort;
+    const defaultSort = { key: 'relative_path', direction: 'asc' };
+    const POLLING_INTERVAL = 3000;
+    let pollingTimer;
+    const tableBody = document.getElementById('registry-table-body');
+    const sortControls = document.getElementById('registry-sort-controls');
+    const queueSizeDisplay = document.getElementById('queue-size-display');
+    const docCountDisplay = document.getElementById('doc-count-display');
+    const workflowButtons = {
+        discover: document.getElementById('discover-btn'),
+        process: document.getElementById('process-all-btn'),
+        cache: document.getElementById('update-cache-btn')
+    };
+    try {
+        currentSort = JSON.parse(localStorage.getItem('dashboardSortState')) || defaultSort;
+    } catch (e) {
+        currentSort = defaultSort;
+    }
+
+    function sortAndRender() {
+        const sortedDocs = [...allDocsData].sort((a, b) => {
+            const key = currentSort.key;
+            let valA = a[key], valB = b[key];
+            const direction = currentSort.direction === 'asc' ? 1 : -1;
+            if (valA == null && valB == null) return 0;
+            if (valA == null) return 1; if (valB == null) return -1;
+            if (typeof valA === 'string') return valA.toLowerCase().localeCompare(valB.toLowerCase()) * direction;
+            if (valA < valB) return -1 * direction;
+            if (valA > valB) return 1 * direction;
+            return 0;
+        });
+        let rowsHtml = '';
+        if (sortedDocs.length === 0) {
+            rowsHtml = `<tr><td colspan="12" class="table-empty-message">No documents registered. Click "Discover Documents" to begin.</td></tr>`;
+        } else {
+            sortedDocs.forEach(doc => {
+                const colorDot = doc.color ? `<span class="color-dot" style="background-color: ${doc.color};"></span>` : '';
+                const pathLink = (doc.status === 'Indexed') ? `<a href="/document/${doc.id}">${doc.relative_path}</a>` : doc.relative_path;
+                const statusClass = doc.status ? doc.status.replace(' ', '') : 'New';
+                const commentsChip = doc.comment_count > 0 ? `<span class="chip" title="${doc.comment_count} public comment(s)">💬 ${doc.comment_count}</span>` : '<span class="text-muted">—</span>';
+                
+                let attributesHtml = '';
+                if (doc.is_podcast_episode) {
+                    attributesHtml += `<span class="chip" title="Podcast Episode">🎧</span> `;
+                }
+                if (doc.tag_count > 0) {
+                    attributesHtml += `<span class="chip" title="${doc.tag_count} tag(s)">🏷️ ${doc.tag_count}</span>`;
+                }
+                if (attributesHtml === '') {
+                    attributesHtml = '<span class="text-muted">—</span>';
+                }
+
+                // DYNAMIC ACTION BUTTON LOGIC
+                let actionsHtml = '';
+                switch (doc.status) {
+                    case 'New':
+                        actionsHtml = `<a href="/dashboard/process/${doc.id}" class="button button-small">Process</a>`;
+                        break;
+                    case 'Queued':
+                    case 'Indexing':
+                        actionsHtml = `<button class="button button-small disabled">Processing...</button>`;
+                        break;
+                    case 'Indexed':
+                    case 'Error':
+                        actionsHtml = `<a href="/dashboard/process/${doc.id}" class="button button-small">Re-Process</a>`;
+                        break;
+                    default:
+                        actionsHtml = `<span class="text-muted">—</span>`;
+                        break;
+                }
+
+                const fileSize = formatFileSize(doc.file_size_bytes);
+                const duration = formatDuration(doc.duration_seconds);
+                rowsHtml += `
+                    <tr data-doc-id="${doc.id}">
+                        <td>${doc.id}</td><td class="color-cell">${colorDot}</td><td class="path-cell">${pathLink}</td>
+                        <td><span class="status-${statusClass}">${doc.status}</span></td>
+                        <td class="message-cell" title="${doc.status_message || ''}">${doc.status_message || ''}</td>
+                        <td><span class="chip">${doc.file_type || 'N/A'}</span></td><td>${fileSize}</td>
+                        <td>${duration}</td><td>${doc.page_count ?? 'N/A'}</td>
+                        <td>${commentsChip}</td>
+                        <td>${attributesHtml}</td>
+                        <td>${actionsHtml}</td>
+                    </tr>`;
+            });
+        }
+        tableBody.innerHTML = rowsHtml;
+        updateSortButtonUI();
+        docCountDisplay.textContent = allDocsData.length;
+    }
+
+    function updateSortButtonUI() {
+        sortControls.querySelectorAll('.sort-btn').forEach(btn => {
+            btn.classList.remove('active', 'sort-asc', 'sort-desc');
+            if (btn.dataset.sortKey === currentSort.key) {
+                btn.classList.add('active', `sort-${currentSort.direction}`);
+            }
+        });
+    }
+
+    async function pollStatus() {
+        clearTimeout(pollingTimer);
+        try {
+            const response = await fetch('/api/dashboard/status');
+            if (!response.ok) throw new Error(`Status poll failed: ${response.status}`);
+            const data = await response.json();
+            updateActionButtons(data.task_states);
+            if (queueSizeDisplay) queueSizeDisplay.textContent = data.queue_size;
+            if (JSON.stringify(allDocsData) !== JSON.stringify(data.documents)) {
+                allDocsData = data.documents;
+                sortAndRender();
+            }
+        } catch (error) {
+            console.error("Error during status polling:", error);
+        } finally {
+            pollingTimer = setTimeout(pollStatus, POLLING_INTERVAL);
+        }
+    }
+
+    function updateActionButtons(taskStates) {
+        Object.keys(workflowButtons).forEach(key => {
+            const btn = workflowButtons[key];
+            if (!btn) return;
+            const state = taskStates[key];
+            btn.classList.remove('button-primary', 'disabled');
+            if (state === 'primary') btn.classList.add('button-primary');
+            if (state === 'disabled') btn.classList.add('disabled');
+            if (key === 'discover') btn.textContent = state === 'disabled' ? 'Discovering...' : '1. Discover Docs';
+            if (key === 'process') btn.textContent = state === 'disabled' ? 'Processing...' : '2. Process All \'New\'';
+            if (key === 'cache') btn.textContent = state === 'disabled' ? 'Updating Cache...' : '3. Update Browse Cache';
+        });
+    }
+
+    sortControls.addEventListener('click', (e) => {
+        const clickedButton = e.target.closest('.sort-btn');
+        if (!clickedButton) return;
+        const clickedKey = clickedButton.dataset.sortKey;
+        if (clickedKey === currentSort.key) {
+            currentSort.direction = currentSort.direction === 'asc' ? 'desc' : 'asc';
+        } else {
+            currentSort.key = clickedKey;
+            currentSort.direction = ['relative_path', 'status', 'file_type'].includes(clickedKey) ? 'asc' : 'desc';
+        }
+        try { localStorage.setItem('dashboardSortState', JSON.stringify(currentSort)); }
+        catch (e) { console.error("Could not save sort state.", e); }
+        sortAndRender();
+    });
+
+    window.addEventListener('beforeunload', () => clearTimeout(pollingTimer));
+    
+    sortAndRender();
+    pollStatus();
+});
+</script>
+{% endblock %}

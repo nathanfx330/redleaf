@@ -1,0 +1,88 @@
+<!-- File: ./templates/synthesis.html -->
+{% extends 'layout.html' %}
+{% set page_layout = 'full_height' %}
+{% block title %}Synthesis: {{ report.title }}{% endblock %}
+
+{% block head_extra %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/synthesis.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="synthesis-container" data-report-id="{{ report.id }}">
+    
+    <form id="csrf-form-container" style="display: none;">{{ form.hidden_tag() }}</form>
+
+    <!-- Left Column: Editor & Bibliography -->
+    <div class="synthesis-main-area">
+        <div id="editor-pane" class="panel">
+            <div class="pane-header editor-header">
+                <div class="dropdown" style="display: flex; align-items: center; gap: 0.5rem;">
+                    <h3 id="report-title-display" style="margin: 0;">{{ report.title }}</h3>
+                    <button class="button button-small" id="report-actions-btn">▼</button>
+                    <div class="dropdown-menu" id="report-actions-menu" style="left: 0; right: auto; top: 100%; margin-top: 5px;">
+                        <a href="#" class="dropdown-item" id="rename-report-btn">Rename Current Report</a>
+                        <a href="#" class="dropdown-item" id="delete-report-btn" style="color: var(--red-danger);">Delete Current Report</a>
+                        <div class="dropdown-divider"></div>
+                        <div id="report-list-container" class="dropdown-form">
+                            <span class="text-muted">Loading reports...</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="toolbar" style="display: flex; align-items: center; gap: 1rem;">
+                    <button id="export-odt-btn" class="button">Export to ODT</button>
+                    <button id="create-report-btn" class="button button-primary">New Report</button>
+                    <span id="save-status" class="save-status-indicator"></span>
+                </div>
+            </div>
+
+            <div id="tiptap-editor"></div>
+        </div>
+        <div id="bibliography-pane" class="panel">
+            <h3 class="pane-header">Bibliography</h3>
+            <div id="bibliography-content"><p class="text-muted">Will be generated here.</p></div>
+        </div>
+    </div>
+
+    <!-- This is the resizer element -->
+    <div class="resizer-vertical" id="resizer-vertical"></div>
+
+    <!-- Right Column: Reference Viewer -->
+    <aside class="synthesis-sidebar">
+        <div class="panel">
+            <div class="pane-header" style="display: flex; justify-content: space-between; align-items: center;">
+                <h3>Reference Viewer</h3>
+                <a href="#" id="back-to-doc-view-btn" class="button button-small" style="display: none;">Back to Document</a>
+            </div>
+            <div class="panel-body">
+                <div class="input-group">
+                    <input type="search" id="kb-search-input" class="form-control" placeholder="Search document by filename...">
+                </div>
+                <div id="dynamic-search-results" class="search-results-panel" style="display: none;">
+                    <!-- Results will be injected here -->
+                </div>
+                <div id="reference-viewer-container">
+                    <iframe id="reference-viewer" title="Reference Document Viewer" src="about:blank"></iframe>
+                </div>
+            </div>
+        </div>
+    </aside>
+</div>
+
+<!-- Modals and Popups -->
+<div id="cite-popup-template" style="display: none;"><div class="cite-popup"><button class="button button-small" data-action="quote">" Quote</button><button class="button button-small" data-action="cite">Cite</button></div></div>
+<div id="citation-modal" class="modal-overlay"><div class="modal-dialog"><div class="modal-header"><h3 class="modal-title">Add Reference</h3><button class="modal-close-btn" id="modal-cancel-btn-x">×</button></div><div class="modal-body"><div class="form-group"><label>Source</label><div id="modal-source-info" class="text-muted"></div></div><div class="form-group"><label for="modal-quoted-text">Quoted Text (fix OCR here)</label><textarea id="modal-quoted-text" class="form-control" rows="5"></textarea></div><div class="row"><div class="col-md-6 form-group"><label for="modal-prefix">Prefix</label><input type="text" id="modal-prefix" class="form-control" placeholder="e.g., see also, cf."></div><div class="col-md-6 form-group"><label for="modal-suffix">Suffix</label><input type="text" id="modal-suffix" class="form-control" placeholder="e.g., emphasis added"></div></div><div class="form-group"><div class="form-check"><input type="checkbox" id="modal-suppress-author" class="form-check-input"><label for="modal-suppress-author" class="form-check-label">Suppress Author (for narrative citations)</label></div></div></div><div class="modal-footer"><button id="modal-cancel-btn" class="button">Cancel</button><div class="btn-group"><button id="modal-insert-citation-btn" class="button">Insert Citation Only</button><button id="modal-insert-quote-btn" class="button button-primary">Insert as Quote</button></div></div></div></div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+    const REPORT_ID = {{ report.id }};
+    const CSRF_TOKEN = "{{ form.csrf_token._value() }}";
+    
+    // --- THIS IS THE FIX ---
+    // Pass the document data as a global JS variable.
+    // Use 'null' if the doc doesn't exist, which is valid JSON.
+    window.DOC_TO_LOAD = {{ doc_to_load | tojson | safe if doc_to_load else 'null' }};
+</script>
+<script type="module" src="{{ url_for('static', filename='vendor/synthesis.bundle.js') }}"></script>
+{% endblock %}

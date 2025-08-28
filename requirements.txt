@@ -1,0 +1,50 @@
+# --- Redleaf Engine Python Dependencies ---
+#
+# To install all the required libraries, run the following command in your terminal:
+# pip install -r requirements.txt
+#
+# After installing these, you must also download the required spaCy model.
+
+# == Core Web Framework ==
+Flask==2.3.3         # The web server framework.
+Flask-WTF==1.1.1     # Handles web forms and CSRF protection.
+Werkzeug==2.3.7      # Core WSGI utility library, dependency of Flask.
+
+# == Document Processing & Data Extraction ==
+beautifulsoup4==4.12.2 # For parsing and extracting text from HTML files.
+lxml==4.9.3          # High-performance parser for XML and HTML, used by BeautifulSoup.
+PyMuPDF==1.23.5      # Used for PDF processing (imported as 'fitz').
+
+# == Natural Language Processing (NLP) ==
+spacy==3.6.1         # The core NLP library for entity and relationship extraction.
+
+# == Synthesis & Exporting ==
+odfpy==1.4.1         # Creates .odt files for the "Export to ODT" feature.
+citeproc-py==0.6.0   # Handles CSL citation style processing for bibliographies.
+
+# == API Requests ==
+requests==2.31.0     # For making HTTP requests to external APIs (e.g., Archive.org)
+
+# --- IMPORTANT: spaCy Model and GPU Support ---
+#
+# The main spacy library is listed above, but the application also requires
+# a specific pre-trained model to function.
+#
+# 1. DOWNLOAD THE REQUIRED MODEL:
+#    After running 'pip install -r requirements.txt', you MUST download the model with:
+#
+#    python -m spacy download en_core_web_lg
+#
+# 2. (OPTIONAL) FOR GPU ACCELERATION:
+#    If you want to use the GPU acceleration feature, you need to have an
+#    NVIDIA GPU with the correct CUDA drivers installed.
+#
+#    Then, install the version of CuPy that matches your CUDA installation.
+#    For example, for CUDA 11.x:
+#    pip install cupy-cuda11x
+#
+#    For CUDA 12.x:
+#    pip install cupy-cuda12x
+#
+#    You can verify if spaCy can access your GPU by running:
+#    python check_gpu.py

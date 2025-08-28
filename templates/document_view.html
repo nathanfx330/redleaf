@@ -1,0 +1,332 @@
+<!-- File: ./templates/document_view.html (FINAL CORRECTED VERSION) -->
+{% extends 'layout.html' %}
+{% set page_layout = 'full_height' %}
+
+{# --- Jinja2 logic to split the path (unchanged) --- #}
+{% set path_parts = doc.relative_path.rsplit('/', 1) %}
+{% if path_parts|length > 1 %}
+    {% set directory_path = path_parts[0] + '/' %}
+    {% set file_name = path_parts[1] %}
+{% else %}
+    {% set directory_path = '' %}
+    {% set file_name = path_parts[0] %}
+{% endif %}
+
+{% block title %}Document: {{ file_name }}{% endblock %}
+
+{% block head_extra %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/document_view.css') }}">
+<style>
+    .page-heading {
+        align-items: center;
+    }
+
+    .document-title-heading {
+        min-width: 0;
+        margin-top: 0;
+        margin-bottom: 0;
+    }
+
+    .document-header-container {
+        display: flex;
+        flex-direction: column;
+        line-height: 1.25;
+        overflow: hidden;
+    }
+
+    .document-file-name {
+        font-size: 0.9em;
+        font-weight: 500;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .document-directory-path {
+        font-size: 0.65em;
+        color: var(--text-muted);
+        font-family: monospace;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="workbench-container" 
+     data-doc-id="{{ doc.id }}" 
+     data-doc-color="{{ doc.color or '' }}" 
+     data-file-type="{{ doc.file_type }}" 
+     data-doc-path="{{ doc.relative_path }}" 
+     data-doc-page-count="{{ doc.page_count or 1 }}">
+
+    <form id="csrf-form-container" style="display: none;">{{ form.hidden_tag() }}</form>
+    
+    <!-- START OF FIX: This entire block is updated -->
+    <div class="document-main-header">
+        <div class="document-title-and-pills">
+            <h1 title="{{ doc.relative_path }}" class="document-title-heading">
+                <div class="document-header-container">
+                    <span class="document-file-name">{{ file_name }}</span>
+                    <span class="document-directory-path">{{ directory_path }}</span>
+                </div>
+            </h1>
+
+            {% if pills_data.podcast_title %}
+            <div id="metadata-pills-container">
+                <span class="metadata-pill"><span class="pill-label">Podcast:</span> {{ pills_data.podcast_title }}</span>
+                {% if pills_data.episode_title %}
+                    <span class="metadata-pill"><span class="pill-label">Episode:</span> {{ pills_data.episode_title }}</span>
+                {% endif %}
+                {% if pills_data.author %}
+                    <span class="metadata-pill"><span class="pill-label">Author:</span> {{ pills_data.author }}</span>
+                {% endif %}
+                {% if pills_data.year %}
+                    <span class="metadata-pill"><span class="pill-label">Date:</span> {{ pills_data.year }}</span>
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+
+        <div class="toolbar">
+            {% if doc.file_type == 'HTML' %}
+                <button class="button" id="toggle-html-view-btn">Show Stripped Text</button>
+            {% endif %}
+            <a href="{{ url_for('main.send_to_synthesis', doc_id=doc.id) }}" class="button button-primary">
+                ↗ Send to Synthesis
+            </a>
+            <div class="dropdown">
+                <button class="button" id="copy-text-btn">Copy Text</button>
+                <div class="dropdown-menu" id="copy-text-menu">
+                    <div class="dropdown-item" style="pointer-events: none; opacity: 0.8; color: var(--text-muted);">
+                        <span id="current-page-display">Current View: Page 1</span>
+                    </div>
+                    <div class="dropdown-divider"></div>
+                    <a class="dropdown-item" href="#" id="copy-all-text-btn">Copy All Text</a>
+                    <div class="dropdown-divider"></div>
+                    <div class="dropdown-form">
+                        <label for="page-num-single" class="form-label">
+                            Single Page
+                            {% if doc.page_count and doc.page_count > 0 %}<span class="text-muted" style="font-weight: normal; font-size: 0.9em;">(1 - {{ doc.page_count }})</span>{% endif %}
+                        </label>
+                        <div class="input-group">
+                            <input type="number" class="form-control form-control-small" id="page-num-single" placeholder="e.g., 1" min="1" max="{{ doc.page_count or 1 }}">
+                            <button class="button button-small" id="copy-single-page-btn">Copy</button>
+                        </div>
+                    </div>
+                    <div class="dropdown-divider"></div>
+                    <div class="dropdown-form">
+                        <label class="form-label">
+                            Page Range
+                             {% if doc.page_count and doc.page_count > 0 %}<span class="text-muted" style="font-weight: normal; font-size: 0.9em;">(1 - {{ doc.page_count }})</span>{% endif %}
+                        </label>
+                        <div class="input-group">
+                            <input type="number" class="form-control form-control-small" id="page-num-start" placeholder="Start" min="1" max="{{ doc.page_count or 1 }}">
+                            <input type="number" class="form-control form-control-small" id="page-num-end" placeholder="End" min="1" max="{{ doc.page_count or 1 }}">
+                            <button class="button button-small" id="copy-range-page-btn">Copy</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <!-- END OF FIX -->
+
+    <div class="workbench-layout">
+        <div class="workbench-viewer">
+            {% if doc.file_type == 'PDF' %}
+                <iframe src="{{ url_for('main.view_pdf_document', doc_id=doc.id) }}" title="PDF Document Viewer" id="doc-viewer"></iframe>
+            {% elif doc.file_type == 'TXT' %}
+                <iframe src="{{ url_for('main.view_text_document', doc_id=doc.id) }}" title="Text Document Viewer" id="doc-viewer"></iframe>
+            {% elif doc.file_type == 'HTML' %}
+                <iframe src="{{ url_for('main.serve_document', relative_path=doc.relative_path) }}" title="Document Viewer" id="doc-viewer"></iframe>
+            {% elif doc.file_type == 'SRT' %}
+                <iframe src="{{ url_for('main.view_srt_document', doc_id=doc.id, v=timestamp) }}" title="SRT Document Viewer" id="doc-viewer"></iframe>
+            {% else %}
+                <iframe src="{{ url_for('main.serve_document', relative_path=doc.relative_path) }}" title="Document Viewer" id="doc-viewer"></iframe>
+            {% endif %}
+        </div>
+        <aside class="workbench-sidebar">
+            <nav class="tabs-nav">
+                <button class="tab-link active" data-tab="curation">Curation</button>
+                <button class="tab-link" data-tab="metadata">Metadata</button>
+                <button class="tab-link" data-tab="discovery">Discovery</button>
+            </nav>
+
+            <div id="tab-curation" class="tab-content active">
+                <div class="panel">
+                    <div class="panel-header">Curation</div>
+                    <div class="panel-body">
+                        <div class="form-group">
+                            <label class="form-label">Color Tag</label>
+                            <div class="color-palette" id="color-palette">
+                                <span class="palette-color" data-color="#d93a3e" style="background-color: #d93a3e;" title="Red"></span>
+                                <span class="palette-color" data-color="#e0843a" style="background-color: #e0843a;" title="Orange"></span>
+                                <span class="palette-color" data-color="#e8c63b" style="background-color: #e8c63b;" title="Yellow"></span>
+                                <span class="palette-color" data-color="#4caf50" style="background-color: #4caf50;" title="Green"></span>
+                                <span class="palette-color" data-color="#2196f3" style="background-color: #2196f3;" title="Blue"></span>
+                                <span class="palette-color" data-color="#9c27b0" style="background-color: #9c27b0;" title="Purple"></span>
+                                <span class="palette-color palette-clear" data-color="" title="Clear Color">×</span>
+                            </div>
+                        </div>
+                        <div class="form-switch">
+                            <input type="checkbox" role="switch" id="is-favorite-toggle">
+                            <label for="is-favorite-toggle">Favorite</label>
+                        </div>
+                        <div class="form-group">
+                            <label for="note-content" class="form-label">My Private Note</label>
+                            <textarea class="form-control" id="note-content" rows="4"></textarea>
+                        </div>
+                        <button id="save-curation-btn" class="button">Save Note</button>
+                    </div>
+                </div>
+                <div class="panel">
+                    <div class="panel-header">Comments</div>
+                    <div class="panel-body">
+                        <div id="comment-list" class="comment-list-container"></div>
+                        <div class="comment-form-container mt-3">
+                            <textarea id="new-comment-text" class="form-control" rows="3" placeholder="Leave a public comment..."></textarea>
+                            <button id="post-comment-btn" class="button mt-2">Post Comment</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="panel">
+                    <div class="panel-header">Tags</div>
+                    <div class="panel-body">
+                        <div id="tag-container" class="tag-container"></div>
+                        <div class="autocomplete-wrapper">
+                            <input type="text" id="tag-input" class="form-control mt-2" placeholder="Add a tag and press Enter...">
+                            <div id="autocomplete-list" class="autocomplete-items"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="panel">
+                    <div class="panel-header">Catalogs</div>
+                    <div class="panel-body" id="catalog-list-container"></div>
+                    <div class="panel-footer">
+                        <div class="input-group">
+                            <input type="text" class="form-control" id="new-catalog-name" placeholder="New catalog name...">
+                            <button class="button" type="button" id="create-catalog-btn">Create</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="tab-metadata" class="tab-content">
+                {% if doc.file_type == 'SRT' %}
+                <div class="panel">
+                    <div class="panel-header">Media Sync</div>
+                    <div class="panel-body" id="media-sync-panel">
+                        <p class="text-muted">Checking media link status...</p>
+                    </div>
+                </div>
+                <div class="panel">
+                    <div class="panel-header">Metadata Sync (XML)</div>
+                    <div class="panel-body" id="xml-sync-panel">
+                        <p class="text-muted">Sync metadata from a podcast XML file.</p>
+                        <button id="scan-xml-btn" class="button">Scan for XML File</button>
+                        <div id="xml-link-status" class="mt-2" style="font-size: 0.9em;"></div>
+                    </div>
+                </div>
+                {% endif %}
+                <div class="panel">
+                    <div class="panel-header">Bibliographic Metadata</div>
+                    <div class="panel-body">
+                        <p class="text-muted">Fill in the form to generate professional citations. Data is saved as CSL-JSON.</p>
+                        <form id="metadata-form">
+                            <div class="form-group">
+                                <label for="csl-type">Document Type</label>
+                                <select id="csl-type" class="form-control"></select>
+                            </div>
+                            <div class="form-group">
+                                <label for="csl-title">Title</label>
+                                <input type="text" id="csl-title" class="form-control">
+                            </div>
+                            <div class="form-group">
+                                <label for="csl-author">Author(s)</label>
+                                <input type="text" id="csl-author" class="form-control" placeholder="e.g., Smith, John; Doe, Jane">
+                            </div>
+                            <div class="form-group">
+                                <label>Publication Date</label>
+                                <div class="row gx-2">
+                                    <div class="col"><select id="csl-date-year" class="form-control" aria-label="Year"></select></div>
+                                    <div class="col"><select id="csl-date-month" class="form-control" aria-label="Month"></select></div>
+                                    <div class="col"><select id="csl-date-day" class="form-control" aria-label="Day"></select></div>
+                                </div>
+                            </div>
+                            <div class="form-group csl-field-specific" data-csl-type="report broadcast motion_picture">
+                                <label for="csl-publisher" data-label-for="report, broadcast">Publisher / Network</label>
+                                <input type="text" id="csl-publisher" class="form-control">
+                            </div>
+                            <div class="form-group csl-field-specific" data-csl-type="article-journal broadcast interview" style="display:none;">
+                                <label for="csl-container-title" data-label-for="article-journal">Journal / Program / Series Title</label>
+                                <input type="text" id="csl-container-title" class="form-control">
+                            </div>
+                             <div class="form-group csl-field-specific" data-csl-type="webpage broadcast interview motion_picture" style="display:none;">
+                                <label for="csl-url">URL</label>
+                                <input type="url" id="csl-url" class="form-control">
+                            </div>
+                        </form>
+                        <button id="save-metadata-btn" class="button button-primary">Save Metadata</button>
+                        <p id="metadata-save-status" class="text-muted mt-2" style="transition: opacity 0.3s; opacity: 0;"></p>
+                    </div>
+                </div>
+            </div>
+            <div id="tab-discovery" class="tab-content">
+                <div class="panel">
+                    <div class="panel-header">Entities in this Document</div>
+                    <div class="panel-body" id="doc-discovery-content">
+                        <p class="text-muted">Loading entities...</p>
+                    </div>
+                </div>
+            </div>
+        </aside>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+    const DOC_ID = {{ doc.id }};
+    const CSRF_TOKEN = "{{ form.csrf_token._value() }}";
+</script>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const iframe = document.getElementById('doc-viewer');
+    if (!iframe) return;
+
+    const sendScrollCommand = () => {
+        const hash = window.location.hash;
+        if (!hash) return;
+
+        let pageNum = null;
+        if (hash.startsWith('#page=')) {
+            pageNum = parseInt(hash.substring(6), 10);
+        } else if (hash.startsWith('#cue=')) {
+            pageNum = parseInt(hash.substring(5), 10);
+        }
+
+        if (pageNum && !isNaN(pageNum)) {
+            iframe.contentWindow.postMessage({
+                type: 'scrollToPage',
+                page: pageNum
+            }, '*');
+        }
+    };
+
+    const messageHandler = (event) => {
+        if (event.source !== iframe.contentWindow) return;
+
+        if (event.data && event.data.type === 'viewerReady') {
+            sendScrollCommand();
+            window.removeEventListener('message', messageHandler);
+        }
+    };
+
+    window.addEventListener('message', messageHandler);
+});
+</script>
+<script src="{{ url_for('static', filename='js/document_view.js') }}" defer></script>
+{% endblock %}

@@ -1,0 +1,115 @@
+<!-- File: ./templates/layout.html -->
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Redleaf Engine{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='vendor/bootstrap/bootstrap-grid.min.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='vendor/bootstrap/bootstrap-reboot.min.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    {% block head_extra %}{% endblock %}
+</head>
+<body class="{% if page_layout == 'full_height' %}full-height-body{% endif %}">
+    <header class="page-header">
+        <div class="container-fluid d-flex align-items-center">
+            <a href="{{ url_for('main.dashboard') if g.user else url_for('auth.login') }}" class="logo">Redleaf</a>
+            <nav class="main-nav">
+                {% if g.user %}
+                    <a href="{{ url_for('main.dashboard') }}" class="nav-link {% if request.endpoint == 'main.dashboard' %}active{% endif %}">Dashboard</a>
+                    <a href="{{ url_for('main.discover_view') }}" class="nav-link {% if request.endpoint.startswith('main.discover_') %}active{% endif %}">Discovery</a>
+                    
+                    <a href="{{ url_for('synthesis.list_reports') }}" class="nav-link {% if request.endpoint.startswith('synthesis.') %}active{% endif %}">Synthesis</a>
+                    
+                    <a href="{{ url_for('main.catalog_view') }}" class="nav-link {% if request.endpoint == 'main.catalog_view' %}active{% endif %}">Catalogs</a>
+                    <a href="{{ url_for('main.tags_index') }}" class="nav-link {% if request.endpoint == 'main.tags_index' %}active{% endif %}">Tags</a>
+                    {% if g.user.role == 'admin' %}
+                    <a href="{{ url_for('settings.settings_page') }}" class="nav-link {% if request.endpoint == 'settings.settings_page' %}active{% endif %}">Settings</a>
+                    {% endif %}
+                {% endif %}
+            </nav>
+            <div class="ms-auto d-flex align-items-center">
+                {% if g.user %}
+                    <span class="text-muted me-3">User: {{ g.user.username }} ({{ g.user.role }})</span>
+                    <a href="{{ url_for('auth.logout') }}" class="button button-small">Logout</a>
+                {% endif %}
+            </div>
+        </div>
+    </header>
+    <main class="{% if page_layout == 'full_height' %}main-full-height{% else %}content-wrapper py-4{% endif %}">
+        
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <div class="flash-messages content-wrapper">
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category if category != 'danger' else 'danger-custom' }} alert-dismissible">
+                        {{ message }}
+                        <button type="button" class="alert-close-btn" aria-label="Close">×</button>
+                    </div>
+                {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="page-footer content-wrapper">
+        <a href="#" id="about-link" class="footer-link">Redleaf Engine 2.0</a>
+    </footer>
+
+    <div id="about-modal" class="modal-overlay">
+        <div class="modal-dialog">
+            <div class="modal-header">
+                <h3 class="modal-title">About Redleaf Engine</h3>
+                <button class="modal-close-btn" aria-label="Close">×</button>
+            </div>
+            <div class="modal-body">
+                <h4>A Note from the Developer</h4>
+                <p>
+                    Thank you for choosing to use Redleaf. This project has been a deeply personal passion—created not just as a tool, but as an invitation to explore knowledge on your own terms. Your interest, feedback, and curiosity are what bring it to life.
+                </p>
+            
+                <h4>About the Project</h4>
+                <p>
+                    Redleaf is a full-stack web application designed to help you index, search, and explore documents, creating a personal datapool on your local machine to uncover meaningful connections within your collection of PDF, TXT, HTML and SRT documents. Built with a Python Flask backend and a lightweight JavaScript frontend, it offers a fast and flexible user experience.
+                </p>
+            
+                <h4>Open Source Spirit</h4>
+                <p>
+                    Redleaf is free to use, distribute, and modify. While it reflects one developer’s vision, it is meant to evolve through the hands of others. The source code is yours to explore, adapt, or improve—wherever your ideas lead.
+                </p>
+            
+                <p style="margin-top: 2em; font-style: italic;">
+                    — Nathaniel Westveer
+                </p>
+            </div>
+        </div>
+    </div>
+    
+    {% block scripts %}
+    <script src="{{ url_for('static', filename='js/utils.js') }}"></script>
+    <script>
+    document.addEventListener('click', function(e) {
+        if (e.target && e.target.classList.contains('alert-close-btn')) {
+            const alert = e.target.parentElement;
+            alert.style.transition = 'opacity 0.3s ease';
+            alert.style.opacity = '0';
+            setTimeout(() => alert.style.display = 'none', 300);
+        }
+    });
+
+    const aboutLink = document.getElementById('about-link');
+    const aboutModal = document.getElementById('about-modal');
+    if (aboutLink && aboutModal) {
+        const closeBtn = aboutModal.querySelector('.modal-close-btn');
+        const openModal = () => aboutModal.classList.add('show');
+        const closeModal = () => aboutModal.classList.remove('show');
+        aboutLink.addEventListener('click', (e) => { e.preventDefault(); openModal(); });
+        closeBtn.addEventListener('click', closeModal);
+        aboutModal.addEventListener('click', (e) => { if (e.target === aboutModal) { closeModal(); } });
+        document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && aboutModal.classList.contains('show')) { closeModal(); } });
+    }
+    </script>
+    {% endblock %}
+</body>
+</html>

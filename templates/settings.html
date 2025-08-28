@@ -1,0 +1,410 @@
+{% extends 'layout.html' %}
+{% block title %}Settings - Redleaf{% endblock %}
+
+{% block content %}
+<div class="page-heading">
+    <h1>Settings</h1>
+</div>
+
+<div class="panel">
+    <div class="panel-body">
+        <form id="csrf-form-container" style="display: none;">{{ form.hidden_tag() }}</form>
+
+        <!-- Tab Navigation -->
+        <nav class="tabs-nav">
+            <button class="tab-link active" data-tab="access">Users & Access</button>
+            <button class="tab-link" data-tab="system">System & Processing</button>
+            <button class="tab-link" data-tab="archive">Archived Items</button>
+            <!-- NEW TAB BUTTON -->
+            <button class="tab-link" data-tab="transfer">Import / Export</button>
+            <button class="tab-link" data-tab="danger">Reset</button>
+        </nav>
+
+        <!-- Tab Content: Users & Access -->
+        <div id="tab-access" class="tab-content active">
+            <h3 class="mt-4">User Management</h3>
+            <div class="panel">
+                <div class="panel-body">
+                    <div class="table-container">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Username</th>
+                                    <th>Role</th>
+                                    <th>Member Since</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                            {% for user in users %}
+                                <tr data-user-id="{{ user.id }}" data-username="{{ user.username }}">
+                                    <td>{{ user.username }}</td>
+                                    <td><span class="chip">{{ user.role }}</span></td>
+                                    <td>{{ user.created_at | strftime }}</td>
+                                    <td class="action-cell">
+                                        {% if g.user.role == 'admin' or user.id == g.user.id %}
+                                            <button class="button button-small change-password-btn">Change Password</button>
+                                        {% endif %}
+                                        {% if g.user.role == 'admin' and user.id != g.user.id %}
+                                            <form action="{{ url_for('settings.delete_user', user_id=user.id) }}" method="post"
+                                                  style="margin:0; display: inline-block;"
+                                                  onsubmit="return confirm('Are you sure you want to delete user \'{{ user.username }}\' and all their contributions? This cannot be undone.');">
+                                                {{ form.hidden_tag() }}
+                                                <button type="submit" class="button button-danger button-small">Delete</button>
+                                            </form>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                            {% else %}
+                                <tr><td colspan="4" class="table-empty-message">No users found.</td></tr>
+                            {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <h3 class="mt-4">Invitation Tokens</h3>
+             <div class="panel">
+                <div class="panel-header d-flex justify-content-between align-items-center">
+                    <span>Manage user registration tokens</span>
+                    <form action="{{ url_for('settings.create_token') }}" method="post">
+                        {{ form.hidden_tag() }}
+                        <button type="submit" class="button button-primary button-small">Generate New Token</button>
+                    </form>
+                </div>
+                <div class="panel-body">
+                     <div class="table-container">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Token</th>
+                                    <th>Status</th>
+                                    <th>Created By</th>
+                                    <th>Created At</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                            {% for token in tokens %}
+                                <tr>
+                                    <td><code>{{ token.token_value }}</code></td>
+                                    <td>
+                                        {% if token.claimer_username %}
+                                            <span class="status-Indexed">Claimed by {{ token.claimer_username }}</span>
+                                            <small class="text-muted">({{ token.claimed_at | strftime }})</small>
+                                        {% else %}
+                                            <span class="status-Queued">Unclaimed</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>{{ token.creator_username }}</td>
+                                    <td>{{ token.created_at | strftime }}</td>
+                                    <td>
+                                        {% if not token.claimer_username %}
+                                            <form action="{{ url_for('settings.revoke_token', token_id=token.id) }}" method="post"
+                                                  onsubmit="return confirm('Are you sure you want to revoke this invitation token?');">
+                                                {{ form.hidden_tag() }}
+                                                <button type="submit" class="button button-danger button-small">Revoke</button>
+                                            </form>
+                                        {% else %}
+                                            <span class="text-muted">—</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                            {% else %}
+                                 <tr><td colspan="5" class="table-empty-message">No invitation tokens created yet.</td></tr>
+                            {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab Content: System & Processing -->
+        <div id="tab-system" class="tab-content">
+            <h3 class="mt-4">System & Processing</h3>
+            <div class="panel">
+                <div class="panel-body">
+                    <h5>Worker Configuration</h5>
+                    <p class="text-muted">Adjust the number of parallel processes used for document processing. Each worker consumes significant RAM (approx. 800MB+). Your system has <strong>{{ cpu_count or 'N/A' }}</strong> CPU cores. The change will take effect after any currently running tasks complete.</p>
+                    <form action="{{ url_for('settings.update_workers') }}" method="POST" class="d-flex align-items-center gap-3">
+                        {{ form.hidden_tag() }}
+                        <div class="form-group mb-0">
+                            <label for="max_workers" class="form-label">Max Worker Processes:</label>
+                            <input type="number" name="max_workers" id="max_workers" class="form-control" value="{{ max_workers }}" min="1" max="{{ (cpu_count or 2) * 4 }}" required style="width: 100px;">
+                        </div>
+                        <button type="submit" class="button button-primary align-self-end">Update Workers</button>
+                    </form>
+                    <hr>
+                    <h5>GPU Acceleration (via CUDA)</h5>
+                    <p class="text-muted">Enable to use a compatible NVIDIA GPU for spaCy's NLP processing. This requires CUDA and CuPy to be correctly installed. The change will take effect after any currently running tasks complete.</p>
+                    <form action="{{ url_for('settings.update_gpu_setting') }}" method="POST" id="gpu-form">
+                        {{ form.hidden_tag() }}
+                        <div class="form-switch">
+                            <input type="checkbox" role="switch" name="use_gpu" id="use-gpu-toggle" {% if use_gpu %}checked{% endif %}>
+                            <label for="use-gpu-toggle">Enable GPU Acceleration</label>
+                        </div>
+                    </form>
+                    <hr>
+                    <h5>HTML Parsing Strategy</h5>
+                    <p class="text-muted">Choose how Redleaf should extract text from <code>.html</code> files. Affects new or re-processed documents only.</p>
+                    <form action="{{ url_for('settings.update_html_settings') }}" method="POST" class="d-flex align-items-center gap-3">
+                        {{ form.hidden_tag() }}
+                        <div class="form-group mb-0">
+                            <label for="html_parsing_mode" class="form-label">HTML Processing Mode:</label>
+                            <select name="html_parsing_mode" id="html_parsing_mode" class="form-control" style="width: 250px;">
+                                <option value="generic" {% if html_parsing_mode == 'generic' %}selected{% endif %}>Generic Content Scraper (Recommended)</option>
+                                <option value="pipermail" {% if html_parsing_mode == 'pipermail' %}selected{% endif %}>Pipermail Listserv Archive</option>
+                            </select>
+                        </div>
+                        <button type="submit" class="button button-primary align-self-end">Update Strategy</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab Content: Archived Items -->
+        <div id="tab-archive" class="tab-content">
+            <h3 class="mt-4">Archived Relationships</h3>
+            <p class="text-muted">These relationships are hidden from the "Relationship Explorer" view on the Discovery page. Un-archiving an item will make it eligible to appear there again.</p>
+            <div class="table-container">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Relationship Triplet</th>
+                            <th>Archived On</th>
+                            <th style="width: 150px;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="archived-relationships-tbody">
+                        <tr><td colspan="3" class="table-empty-message">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- NEW TAB CONTENT: Import / Export -->
+        <div id="tab-transfer" class="tab-content">
+            <h3 class="mt-4">Knowledge Package Transfer</h3>
+            <div class="panel">
+                <div class="panel-header">Export Knowledge Package</div>
+                <div class="panel-body">
+                    <p class="text-muted">
+                        Export the public knowledge from this instance into a single <code>.rklf</code> file. This file contains the sanitized database and a manifest of required documents.
+                        It **does not** contain user accounts, private notes, or synthesis reports.
+                        <br>
+                        <strong>Important:</strong> You must manually transfer your <code>documents/</code> directory alongside this file for the recipient to successfully import the package.
+                    </p>
+                    <form action="{{ url_for('settings.export_package') }}" method="POST" id="export-form">
+                        {{ form.hidden_tag() }}
+                        <button type="submit" class="button button-primary" id="export-btn">Export Knowledge Package</button>
+                    </form>
+                </div>
+            </div>
+            <div class="panel">
+                <div class="panel-header">Import Knowledge Package</div>
+                <div class="panel-body">
+                    <p class="text-muted">
+                        Import a <code>.rklf</code> package from another Redleaf instance. The system will verify that you have all the required files in your <code>documents/</code> directory with the correct content before merging the data.
+                    </p>
+                    <form action="{{ url_for('settings.import_package') }}" method="POST" enctype="multipart/form-data" id="import-form">
+                        {{ form.hidden_tag() }}
+                        <div class="form-group">
+                            <label for="package_file" class="form-label">Select a <code>.rklf</code> or <code>.zip</code> file:</label>
+                            <input type="file" name="package_file" id="package_file" class="form-control" accept=".rklf,.zip" required>
+                        </div>
+                        <button type="submit" class="button" id="import-btn">Upload and Import Package</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab Content: Reset Zone -->
+        <div id="tab-danger" class="tab-content">
+             <h3 class="mt-4">Reset</h3>
+             <div class="panel">
+                <div class="panel-body">
+                    <h5>System Reset</h5>
+                    <p class="text-muted">This will permanently delete the entire database, including all users, documents, tags, and other data. This action is irreversible.</p>
+                    <form action="{{ url_for('main.dashboard_reset_database') }}" method="POST" onsubmit="return confirm('WARNING: This will permanently delete the entire database, all users, and all processed data. Are you absolutely sure?');">
+                        {{ form.hidden_tag() }}
+                        <button type="submit" class="button button-danger">Reset Entire System</button>
+                    </form>
+                </div>
+             </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const csrfToken = document.querySelector('#csrf-form-container input[name="csrf_token"]').value;
+
+    const tabContainer = document.querySelector('.tabs-nav');
+    const tabContents = document.querySelectorAll('.tab-content');
+    let archiveTabLoaded = false;
+
+    if (tabContainer) {
+        tabContainer.addEventListener('click', (event) => {
+            const link = event.target.closest('.tab-link');
+            if (!link) return;
+
+            const tabId = link.dataset.tab;
+            
+            tabContainer.querySelectorAll('.tab-link').forEach(l => l.classList.remove('active'));
+            link.classList.add('active');
+            
+            tabContents.forEach(content => {
+                content.classList.toggle('active', content.id === `tab-${tabId}`);
+            });
+
+            if (tabId === 'archive' && !archiveTabLoaded) {
+                loadArchivedRelationships();
+            }
+        });
+    }
+
+    const gpuToggle = document.getElementById('use-gpu-toggle');
+    if (gpuToggle) {
+        gpuToggle.addEventListener('change', () => {
+            document.getElementById('gpu-form').submit();
+        });
+    }
+
+    const userTableBody = document.querySelector('.data-table tbody');
+    if (userTableBody) {
+        userTableBody.addEventListener('click', async (event) => {
+            const button = event.target.closest('.change-password-btn');
+            if (!button) return;
+
+            const row = button.closest('tr');
+            const userId = row.dataset.userId;
+            const username = row.dataset.username;
+
+            const newPassword = prompt(`Enter a new password for user "${username}":`);
+            if (newPassword === null) return;
+            if (newPassword.trim() === '' || newPassword.length < 8) {
+                alert('Error: Password cannot be empty and must be at least 8 characters long.');
+                return;
+            }
+            const newPasswordConfirm = prompt(`Confirm new password for "${username}":`);
+            if (newPassword !== newPasswordConfirm) {
+                alert("Passwords do not match. Aborting.");
+                return;
+            }
+
+            try {
+                const response = await fetch(`/settings/user/${userId}/change-password`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+                    body: JSON.stringify({ new_password: newPassword })
+                });
+                const result = await response.json();
+                if (!response.ok) throw new Error(result.message);
+                alert(result.message);
+            } catch (error) {
+                console.error('Password change failed:', error);
+                alert(`Error: ${error.message}`);
+            }
+        });
+    }
+
+    const archivedTbody = document.getElementById('archived-relationships-tbody');
+
+    async function loadArchivedRelationships() {
+        archiveTabLoaded = true;
+        try {
+            const response = await fetch('/api/settings/archived-relationships');
+            if (!response.ok) throw new Error('Failed to fetch archived items.');
+            const data = await response.json();
+            
+            archivedTbody.innerHTML = '';
+            if (data.length === 0) {
+                archivedTbody.innerHTML = '<tr><td colspan="3" class="table-empty-message">No relationships have been archived.</td></tr>';
+                return;
+            }
+            
+            data.forEach(rel => {
+                const tr = document.createElement('tr');
+                tr.dataset.subjectId = rel.subject_entity_id;
+                tr.dataset.objectId = rel.object_entity_id;
+                tr.dataset.phrase = rel.relationship_phrase;
+                const tripletHtml = `<mark>${rel.subject_text}</mark> <span class="chip">${rel.relationship_phrase}</span> <mark>${rel.object_text}</mark>`;
+                const date = new Date(rel.archived_at.replace(' ', 'T') + 'Z').toLocaleString();
+                tr.innerHTML = `<td>${tripletHtml}</td><td>${date}</td><td><button class="button button-small unarchive-btn">Un-archive</button></td>`;
+                archivedTbody.appendChild(tr);
+            });
+        } catch (error) {
+            console.error(error);
+            archivedTbody.innerHTML = '<tr><td colspan="3" class="table-empty-message text-danger">Could not load archived items.</td></tr>';
+        }
+    }
+
+    if (archivedTbody) {
+        archivedTbody.addEventListener('click', async (event) => {
+            const btn = event.target.closest('.unarchive-btn');
+            if (!btn) return;
+            
+            const row = btn.closest('tr');
+            const relData = {
+                subject_id: parseInt(row.dataset.subjectId, 10),
+                object_id: parseInt(row.dataset.objectId, 10),
+                phrase: row.dataset.phrase
+            };
+
+            btn.textContent = '...';
+            btn.disabled = true;
+
+            try {
+                const response = await fetch('/api/settings/unarchive-relationship', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+                    body: JSON.stringify(relData)
+                });
+                const result = await response.json();
+                if (!response.ok) throw new Error(result.message);
+                
+                row.remove();
+                if (archivedTbody.children.length === 0) {
+                     archivedTbody.innerHTML = '<tr><td colspan="3" class="table-empty-message">No relationships have been archived.</td></tr>';
+                }
+            } catch (error) {
+                alert(`Error: ${error.message}`);
+                btn.textContent = 'Un-archive';
+                btn.disabled = false;
+            }
+        });
+    }
+
+    // --- NEW SCRIPT FOR IMPORT/EXPORT FEEDBACK ---
+    const exportForm = document.getElementById('export-form');
+    if (exportForm) {
+        exportForm.addEventListener('submit', () => {
+            const btn = document.getElementById('export-btn');
+            btn.textContent = 'Generating Package...';
+            btn.disabled = true;
+            // The browser will handle the download, so we don't need to revert the button text.
+        });
+    }
+
+    const importForm = document.getElementById('import-form');
+    if (importForm) {
+        importForm.addEventListener('submit', () => {
+            const fileInput = document.getElementById('package_file');
+            if (fileInput.files.length === 0) {
+                alert('Please select a file to import.');
+                event.preventDefault();
+                return;
+            }
+            const btn = document.getElementById('import-btn');
+            btn.textContent = 'Importing... Please wait.';
+            btn.disabled = true;
+        });
+    }
+});
+</script>
+{% endblock %}

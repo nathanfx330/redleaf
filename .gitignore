@@ -1,0 +1,87 @@
+# ===================================================================
+# --- CRITICAL FOLDERS TO IGNORE ---
+# ===================================================================
+
+# User's private data folder. NEVER commit this.
+documents/
+
+# Flask instance folder. Contains the secret key. NEVER commit this.
+instance/
+
+# NodeJS dependencies. These are installed via `npm install`.
+node_modules/
+
+# User's private database file. The app creates this on first run.
+*.db
+*.sqlite3
+
+# ===================================================================
+# --- COMMON MEDIA FORMATS (Images, Video, Audio) ---
+# ===================================================================
+# Images
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.bmp
+*.tiff
+*.webp
+*.svg
+*.ico
+
+# Video
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.webm
+
+# Audio
+*.mp3
+*.wav
+*.ogg
+*.flac
+*.m4a
+
+# ===================================================================
+# --- STANDARD PYTHON & VIRTUAL ENVIRONMENT ---
+# ===================================================================
+
+# Python cache and artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual Environment
+venv/
+.venv/
+env/
+.env/
+
+# ===================================================================
+# --- STANDARD PYTHON DISTRIBUTION / PACKAGING ---
+# ===================================================================
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ===================================================================
+# --- OS-SPECIFIC FILES ---
+# ===================================================================
+.DS_Store
+Thumbs.db

@@ -1,0 +1,202 @@
+{% extends 'layout.html' %}
+{% block title %}Entity: {{ text }}{% endblock %}
+
+{% block content %}
+<div class="breadcrumb">
+    <a href="{{ url_for('main.discover_view') }}">Discovery</a> /
+    <span>{{ label }}: {{ text }}</span>
+</div>
+
+<div class="page-heading">
+    <h1><mark>{{ text }}</mark> <span class="chip" style="font-size: 0.6em; vertical-align: middle;">{{ label }}</span></h1>
+</div>
+
+<div class="panel">
+    <div class="panel-body">
+        <nav class="tabs-nav">
+            <button class="tab-link active" data-tab="mentions">Document Mentions (<span id="mention-count-display">...</span>)</button>
+            <button class="tab-link" data-tab="relationships">Inferred Relationships</button>
+        </nav>
+
+        <div id="tab-mentions" class="tab-content active">
+            <p class="text-muted mt-3">Showing all documents and pages where this entity was found.</p>
+            <ul class="result-list" id="entity-mentions-container">
+                <!-- JS will populate this list -->
+            </ul>
+            <div id="mentions-loader" class="text-muted empty-state mt-3" style="display: none;">
+                <em>Loading more mentions...</em>
+            </div>
+        </div>
+
+        <div id="tab-relationships" class="tab-content">
+            <div id="relationships-container" class="mt-3">
+                <p class="text-muted empty-state">Loading relationships...</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<a href="{{ url_for('main.discover_view') }}" class="button mt-4">← Back to Discovery</a>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script> const ENTITY_ID = {{ entity_id }}; </script>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    // === TAB SWITCHING LOGIC ===
+    const tabContainer = document.querySelector('.panel-body');
+    const relationshipContainer = document.getElementById('relationships-container');
+    let relationshipsLoaded = false;
+
+    tabContainer.addEventListener('click', (event) => {
+        if (!event.target.classList.contains('tab-link')) return;
+        const tabId = event.target.dataset.tab;
+        tabContainer.querySelectorAll('.tab-link').forEach(l => l.classList.remove('active'));
+        event.target.classList.add('active');
+        tabContainer.querySelectorAll('.tab-content').forEach(content => {
+            content.classList.toggle('active', content.id === `tab-${tabId}`);
+        });
+        if (tabId === 'relationships' && !relationshipsLoaded) {
+            fetchAndRenderRelationships();
+        }
+    });
+
+    // === MENTIONS TAB LOGIC (INFINITE SCROLL) ===
+    const mentionsContainer = document.getElementById('entity-mentions-container');
+    const loader = document.getElementById('mentions-loader');
+    const mentionCountDisplay = document.getElementById('mention-count-display');
+    let currentPage = 1;
+    let hasMore = true;
+    let isLoading = false;
+
+    function renderMentions(mentions) {
+        if (!mentions || mentions.length === 0) return;
+        
+        const fragment = document.createDocumentFragment();
+        mentions.forEach(res => {
+            const li = document.createElement('li');
+            li.className = 'result-item';
+            
+            const colorDot = res.color ? `<span class="color-dot" style="background-color: ${res.color};"></span>` : '';
+            const tagsChip = res.has_tags ? '<span class="chip" title="This document has tags">🏷️</span>' : '';
+            const noteChip = res.has_personal_note ? '<span class="chip" title="You have a private note">📝</span>' : '';
+            const commentsChip = res.comment_count > 0 ? `<span class="chip" title="${res.comment_count} public comment(s)">💬 ${res.comment_count}</span>` : '';
+            
+            let catalogChips = '';
+            if (res.catalog_names) {
+                res.catalog_names.split(',').forEach(name => {
+                    const trimmedName = name.trim();
+                    catalogChips += `<span class="chip" title="In catalog: ${trimmedName}">🗂️ ${trimmedName}</span>`;
+                });
+            }
+
+            let docLink = `/document/${res.doc_id}`;
+            const pageNumDisplay = (res.file_type === 'SRT') ? `Cue ${res.page_number}` : `Page ${res.page_number}`;
+            if (res.page_number) {
+                 docLink += (res.file_type === 'SRT') ? `#cue=${res.page_number}` : `#page=${res.page_number}`;
+            }
+
+            const pageCountText = (res.page_count && res.page_count > 1) ? ` of ${res.page_count}` : '';
+            const snippetHtml = res.snippet ? `<p class="result-snippet">...${res.snippet}...</p>` : '<p class="result-snippet text-muted"><em>Could not generate snippet.</em></p>';
+
+            li.innerHTML = `
+                <div class="result-item-header">
+                    <div>
+                        ${colorDot}
+                        <a class="result-title" href="${docLink}">${res.relative_path}</a>
+                        <span class="ms-2"> ${tagsChip} ${noteChip} ${commentsChip} ${catalogChips} </span>
+                    </div>
+                    <span class="text-muted"> ${pageNumDisplay}${pageCountText} </span>
+                </div>
+                ${snippetHtml}
+            `;
+            fragment.appendChild(li);
+        });
+        mentionsContainer.appendChild(fragment);
+    }
+
+    async function fetchMentions() {
+        if (!hasMore || isLoading) return;
+        isLoading = true;
+        loader.style.display = 'block';
+
+        try {
+            const response = await fetch(`/api/entity/${ENTITY_ID}/mentions?page=${currentPage}`);
+            if (!response.ok) throw new Error('Network request failed');
+            const data = await response.json();
+            
+            if (currentPage === 1) {
+                mentionCountDisplay.textContent = data.total_count;
+                if (data.total_count === 0) {
+                    mentionsContainer.innerHTML = '<p class="text-muted empty-state">No occurrences of this entity were found.</p>';
+                }
+            }
+
+            renderMentions(data.mentions);
+            hasMore = data.has_more;
+            currentPage++;
+
+        } catch (error) {
+            console.error('Failed to fetch mentions:', error);
+            loader.innerHTML = '<em class="text-danger">Error loading mentions.</em>';
+        } finally {
+            isLoading = false;
+            if (!hasMore) {
+                loader.style.display = 'none';
+            }
+        }
+    }
+
+    // Intersection Observer for infinite scroll
+    const observer = new IntersectionObserver((entries) => {
+        if (entries[0].isIntersecting) {
+            fetchMentions();
+        }
+    }, { threshold: 1.0 });
+
+    if (loader) {
+        observer.observe(loader);
+    }
+    
+    // Initial fetch
+    fetchMentions();
+
+    // === RELATIONSHIPS TAB LOGIC ===
+    async function fetchAndRenderRelationships() {
+        relationshipsLoaded = true;
+        try {
+            const response = await fetch(`/api/entity/${ENTITY_ID}/relationships`);
+            if (!response.ok) throw new Error('Network response was not ok');
+            const data = await response.json();
+            
+            if (data.length === 0) {
+                relationshipContainer.innerHTML = '<p class="text-muted empty-state">No direct relationships found.</p>';
+                return;
+            }
+            let html = '<ul class="simple-list">';
+            data.forEach(rel => {
+                const thisEntityText = {{ text|tojson }};
+                let subject_id, object_id;
+                if (rel.role === 'subject') { subject_id = ENTITY_ID; object_id = rel.other_entity_id; } 
+                else { subject_id = rel.other_entity_id; object_id = ENTITY_ID; }
+                const detailUrl = `/discover/relationship?subject_id=${subject_id}&object_id=${object_id}&phrase=${encodeURIComponent(rel.relationship_phrase)}`;
+                const otherEntityUrl = `/discover/entity/${encodeURIComponent(rel.other_entity_label)}/${encodeURIComponent(rel.other_entity_text)}`;
+                let relationshipHtml;
+                if (rel.role === 'object') {
+                    relationshipHtml = `<strong>${thisEntityText}</strong> <span class="chip">${rel.relationship_phrase}</span> <span style="font-size: 1.2em;">→</span> <a href="${otherEntityUrl}">${rel.other_entity_text}</a>`;
+                } else { 
+                    relationshipHtml = `<a href="${otherEntityUrl}">${rel.other_entity_text}</a> <span class="chip">${rel.relationship_phrase}</span> <span style="font-size: 1.2em;">→</span> <strong>${thisEntityText}</strong>`;
+                }
+                html += `<li><a href="${detailUrl}" class="chip text-muted" title="See all ${rel.count} occurrences">${rel.count}x</a> ${relationshipHtml}</li>`;
+            });
+            html += '</ul>';
+            relationshipContainer.innerHTML = html;
+        } catch (error) {
+            console.error('Error fetching relationships:', error);
+            relationshipContainer.innerHTML = '<p class="text-danger">Could not load relationships.</p>';
+        }
+    }
+});
+</script>
+{% endblock %}

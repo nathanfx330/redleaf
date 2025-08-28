@@ -1,0 +1,27 @@
+{% extends 'layout.html' %}
+{% block title %}Tag: {{ tag_name }}{% endblock %}
+{% block content %}
+<div class="breadcrumb">
+    {# === THIS IS THE FIX === #}
+    <a href="{{ url_for('main.tags_index') }}">All Tags</a> /
+    <span>{{ tag_name }}</span>
+</div>
+<div class="page-heading">
+    <h1>Documents tagged with <mark>{{ tag_name }}</mark></h1>
+</div>
+
+{% if documents %}
+    <ul class="simple-list">
+    {% for doc in documents %}
+        <li><a href="{{ url_for('main.document_view', doc_id=doc.id) }}">{{ doc.relative_path }}</a></li>
+    {% endfor %}
+    </ul>
+{% else %}
+    <div class="empty-state">
+        <p>No documents found with this tag. This might be a cache issue.</p>
+    </div>
+{% endif %}
+
+{# === AND THIS IS THE OTHER FIX === #}
+<a href="{{ url_for('main.tags_index') }}" class="button mt-4">← Back to All Tags</a>
+{% endblock %}

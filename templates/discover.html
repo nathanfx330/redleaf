@@ -1,0 +1,352 @@
+{% extends 'layout.html' %}
+{% block title %}Discovery - Redleaf{% endblock %}
+{% block content %}
+<div class="page-heading">
+    <h1>Discovery</h1>
+</div>
+
+<div class="panel">
+    <div class="panel-header"><h3>Keyword Search</h3></div>
+    <div class="panel-body">
+        <p>Find documents by searching their full text content.</p>
+        <form action="{{ url_for('main.search_results') }}" method="get">
+            <div class="input-group">
+                <input type="search" name="q" class="form-control" placeholder="Search document content..." required>
+                <button class="button button-primary" type="submit">Search</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="section-divider"></div>
+
+<div class="panel">
+    <div class="panel-body">
+        <form id="csrf-form-container" style="display: none;">{{ form.hidden_tag() }}</form>
+        
+        <nav class="tabs-nav">
+            <button class="tab-link active" data-tab="browse">Browse Entities</button>
+            <button class="tab-link" data-tab="explore">Explore Relationships</button>
+        </nav>
+
+        <div id="tab-browse" class="tab-content active">
+            <h2 class="mt-3">Browse Extracted Entities</h2>
+            <p class="text-muted">Explore documents by the people, places, and organizations automatically identified. Click a category to expand it.</p>
+            
+            <div class="accordion" id="browse-accordion-container">
+                <!-- JavaScript will populate this section -->
+                <p class="text-muted empty-state" id="entities-loading-message"><em>Loading entities...</em></p>
+            </div>
+        </div>
+
+        <div id="tab-explore" class="tab-content">
+            <div class="d-flex justify-content-between align-items-center mt-3">
+                <div><h2 class="d-inline-block mb-0">Relationship Explorer</h2></div>
+                <div id="relationship-controls" class="toolbar">
+                    <button class="button button-small" id="archive-mode-btn">Archive...</button>
+                    <button class="button button-small" id="cancel-archive-btn" style="display: none;">Cancel</button>
+                    <button class="button button-primary button-small" id="archive-selected-btn" style="display: none;">Archive Selected</button>
+                </div>
+            </div>
+            <p class="text-muted mt-2">Discover the most common connections between entities. Click the count to see all occurrences.</p>
+            <div id="relationship-explorer-container" class="mt-3">
+                <p class="text-muted">Loading top relationships...</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    // === START: All Discovery Logic ===
+
+    // --- State variables ---
+    let allEntitiesByLabel = {}; // Will be populated by the API call
+    const BATCH_SIZE = 100;
+    const currentlyDisplayedCounts = {};
+    const accordionContainer = document.getElementById('browse-accordion-container');
+    const csrfToken = document.querySelector('#csrf-form-container input[name="csrf_token"]').value;
+
+    /**
+     * Creates the initial HTML structure for the accordion from a list of labels.
+     */
+    function buildAccordionShell(sortedLabels) {
+        if (!accordionContainer) return;
+        accordionContainer.innerHTML = ''; // Clear loading message
+
+        sortedLabels.forEach(label => {
+            const details = document.createElement('details');
+            details.className = 'accordion-item';
+            details.dataset.label = label;
+            details.innerHTML = `
+                <summary class="accordion-header">
+                    <span>${label} <span class="chip" data-count-chip="${label}">...</span></span>
+                    <div class="accordion-controls-group" style="margin-left: auto; display: flex; gap: 1rem; align-items: center;">
+                        <div class="entity-filter-wrapper"><input type="text" class="form-control form-control-small entity-filter-input" placeholder="Filter ${label}s..."></div>
+                        <div class="sort-controls-inline" style="display: flex; gap: 0.5rem;">
+                            <span style="font-size: 0.8em; color: var(--text-muted); align-self: center;">Sort by:</span>
+                            <button class="button button-small sort-btn" data-sort-by="alpha" title="Sort Alphabetically">A-Z</button>
+                            <button class="button button-small sort-btn active" data-sort-by="mentions" title="Sort by Mention Count">Mentions ↓</button>
+                            <button class="button button-small sort-btn" data-sort-by="docs" title="Sort by Document Count">Docs ↓</button>
+                        </div>
+                    </div>
+                </summary>
+                <div class="accordion-body scrollable-body">
+                    <ul class="entity-list" id="entity-list-${label}"></ul>
+                    <div class="show-more-container mt-3" style="display: flex; gap: 0.5rem;"></div>
+                </div>
+            `;
+            accordionContainer.appendChild(details);
+        });
+    }
+
+    /**
+     * Fetches all entity data from the API and initializes the view.
+     */
+    async function initializeDiscoveryTab() {
+        // The sorted_labels are now passed from the simplified Flask view.
+        const sortedLabels = {{ sorted_labels|tojson }};
+        buildAccordionShell(sortedLabels);
+        
+        try {
+            const response = await fetch('/api/discover/all-entities');
+            if (!response.ok) throw new Error('Network error');
+            const data = await response.json();
+            
+            allEntitiesByLabel = data.entities_by_label;
+
+            data.sorted_labels.forEach(label => {
+                const chip = accordionContainer.querySelector(`[data-count-chip="${label}"]`);
+                const accordionItem = chip ? chip.closest('.accordion-item') : null;
+                const count = allEntitiesByLabel[label] ? allEntitiesByLabel[label].length : 0;
+                
+                if (count > 0 && chip) {
+                    chip.textContent = `${count} unique`;
+                } else if (accordionItem) {
+                    accordionItem.style.display = 'none';
+                }
+            });
+
+            const totalEntities = Object.values(allEntitiesByLabel).flat().length;
+            if (totalEntities === 0) {
+                 accordionContainer.innerHTML = `<div class="empty-state"><p>No entities indexed yet.</p><p class="text-muted">Process some documents from the Dashboard.</p></div>`;
+            }
+
+        } catch (error) {
+            console.error("Failed to load discovery entities:", error);
+            if(accordionContainer) accordionContainer.innerHTML = '<p class="text-danger empty-state">Failed to load entity data from the server.</p>';
+        }
+    }
+
+    function applyFilter(accordionItem) {
+        const filterInput = accordionItem.querySelector('.entity-filter-input');
+        if (!filterInput) return;
+        const filterText = filterInput.value.toLowerCase().trim();
+        const items = accordionItem.querySelectorAll('.entity-list-item');
+        items.forEach(item => {
+            const itemText = item.dataset.name.toLowerCase();
+            item.style.display = itemText.includes(filterText) ? '' : 'none';
+        });
+    }
+
+    function renderMoreItems(label) {
+        const entityData = allEntitiesByLabel[label];
+        if (!entityData) return;
+        
+        const accordionItem = document.querySelector(`details.accordion-item[data-label="${label}"]`);
+        const listElement = accordionItem.querySelector('.entity-list');
+        const showMoreContainer = listElement.nextElementSibling;
+        const startIndex = currentlyDisplayedCounts[label] || 0;
+        const fragment = document.createDocumentFragment();
+        const itemsToRender = entityData.slice(startIndex, startIndex + BATCH_SIZE);
+        
+        itemsToRender.forEach(entity => {
+            const li = document.createElement('li');
+            li.className = 'entity-list-item';
+            li.dataset.name = entity.entity_text;
+            li.dataset.mentions = entity.appearance_count;
+            li.dataset.docs = entity.document_count;
+            const a = document.createElement('a');
+            a.href = `/discover/entity/${encodeURIComponent(entity.entity_label)}/${encodeURIComponent(entity.entity_text)}`;
+            a.textContent = entity.entity_text;
+            const span = document.createElement('span');
+            span.className = 'text-muted';
+            const docText = entity.document_count === 1 ? 'doc' : 'docs';
+            const mentionText = entity.appearance_count === 1 ? 'mention' : 'mentions';
+            span.textContent = ` (in ${entity.document_count} ${docText} / ${entity.appearance_count} ${mentionText})`;
+            li.appendChild(a);
+            li.appendChild(span);
+            fragment.appendChild(li);
+        });
+        
+        listElement.appendChild(fragment);
+        const newCount = startIndex + itemsToRender.length;
+        currentlyDisplayedCounts[label] = newCount;
+
+        applyFilter(accordionItem);
+        
+        showMoreContainer.innerHTML = '';
+        if (entityData.length > BATCH_SIZE) {
+            const collapseButton = document.createElement('button');
+            collapseButton.className = 'button button-small collapse-list-btn';
+            collapseButton.textContent = 'Collapse';
+            collapseButton.dataset.label = label;
+            showMoreContainer.appendChild(collapseButton);
+        }
+        if (newCount < entityData.length) {
+            const remainingCount = entityData.length - newCount;
+            const showMoreButton = document.createElement('button');
+            showMoreButton.className = 'button button-small show-more-btn';
+            showMoreButton.textContent = `Show ${Math.min(BATCH_SIZE, remainingCount)} More...`;
+            showMoreButton.dataset.label = label;
+            showMoreContainer.appendChild(showMoreButton);
+        }
+    }
+
+    function sortList(listElement, sortBy) {
+        const items = Array.from(listElement.querySelectorAll('.entity-list-item'));
+        items.sort((a, b) => {
+            if (sortBy === 'alpha') return a.dataset.name.localeCompare(b.dataset.name);
+            if (sortBy === 'mentions') return parseInt(b.dataset.mentions, 10) - parseInt(a.dataset.mentions, 10);
+            if (sortBy === 'docs') return parseInt(b.dataset.docs, 10) - parseInt(a.dataset.docs, 10);
+            return 0;
+        });
+        items.forEach(item => listElement.appendChild(item));
+    }
+
+    if (accordionContainer) {
+        accordionContainer.addEventListener('click', (event) => {
+            const target = event.target;
+            const accordionItem = target.closest('.accordion-item');
+            if (target.closest('.accordion-controls-group')) { event.preventDefault(); }
+            if (target.classList.contains('sort-btn')) { const sortBy = target.dataset.sortBy; const listElement = accordionItem.querySelector('.entity-list'); accordionItem.querySelectorAll('.sort-btn').forEach(btn => btn.classList.remove('active')); target.classList.add('active'); sortList(listElement, sortBy); return; }
+            if (target.classList.contains('show-more-btn')) { renderMoreItems(target.dataset.label); } 
+            else if (target.classList.contains('collapse-list-btn')) { const detailsElement = target.closest('details.accordion-item'); if (detailsElement) detailsElement.open = false; }
+        });
+
+        accordionContainer.addEventListener('keyup', (event) => {
+            if (event.target.classList.contains('entity-filter-input')) {
+                applyFilter(event.target.closest('.accordion-item'));
+            }
+        });
+        accordionContainer.addEventListener('click', (event) => {
+            if (event.target.classList.contains('entity-filter-input')) {
+                event.stopPropagation();
+            }
+        });
+        
+        accordionContainer.addEventListener('toggle', (event) => {
+            const detailsElement = event.target;
+            if (detailsElement.tagName === 'DETAILS') {
+                const label = detailsElement.dataset.label;
+                if (detailsElement.open) {
+                    if (!currentlyDisplayedCounts[label]) renderMoreItems(label);
+                } else {
+                    const listElement = document.getElementById(`entity-list-${label}`);
+                    const showMoreContainer = listElement.nextElementSibling;
+                    listElement.innerHTML = '';
+                    showMoreContainer.innerHTML = '';
+                    delete currentlyDisplayedCounts[label];
+                    const filterInput = detailsElement.querySelector('.entity-filter-input');
+                    if (filterInput) filterInput.value = '';
+                }
+            }
+        }, true);
+
+        initializeDiscoveryTab();
+    }
+
+    // --- Relationship Tab Logic ---
+    const tabNav = document.querySelector('.tabs-nav');
+    const relationshipContainer = document.getElementById('relationship-explorer-container');
+    
+    if (tabNav) {
+        tabNav.addEventListener('click', (event) => {
+            const tabButton = event.target.closest('.tab-link');
+            if (!tabButton) return;
+            const tabId = tabButton.dataset.tab;
+            const mainPanel = tabButton.closest('.panel-body');
+            tabNav.querySelectorAll('.tab-link').forEach(l => l.classList.remove('active'));
+            tabButton.classList.add('active');
+            mainPanel.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.toggle('active', content.id === `tab-${tabId}`);
+            });
+            // Load relationship data only when tab is clicked for the first time
+            if (tabId === 'explore' && !relationshipContainer.dataset.loaded) {
+                fetchAndRenderRelationships();
+            }
+        });
+    }
+
+    const controls = {
+        archiveModeBtn: document.getElementById('archive-mode-btn'),
+        cancelBtn: document.getElementById('cancel-archive-btn'),
+        archiveSelectedBtn: document.getElementById('archive-selected-btn')
+    };
+    
+    function renderRelationships(data) {
+        if (data.length === 0) {
+            relationshipContainer.innerHTML = '<p class="text-muted empty-state">No relationships found. Process documents or un-archive items in Settings.</p>';
+            return;
+        }
+        let html = '<ul class="simple-list relationship-list">';
+        data.forEach(rel => {
+            const subjectUrl = `/discover/entity/${encodeURIComponent(rel.subject_label)}/${encodeURIComponent(rel.subject_text)}`;
+            const objectUrl = `/discover/entity/${encodeURIComponent(rel.object_label)}/${encodeURIComponent(rel.object_text)}`;
+            const detailUrl = `/discover/relationship?subject_id=${rel.subject_id}&object_id=${rel.object_id}&phrase=${encodeURIComponent(rel.relationship_phrase)}`;
+            const tripletHtml = `<a href="${subjectUrl}">${rel.subject_text}</a> <span class="chip">${rel.relationship_phrase}</span> <a href="${objectUrl}">${rel.object_text}</a>`;
+            const relData = JSON.stringify({ subject_id: rel.subject_id, object_id: rel.object_id, phrase: rel.relationship_phrase }).replace(/"/g, '&quot;');
+            html += `<li data-rel-data='${relData}' style="display: flex; align-items: center;"><div class="archive-checkbox-container" style="display: none; margin-right: 1rem;"><input type="checkbox" class="relationship-archive-cb"></div><a href="${detailUrl}" class="chip text-muted" title="See all ${rel.rel_count} occurrences">${rel.rel_count}x</a> ${tripletHtml}</li>`;
+        });
+        html += '</ul>';
+        relationshipContainer.innerHTML = html;
+    }
+
+    async function fetchAndRenderRelationships() {
+        relationshipContainer.innerHTML = '<p class="text-muted">Loading top relationships...</p>';
+        relationshipContainer.dataset.loaded = "true";
+        try {
+            const response = await fetch('/api/relationships/top');
+            const data = await response.json();
+            renderRelationships(data);
+        } catch(error) {
+            console.error("Error fetching top relationships:", error);
+            relationshipContainer.innerHTML = '<p class="text-danger">Could not load relationships from the server.</p>';
+        }
+    }
+
+    function toggleArchiveMode(enable) {
+        controls.archiveModeBtn.style.display = enable ? 'none' : 'flex';
+        controls.cancelBtn.style.display = enable ? 'flex' : 'none';
+        controls.archiveSelectedBtn.style.display = enable ? 'flex' : 'none';
+        relationshipContainer.querySelectorAll('.archive-checkbox-container').forEach(el => { el.style.display = enable ? 'inline-block' : 'none'; });
+        if (!enable) { relationshipContainer.querySelectorAll('.relationship-archive-cb').forEach(cb => cb.checked = false); }
+    }
+    
+    controls.archiveModeBtn.addEventListener('click', () => toggleArchiveMode(true));
+    controls.cancelBtn.addEventListener('click', () => toggleArchiveMode(false));
+    controls.archiveSelectedBtn.addEventListener('click', async () => {
+        const selectedCheckboxes = relationshipContainer.querySelectorAll('.relationship-archive-cb:checked');
+        if (selectedCheckboxes.length === 0) { alert('Please select at least one relationship to archive.'); return; }
+        const relationshipsToArchive = Array.from(selectedCheckboxes).map(cb => JSON.parse(cb.closest('li').dataset.relData));
+        try {
+            const response = await fetch('/api/relationships/archive', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+                body: JSON.stringify({ relationships: relationshipsToArchive })
+            });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.message);
+            toggleArchiveMode(false);
+            fetchAndRenderRelationships();
+        } catch (error) {
+            alert(`Error archiving relationships: ${error.message}`);
+        }
+    });
+
+});
+</script>
+{% endblock %}

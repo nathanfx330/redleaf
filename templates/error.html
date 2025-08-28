@@ -1,0 +1,19 @@
+{% extends 'layout.html' %}
+{% block title %}Error {{ error_code }} - Redleaf{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center mt-4">
+    <div class="col-md-8 text-center">
+        <div class="panel">
+            <div class="panel-body">
+                <h1 class="text-danger-custom" style="font-size: 4rem; font-weight: bold;">Error {{ error_code }}</h1>
+                <p class="text-muted" style="font-size: 1.5rem;">{{ error_message }}</p>
+                <p class="mt-4">
+                    Sorry, something went wrong. Let's get you back on track.
+                </p>
+                <a href="{{ url_for('main.dashboard') }}" class="button button-primary mt-3">Go to Dashboard</a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

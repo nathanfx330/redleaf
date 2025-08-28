@@ -1,0 +1,119 @@
+{% extends 'layout.html' %}
+{% block title %}Search: {{ query }}{% endblock %}
+
+{% block content %}
+<div class="page-heading">
+    <h1>Search Results</h1>
+</div>
+
+<h3>Results for: <mark>{{ query }}</mark></h3>
+
+{% if results %}
+    <div class="sort-controls">
+        <button id="sort-relevance-btn" class="button button-small active">Relevancy</button>
+        <button id="sort-pages-btn" class="button button-small">Page Count (High-Low)</button>
+    </div>
+
+    <ul class="result-list" id="result-list-container">
+    {# The initial rendering is now handled by JavaScript #}
+    </ul>
+
+{% else %}
+    <p class="text-muted empty-state">No results found for your query.</p>
+{% endif %}
+
+{# --- THIS IS THE FIX --- #}
+<a href="{{ url_for('main.discover_view') }}" class="button mt-4">Back to Discovery</a>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+
+{% if results %}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    // 1. DATA AND ELEMENTS
+    const initialResults = {{ results|tojson }};
+    
+    const resultsContainer = document.getElementById('result-list-container');
+    const sortRelevanceBtn = document.getElementById('sort-relevance-btn');
+    const sortPagesBtn = document.getElementById('sort-pages-btn');
+
+    // 2. RENDER FUNCTION
+    function renderResults(resultsArray) {
+        resultsContainer.innerHTML = ''; 
+
+        if (!resultsArray || resultsArray.length === 0) {
+            resultsContainer.innerHTML = '<p class="text-muted empty-state">No results found.</p>';
+            return;
+        }
+
+        resultsArray.forEach(res => {
+            const colorDot = res.color ? `<span class="color-dot" style="background-color: ${res.color};"></span>` : '';
+            const tagsChip = res.has_tags ? '<span class="chip" title="This document has tags">🏷️</span>' : '';
+            const noteChip = res.has_personal_note ? '<span class="chip" title="You have a private note">📝</span>' : '';
+            const commentsChip = res.comment_count > 0 ? `<span class="chip" title="${res.comment_count} public comment(s)">💬 ${res.comment_count}</span>` : '';
+            
+            let catalogChips = '';
+            if (res.catalog_names) {
+                const catalogNames = res.catalog_names.split(',');
+                catalogNames.forEach(name => {
+                    const trimmedName = name.trim();
+                    catalogChips += `<span class="chip" title="In catalog: ${trimmedName}">🗂️ ${trimmedName}</span>`;
+                });
+            }
+            
+            const pageCountText = (res.page_count && res.page_count > 0) ? ` of ${res.page_count}` : '';
+            
+            // The link now correctly includes the #page=... hash
+            const resultItemHtml = `
+                <li class="result-item">
+                    <div class="result-item-header">
+                        <div>
+                            ${colorDot}
+                            <a class="result-title" href="/document/${res.doc_id}#page=${res.page_number}">${res.relative_path}</a>
+                            <span class="ms-2">
+                                ${tagsChip}
+                                ${noteChip}
+                                ${commentsChip}
+                                ${catalogChips}
+                            </span>
+                        </div>
+                        <span class="text-muted">
+                            Page ${res.page_number}${pageCountText}
+                        </span>
+                    </div>
+                    <p class="result-snippet">...${res.snippet}...</p>
+                </li>
+            `;
+            resultsContainer.insertAdjacentHTML('beforeend', resultItemHtml);
+        });
+    }
+
+    // 3. EVENT LISTENERS
+    function setActiveButton(activeBtn) {
+        [sortRelevanceBtn, sortPagesBtn].forEach(btn => btn.classList.remove('active'));
+        activeBtn.classList.add('active');
+    }
+    
+    sortRelevanceBtn.addEventListener('click', () => {
+        setActiveButton(sortRelevanceBtn);
+        renderResults(initialResults);
+    });
+
+    sortPagesBtn.addEventListener('click', () => {
+        setActiveButton(sortPagesBtn);
+        const sortedByPages = [...initialResults].sort((a, b) => {
+            const pageCountA = a.page_count || 0;
+            const pageCountB = b.page_count || 0;
+            return pageCountB - pageCountA;
+        });
+        renderResults(sortedByPages);
+    });
+
+    // 4. INITIAL RENDER
+    renderResults(initialResults);
+});
+</script>
+{% endif %}
+{% endblock %}
