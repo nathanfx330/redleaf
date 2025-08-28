@@ -1,4 +1,4 @@
-# --- File: ./bulk_manage.py (Updated to overwrite existing links) ---
+# --- File: ./bulk_manage.py (Feature Restored) ---
 import argparse
 import os
 import sys
@@ -18,7 +18,7 @@ from project import create_app
 from project.database import get_db
 from project.config import DOCUMENTS_DIR
 
-# --- Helper functions (Unchanged) ---
+# --- Helper functions ---
 
 def _parse_podcast_xml_to_csl(item_element: ET.Element, channel_title_text: str = None, channel_author_text: str = None) -> tuple[dict, Union[str, None]]:
     csl_data = {}
@@ -71,7 +71,7 @@ def find_xml_matches_for_doc(doc_relative_path: str):
                     guid_element = item.find('guid')
                     hash_content = (guid_element.text if guid_element is not None and guid_element.text else preview_data.get('title', ''))
                     item_hash = hashlib.md5(hash_content.encode()).hexdigest()
-                    matches.append({'xml_path': str(xml_path.relative_to(DOCUMENTS_DIR).as_posix()),'item_hash': item_hash,'enclosure_url': enclosure_url,'confidence': 'high' if is_match and enclosure_url and Path(enclosure_url.split('/')[-1].split('?')[0]).stem == target_srt_basename else 'low'})
+                    matches.append({'xml_path': str(xml_path.relative_to(DOCUMENTS_DIR).as_posix()),'item_hash': item_hash,'csl_data': preview_data, 'enclosure_url': enclosure_url,'confidence': 'high' if is_match and enclosure_url and Path(enclosure_url.split('/')[-1].split('?')[0]).stem == target_srt_basename else 'low'})
         except ET.XMLSyntaxError: continue
     return matches
 
@@ -99,21 +99,182 @@ def _fetch_archive_files(archive_id: str) -> Union[dict, None]:
         print("[FAIL] Could not parse the JSON response from Archive.org.")
         return None
 
-# --- Main Command Functions (Unchanged) ---
+# --- Main Command Functions ---
 
 def link_podcast_metadata():
-    # ... (code is unchanged)
-    pass
+    """Restored Feature: Links unprocessed SRTs to podcast metadata and media from XML files."""
+    app = create_app()
+    with app.app_context():
+        db = get_db()
+        # Find SRTs that are indexed but have no metadata and no media links yet
+        docs_to_process = db.execute("""
+            SELECT d.id, d.relative_path
+            FROM documents d
+            LEFT JOIN document_metadata dm ON d.id = dm.doc_id
+            WHERE d.file_type = 'SRT'
+              AND d.status = 'Indexed'
+              AND dm.csl_json IS NULL
+              AND d.linked_audio_path IS NULL
+              AND d.linked_video_path IS NULL
+              AND d.linked_audio_url IS NULL
+            ORDER BY d.relative_path
+        """).fetchall()
+
+        if not docs_to_process:
+            print("\n--- No unprocessed SRT documents found that need metadata. Nothing to do. ---")
+            return
+
+        print(f"\n--- Found {len(docs_to_process)} SRTs to process for podcast metadata linking. ---")
+        counts = {'success': 0, 'no_match': 0, 'ambiguous': 0, 'no_enclosure': 0}
+
+        for doc in docs_to_process:
+            print(f"\n[INFO] Processing: {doc['relative_path']} (Doc ID: {doc['id']})")
+            matches = find_xml_matches_for_doc(doc['relative_path'])
+
+            if not matches:
+                counts['no_match'] += 1
+                print("  [FAIL] No potential XML match found.")
+                continue
+
+            high_confidence = [m for m in matches if m['confidence'] == 'high']
+            best_match = None
+            if len(high_confidence) == 1:
+                best_match = high_confidence[0]
+                print("  [OK]   Found one high-confidence XML match.")
+            elif len(high_confidence) > 1:
+                counts['ambiguous'] += 1
+                print(f"  [SKIP] Ambiguous: Found {len(high_confidence)} high-confidence matches.")
+                continue
+            elif len(matches) == 1:
+                best_match = matches[0]
+                print("  [OK]   Found one low-confidence (title-based) XML match.")
+            else:
+                counts['ambiguous'] += 1
+                print(f"  [SKIP] Ambiguous: Found {len(matches)} low-confidence matches.")
+                continue
+
+            if not best_match:
+                continue
+
+            csl_data = best_match.get('csl_data')
+            enclosure_url = best_match.get('enclosure_url')
+
+            if not csl_data:
+                print("  [FAIL] Matched item could not be parsed into CSL data.")
+                continue
+            
+            if not enclosure_url:
+                counts['no_enclosure'] += 1
+                print("  [SKIP] Matched XML item has no <enclosure> media URL. Saving metadata only.")
+
+            try:
+                csl_data['id'] = f"doc-{doc['id']}"
+                csl_json_text = json.dumps(csl_data, indent=2)
+                podcast_name = csl_data.get('container-title', '').strip()
+
+                db.execute("BEGIN")
+                db.execute("""
+                    INSERT INTO document_metadata (doc_id, csl_json) VALUES (?, ?)
+                    ON CONFLICT(doc_id) DO UPDATE SET csl_json=excluded.csl_json;
+                """, (doc['id'], csl_json_text))
+
+                if enclosure_url:
+                    db.execute("UPDATE documents SET linked_audio_url = ? WHERE id = ?", (enclosure_url, doc['id']))
+
+                if podcast_name:
+                    catalog_row = db.execute("SELECT id FROM catalogs WHERE name = ? AND catalog_type = 'podcast'", (podcast_name,)).fetchone()
+                    catalog_id = catalog_row['id'] if catalog_row else db.execute(
+                        "INSERT INTO catalogs (name, description, catalog_type) VALUES (?, ?, 'podcast')",
+                        (podcast_name, f"Automatically generated collection for the '{podcast_name}' podcast.")
+                    ).lastrowid
+                    db.execute("INSERT OR IGNORE INTO document_catalogs (doc_id, catalog_id) VALUES (?, ?)", (doc['id'], catalog_id))
+                
+                db.commit()
+                counts['success'] += 1
+                print(f"  [SUCCESS] Linked metadata and media from '{best_match['xml_path']}'.")
+            except Exception as e:
+                db.rollback()
+                print(f"  [FAIL] A database error occurred: {e}")
+
+        print("\n--- Podcast Metadata Linking Summary ---")
+        print(f"  Successfully linked:    {counts['success']}")
+        print(f"  Skipped (ambiguous):    {counts['ambiguous']}")
+        print(f"  No XML match found:     {counts['no_match']}")
+        print(f"  XML match had no audio: {counts['no_enclosure']}")
+        print("----------------------------------------")
 
 def link_local_audio():
-    # ... (code is unchanged)
-    pass
+    """Scans for local audio files for any SRT without a media link."""
+    app = create_app()
+    with app.app_context():
+        db = get_db()
+        docs_to_check = db.execute("""
+            SELECT id, relative_path FROM documents
+            WHERE file_type = 'SRT'
+              AND linked_audio_path IS NULL
+              AND linked_video_path IS NULL
+              AND linked_audio_url IS NULL
+            ORDER BY relative_path
+        """).fetchall()
+
+        if not docs_to_check:
+            print("\n--- No SRT documents found needing local media links. ---")
+            return
+
+        print(f"\n--- Found {len(docs_to_check)} SRTs to check for local media. ---")
+        found_count = 0
+        all_media_files = {p.relative_to(DOCUMENTS_DIR).as_posix() for p in DOCUMENTS_DIR.rglob('*') if p.suffix.lower() in ['.mp3', '.mp4']}
+
+        for doc in docs_to_check:
+            srt_path = Path(doc['relative_path'])
+            target_stem = srt_path.stem
+            
+            # Prefer match in the same directory
+            preferred_mp3 = srt_path.with_suffix('.mp3').as_posix()
+            preferred_mp4 = srt_path.with_suffix('.mp4').as_posix()
+
+            found_path, media_type = None, None
+            if preferred_mp4 in all_media_files:
+                found_path, media_type = preferred_mp4, 'video'
+            elif preferred_mp3 in all_media_files:
+                found_path, media_type = preferred_mp3, 'audio'
+            else: # Fallback to global search by stem
+                for media_file in all_media_files:
+                    if Path(media_file).stem == target_stem:
+                        found_path = media_file
+                        media_type = 'video' if media_file.endswith('.mp4') else 'audio'
+                        break
+
+            if found_path:
+                print(f"[OK] Found '{found_path}' for '{doc['relative_path']}'")
+                if media_type == 'audio':
+                    db.execute("UPDATE documents SET linked_audio_path = ? WHERE id = ?", (found_path, doc['id']))
+                else:
+                    db.execute("UPDATE documents SET linked_video_path = ? WHERE id = ?", (found_path, doc['id']))
+                db.commit()
+                found_count += 1
+        
+        print(f"\n--- Summary: Linked {found_count} SRTs to local media. ---")
+
 
 def unpodcast_documents():
-    # ... (code is unchanged)
-    pass
-
-# --- UPDATED: Main function for Archive.org linking ---
+    """[DESTRUCTIVE] Resets all SRTs by removing metadata, media links, and podcast collections."""
+    confirm = input("[WARNING] This will remove ALL bibliographic metadata and media links from ALL SRT documents.\nIt will also delete ALL 'podcast' type collections.\nThis is a destructive action. Are you sure? [y/N]: ")
+    if confirm.lower() != 'y':
+        print("Operation cancelled.")
+        return
+        
+    app = create_app()
+    with app.app_context():
+        db = get_db()
+        print("Resetting SRT media links...")
+        db.execute("UPDATE documents SET linked_audio_path=NULL, linked_video_path=NULL, linked_audio_url=NULL WHERE file_type='SRT'")
+        print("Deleting all bibliographic metadata from SRTs...")
+        db.execute("DELETE FROM document_metadata WHERE doc_id IN (SELECT id FROM documents WHERE file_type='SRT')")
+        print("Deleting all 'podcast' type collections...")
+        db.execute("DELETE FROM catalogs WHERE catalog_type='podcast'") # This will cascade to document_catalogs
+        db.commit()
+        print("\n--- All SRT documents have been reset. ---")
 
 def link_archive_org(archive_id: str):
     """Links SRTs to audio files hosted in a specified Archive.org item."""
@@ -125,8 +286,6 @@ def link_archive_org(archive_id: str):
     app = create_app()
     with app.app_context():
         db = get_db()
-        
-        # --- THIS IS THE CHANGE: Select ALL SRTs, not just unlinked ones ---
         docs_to_process = db.execute("""
             SELECT id, relative_path FROM documents
             WHERE file_type = 'SRT'
@@ -138,7 +297,6 @@ def link_archive_org(archive_id: str):
             return
             
         print(f"\n--- Found {len(docs_to_process)} total SRT documents to check. ---")
-        # --- NEW: Add a confirmation prompt because this is a destructive action ---
         confirm = input(f"This will attempt to link them to the '{archive_id}' archive and will OVERWRITE any existing media links (local or web).\nAre you sure you want to continue? [y/N]: ")
         if confirm.lower() != 'y':
             print("Operation cancelled.")
@@ -206,19 +364,19 @@ def link_archive_org(archive_id: str):
         print("---------------------------------")
 
 
-# --- Main CLI setup (Unchanged) ---
+# --- Main CLI setup ---
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Redleaf Engine Bulk Management Tool.")
     subparsers = parser.add_subparsers(dest='command', required=True, help='Available commands')
 
     parser_link_meta = subparsers.add_parser(
         'link-podcast-metadata',
-        help="Attempt to link metadata AND media for unprocessed SRT files from XMLs."
+        help="[RECOMMENDED] Links unprocessed SRTs to metadata AND web media from XMLs."
     )
     
     parser_link_audio = subparsers.add_parser(
         'link-local-audio',
-        help="[RECOMMENDED] Scans for local audio for any SRT without linked media."
+        help="Scans for local audio/video for any SRT without linked media."
     )
     
     parser_unpodcast = subparsers.add_parser(
@@ -228,7 +386,7 @@ if __name__ == "__main__":
 
     parser_link_archive = subparsers.add_parser(
         'link-archive-org',
-        help="[NEW] Links SRTs to audio files hosted on an Archive.org item."
+        help="Links SRTs to audio files hosted on an Archive.org item (overwrites existing)."
     )
     parser_link_archive.add_argument(
         'archive_id',

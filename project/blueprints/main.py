@@ -18,7 +18,7 @@ from ..background import task_queue
 from ..utils import _get_dashboard_state, _truncate_long_snippet, _create_entity_snippet
 from ..config import DOCUMENTS_DIR, ENTITY_LABELS_TO_DISPLAY
 from .auth import login_required, admin_required, SecureForm
-import processing_pipeline
+# import processing_pipeline # This import is no longer needed here
 
 main_bp = Blueprint('main', __name__)
 
@@ -55,7 +55,7 @@ def dashboard_process_all_new():
         flash("No 'New' documents found to process.", "info")
     else:
         for doc_id in doc_ids:
-            processing_pipeline.update_document_status(db, doc_id, 'Queued', 'Waiting for free worker...')
+            # FIX: Just put the task on the queue. Do not touch the database here.
             task_queue.put(('process', doc_id))
         flash(f"Queued {len(doc_ids)} documents for processing.", "success")
     return redirect(url_for('main.dashboard'))
@@ -63,7 +63,7 @@ def dashboard_process_all_new():
 @main_bp.route('/dashboard/process/<int:doc_id>')
 @login_required
 def dashboard_process_single(doc_id):
-    processing_pipeline.update_document_status(get_db(), doc_id, 'Queued', 'Waiting for re-processing...')
+    # FIX: Just put the task on the queue. Do not touch the database here.
     task_queue.put(('process', doc_id))
     flash(f"Queued document ID {doc_id} for re-processing.", "info")
     return redirect(url_for('main.dashboard'))
@@ -314,16 +314,10 @@ def document_view(doc_id):
     form = SecureForm()
     timestamp = int(time.time())
     
-    # --- START OF THE FIX ---
-    # This block replaces all previous attempts. It safely parses the JSON on the
-    # backend and passes simple, clean data to the template.
     pills_data = {}
     if doc['csl_json']:
         try:
-            # Safely parse the JSON using Python's robust parser
             csl_data = json.loads(doc['csl_json'])
-            
-            # Only extract the specific fields needed for the pills
             if csl_data.get('type') in ['interview', 'broadcast']:
                 pills_data['podcast_title'] = csl_data.get('container-title')
                 pills_data['episode_title'] = csl_data.get('title')
@@ -335,16 +329,14 @@ def document_view(doc_id):
                     pills_data['year'] = csl_data['issued']['date-parts'][0][0]
         
         except (json.JSONDecodeError, IndexError, TypeError):
-            # If there's any error, just result in empty data. No crash.
             print(f"NOTE: Could not parse CSL JSON for doc_id {doc_id} to generate pills. The data might be malformed.")
             pills_data = {}
-    # --- END OF THE FIX ---
     
     return render_template('document_view.html', 
                            doc=doc, 
                            form=form, 
                            timestamp=timestamp,
-                           pills_data=pills_data) # <-- Pass the new clean data here
+                           pills_data=pills_data)
 
 @main_bp.route('/serve_doc/<path:relative_path>')
 @login_required

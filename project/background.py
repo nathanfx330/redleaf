@@ -112,6 +112,23 @@ def manager_thread_loop():
                 task_type, item_id = task_queue.get_nowait()
                 if task_type == 'process':
                     if active_process_count < current_settings['max_workers']:
+                        # === START OF THE FIX ===
+                        # The manager thread now sets the 'Queued' status,
+                        # ensuring no conflict with the main Flask app.
+                        print(f"Manager: Queuing Doc ID {item_id} for processing.")
+                        db_conn = None
+                        try:
+                            # Use a direct, temporary connection for this update.
+                            db_conn = sqlite3.connect(current_app.config['DATABASE_FILE'], timeout=10)
+                            db_conn.execute("UPDATE documents SET status = 'Queued', status_message = 'Waiting for free worker...' WHERE id = ?", (item_id,))
+                            db_conn.commit()
+                        except sqlite3.Error as e:
+                            print(f"!!! MANAGER FAILED to set 'Queued' status for Doc ID {item_id}: {e} !!!")
+                        finally:
+                            if db_conn:
+                                db_conn.close()
+                        # === END OF THE FIX ===
+                        
                         future = executor.submit(processing_pipeline.process_document, item_id)
                         with active_tasks_lock:
                             active_tasks[future] = (task_type, item_id)
@@ -131,7 +148,6 @@ def manager_thread_loop():
             except queue.Empty:
                 pass
 
-            # Check for completed tasks... (rest of the loop is the same)
             with active_tasks_lock:
                 if not active_tasks:
                     time.sleep(1)

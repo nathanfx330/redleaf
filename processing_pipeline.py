@@ -37,30 +37,10 @@ def load_spacy_model():
 
 def get_db_conn():
     """Gets a fresh, process-safe database connection."""
-    conn = sqlite3.connect(DATABASE_FILE, timeout=30, isolation_level=None)
+    conn = sqlite3.connect(DATABASE_FILE, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode = WAL;")
     return conn
-
-def update_document_status(db_conn, doc_id, status, message=""):
-    """
-    Centralized function for quick, non-worker status updates (e.g., 'Queued').
-    Manages its own transaction to not interfere with worker processes.
-    """
-    try:
-        cursor = db_conn.cursor()
-        cursor.execute("BEGIN")
-        cursor.execute(
-            "UPDATE documents SET status = ?, status_message = ?, processed_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (status, message, doc_id)
-        )
-        cursor.execute("COMMIT")
-    except Exception as e:
-        print(f"CRITICAL: Failed to update status for doc_id {doc_id} to '{status}'. Error: {e}")
-        try:
-            db_conn.execute("ROLLBACK")
-        except Exception:
-            pass # Ignore rollback errors
 
 def _paginate_text(text, words_per_page=300):
     """Splits a string of text into pages of roughly N words."""
@@ -288,12 +268,10 @@ def process_document(doc_id):
         conn = get_db_conn()
         cursor = conn.cursor()
 
-        cursor.execute("BEGIN")
-        cursor.execute("UPDATE documents SET status = ?, status_message = ? WHERE id = ?", ('Indexing', 'Worker process started...', doc_id))
-        cursor.execute("COMMIT")
+        conn.execute("UPDATE documents SET status = ?, status_message = ? WHERE id = ?", ('Indexing', 'Worker process started...', doc_id))
+        conn.commit()
 
-        cursor.execute("SELECT relative_path, file_type FROM documents WHERE id = ?", (doc_id,))
-        doc_info = cursor.fetchone()
+        doc_info = conn.execute("SELECT relative_path, file_type FROM documents WHERE id = ?", (doc_id,)).fetchone()
         if not doc_info:
             raise ValueError(f"No document found with ID: {doc_id}")
 
@@ -314,7 +292,6 @@ def process_document(doc_id):
                 extracted_data = {"entities": set(), "appearances": set(), "relationships": [], "content": []}
                 full_dialogue_parts = []
 
-                # Pass 1: Extract entities and appearances from each individual cue for accuracy.
                 for cue in parsed_cues:
                     cue_text = cue['dialogue']
                     full_dialogue_parts.append(cue_text)
@@ -328,24 +305,19 @@ def process_document(doc_id):
                             extracted_data["entities"].add(entity_tuple)
                             extracted_data["appearances"].add((entity_tuple, cue['sequence']))
                 
-                # For FTS, create one single document with all dialogue. This is correct.
                 full_dialogue_text = " ".join(full_dialogue_parts)
                 page_content_map = {1: full_dialogue_text}
                 extracted_data["content"].append((1, full_dialogue_text))
 
-                # === START OF THE FIX ===
-                # Pass 2: Process the full dialogue text to find relationships that span across cues,
-                # but correctly attribute them to their source cue.
                 if full_dialogue_text and len(full_dialogue_text) <= nlp.max_length:
                     print(f"SRT Worker {os.getpid()}: Analyzing full transcript for relationships...")
 
-                    # Pre-calculate the character start/end boundaries for each cue in the full text.
                     cue_char_boundaries = []
                     current_pos = 0
                     for cue in parsed_cues:
                         dialogue_len = len(cue['dialogue'])
                         cue_char_boundaries.append((current_pos, current_pos + dialogue_len))
-                        current_pos += dialogue_len + 1 # Account for the space joiner.
+                        current_pos += dialogue_len + 1
 
                     doc_nlp_full = nlp(full_dialogue_text)
                     for sent in doc_nlp_full.sents:
@@ -355,37 +327,35 @@ def process_document(doc_id):
                         for ent1, ent2 in combinations(unique_ents, 2):
                             start = min(ent1.end_char, ent2.end_char)
                             end = max(ent1.start_char, ent2.start_char)
-                            if end > start and (end - start) < 75: # Proximity threshold
+                            if end > start and (end - start) < 75:
                                 relationship_phrase = ' '.join(full_dialogue_text[start:end].strip().split())
                                 if relationship_phrase:
                                     subject_tuple = (ent1.text.strip(), ent1.label_) if ent1.start_char < ent2.start_char else (ent2.text.strip(), ent2.label_)
                                     object_tuple = (ent2.text.strip(), ent2.label_) if ent1.start_char < ent2.start_char else (ent1.text.strip(), ent1.label_)
                                     
                                     if subject_tuple[0] and object_tuple[0]:
-                                        # Find the correct cue number by checking where the relationship starts.
                                         relationship_start_char = min(ent1.start_char, ent2.start_char)
-                                        relationship_cue_num = 1 # Default, just in case.
+                                        relationship_cue_num = 1
                                         for i, (cue_start, cue_end) in enumerate(cue_char_boundaries):
                                             if relationship_start_char >= cue_start and relationship_start_char < cue_end:
-                                                # Use the actual sequence number from the parsed data, not the loop index.
                                                 relationship_cue_num = parsed_cues[i]['sequence']
                                                 break
                                         
                                         extracted_data["relationships"].append((subject_tuple, object_tuple, relationship_phrase, relationship_cue_num))
-                # === END OF THE FIX ===
 
             except Exception as e:
-                cursor.execute("BEGIN; UPDATE documents SET status = ?, status_message = ? WHERE id = ?; COMMIT;", ('Error', f"Could not read/parse SRT file: {e}"[:1000], doc_id))
+                conn.execute("UPDATE documents SET status = ?, status_message = ? WHERE id = ?", ('Error', f"Could not read/parse SRT file: {e}"[:1000], doc_id))
+                conn.commit()
                 return "ERROR_OPENING_FILE"
         else:
-            # --- EXISTING LOGIC FOR OTHER FILE TYPES ---
             if doc_info['file_type'] == 'PDF':
                 try:
                     with fitz.open(full_path) as pdf_doc:
                         page_count = pdf_doc.page_count
                         page_content_map = _extract_text_from_pdf_doc(pdf_doc)
                 except Exception as e:
-                    cursor.execute("BEGIN; UPDATE documents SET status = ?, status_message = ? WHERE id = ?; COMMIT;", ('Error', f"Could not open/read PDF: {e}"[:1000], doc_id))
+                    conn.execute("UPDATE documents SET status = ?, status_message = ? WHERE id = ?", ('Error', f"Could not open/read PDF: {e}"[:1000], doc_id))
+                    conn.commit()
                     return "ERROR_OPENING_FILE"
             elif doc_info['file_type'] == 'TXT':
                 try:
@@ -393,11 +363,12 @@ def process_document(doc_id):
                     page_content_map = _paginate_text(content.strip())
                     page_count = len(page_content_map)
                 except Exception as e:
-                    cursor.execute("BEGIN; UPDATE documents SET status = ?, status_message = ? WHERE id = ?; COMMIT;", ('Error', f"Could not read TXT file: {e}"[:1000], doc_id))
+                    conn.execute("UPDATE documents SET status = ?, status_message = ? WHERE id = ?", ('Error', f"Could not read TXT file: {e}"[:1000], doc_id))
+                    conn.commit()
                     return "ERROR_OPENING_FILE"
             elif doc_info['file_type'] == 'HTML':
                 try:
-                    mode_row = cursor.execute("SELECT value FROM app_settings WHERE key = 'html_parsing_mode'").fetchone()
+                    mode_row = conn.execute("SELECT value FROM app_settings WHERE key = 'html_parsing_mode'").fetchone()
                     parsing_mode = mode_row[0] if mode_row else 'generic'
                     content = full_path.read_text(encoding='utf-8', errors='ignore')
                     
@@ -408,24 +379,22 @@ def process_document(doc_id):
                     if extracted_text.strip(): page_content_map = {1: extracted_text.strip()}; page_count = 1
                     else: page_content_map = {1: ""}; page_count = 0
                 except Exception as e:
-                    cursor.execute("BEGIN; UPDATE documents SET status = ?, status_message = ? WHERE id = ?; COMMIT;", ('Error', f"Could not read/parse HTML: {e}"[:1000], doc_id))
+                    conn.execute("UPDATE documents SET status = ?, status_message = ? WHERE id = ?", ('Error', f"Could not read/parse HTML: {e}"[:1000], doc_id))
+                    conn.commit()
                     return "ERROR_OPENING_FILE"
             else:
-                cursor.execute("BEGIN; UPDATE documents SET status = ?, status_message = ? WHERE id = ?; COMMIT;", ('Error', f"Unsupported file type: {doc_info['file_type']}", doc_id))
+                conn.execute("UPDATE documents SET status = ?, status_message = ? WHERE id = ?", ('Error', f"Unsupported file type: {doc_info['file_type']}", doc_id))
+                conn.commit()
                 return "ERROR_UNSUPPORTED_TYPE"
             
             extracted_data = _extract_data_from_pages(page_content_map)
 
-        # --- DATABASE WRITING (Now common for all types) ---
-        cursor.execute("BEGIN")
-        # Clear old data
         cursor.execute("DELETE FROM srt_cues WHERE doc_id = ?", (doc_id,))
         cursor.execute("UPDATE documents SET page_count = ?, duration_seconds = ? WHERE id = ?", (page_count, duration_seconds, doc_id))
         cursor.execute("DELETE FROM content_index WHERE doc_id = ?", (doc_id,))
         cursor.execute("DELETE FROM entity_appearances WHERE doc_id = ?", (doc_id,))
         cursor.execute("DELETE FROM entity_relationships WHERE doc_id = ?", (doc_id,))
 
-        # Insert new data
         if doc_info['file_type'] == 'SRT' and 'parsed_cues' in locals() and parsed_cues:
             cues_to_insert = [(doc_id, cue['sequence'], cue['timestamp'], cue['dialogue']) for cue in parsed_cues]
             cursor.executemany("INSERT INTO srt_cues (doc_id, sequence, timestamp, dialogue) VALUES (?, ?, ?, ?)", cues_to_insert)
@@ -439,7 +408,7 @@ def process_document(doc_id):
             
             entity_id_map = {}
             for text, label in entities_list:
-                res = cursor.execute("SELECT id FROM entities WHERE text = ? AND label = ?", (text, label)).fetchone()
+                res = conn.execute("SELECT id FROM entities WHERE text = ? AND label = ?", (text, label)).fetchone()
                 if res: entity_id_map[(text, label)] = res['id']
 
             appearances_to_insert = [(doc_id, entity_id_map[ent_tuple], page_num) for ent_tuple, page_num in extracted_data["appearances"] if ent_tuple in entity_id_map]
@@ -451,7 +420,7 @@ def process_document(doc_id):
                 cursor.executemany("INSERT INTO entity_relationships (subject_entity_id, object_entity_id, relationship_phrase, doc_id, page_number) VALUES (?, ?, ?, ?, ?)", relationships_to_insert)
             
         cursor.execute("UPDATE documents SET status = ?, status_message = ?, processed_at = CURRENT_TIMESTAMP WHERE id = ?", ('Indexed', 'Processing complete.', doc_id))
-        cursor.execute("COMMIT")
+        conn.commit()
         print(f"--- Worker {os.getpid()} finished Doc ID: {doc_id} ---")
         return "SUCCESS"
 
@@ -460,11 +429,10 @@ def process_document(doc_id):
         print(traceback.format_exc())
         if conn:
             try:
-                cursor.execute("ROLLBACK")
-                cursor.execute("BEGIN")
+                conn.rollback()
                 error_message = f"Worker Error: {type(e).__name__}: {e}"
-                cursor.execute("UPDATE documents SET status = ?, status_message = ? WHERE id = ?", ('Error', error_message[:1000], doc_id))
-                cursor.execute("COMMIT")
+                conn.execute("UPDATE documents SET status = ?, status_message = ? WHERE id = ?", ('Error', error_message[:1000], doc_id))
+                conn.commit()
             except Exception as rollback_e:
                 print(f"CRITICAL: Failed to rollback or update error status for doc {doc_id}. Error: {rollback_e}")
         raise
@@ -476,10 +444,8 @@ def discover_and_register_documents():
     """Scans the source directory and registers new or modified files."""
     print(f"--- Scanning for documents in {DOCUMENTS_DIR} ---")
     conn = get_db_conn()
-    cursor = conn.cursor()
     try:
-        cursor.execute("SELECT relative_path, file_hash FROM documents")
-        db_files = {row['relative_path']: row['file_hash'] for row in cursor.fetchall()}
+        db_files = {row['relative_path']: row['file_hash'] for row in conn.execute("SELECT relative_path, file_hash FROM documents").fetchall()}
         
         registered_count = 0
         supported_patterns = ["*.pdf", "*.txt", "*.html", "*.srt"]
@@ -507,8 +473,7 @@ def discover_and_register_documents():
             if rel_path_str not in db_files or db_files.get(rel_path_str) != current_hash_str:
                 print(f"Registering new/modified file: {rel_path_str} (Type: {file_type})")
                 
-                cursor.execute("BEGIN")
-                cursor.execute(
+                conn.execute(
                     """
                     INSERT INTO documents (relative_path, file_hash, file_type, status, status_message, file_size_bytes, file_modified_at, processed_at) 
                     VALUES (?, ?, ?, 'New', 'Ready for processing', ?, ?, CURRENT_TIMESTAMP)
@@ -523,7 +488,7 @@ def discover_and_register_documents():
                     """, 
                     (rel_path_str, current_hash_str, file_type, current_size, current_mtime)
                 )
-                cursor.execute("COMMIT")
+                conn.commit()
                 registered_count += 1
 
         print(f"--- Discovery complete. Registered {registered_count} new/modified documents. ---")
@@ -531,7 +496,7 @@ def discover_and_register_documents():
     except Exception as e:
         print(f"!!! ERROR during document discovery: {e} !!!")
         print(traceback.format_exc())
-        try: cursor.execute("ROLLBACK")
+        try: conn.rollback()
         except sqlite3.Error: pass
     finally:
         if conn: conn.close()
@@ -540,9 +505,8 @@ def update_browse_cache():
     """Recomputes the aggregated entity data for the Discovery View."""
     print("--- Starting update of Aggregated View Cache ---")
     conn = get_db_conn()
-    cursor = conn.cursor()
     try:
-        cursor.execute("BEGIN")
+        conn.execute("BEGIN")
         print("Executing aggregation query...")
         query = """
             SELECT 
@@ -555,28 +519,26 @@ def update_browse_cache():
             JOIN entity_appearances ea ON e.id = ea.entity_id 
             GROUP BY e.id, e.text, e.label
         """
-        cursor.execute(query)
-        aggregated_data = cursor.fetchall()
+        aggregated_data = conn.execute(query).fetchall()
         print(f"Found {len(aggregated_data)} unique entities with document counts.")
         print("Updating browse_cache table...")
         
-        print("Clearing old cache...")
-        cursor.execute("DELETE FROM browse_cache")
+        conn.execute("DELETE FROM browse_cache")
         if aggregated_data:
             print(f"Inserting {len(aggregated_data)} rows into the new cache...")
             insert_query = """
                 INSERT INTO browse_cache (entity_id, entity_text, entity_label, document_count, appearance_count) 
                 VALUES (?, ?, ?, ?, ?)
             """
-            cursor.executemany(insert_query, [
+            conn.executemany(insert_query, [
                 (row['entity_id'], row['entity_text'], row['entity_label'], row['document_count'], row['appearance_count']) 
                 for row in aggregated_data
             ])
-        cursor.execute("COMMIT")
+        conn.commit()
         print("--- Aggregated View Cache update finished successfully. ---")
     except Exception as e:
         print(f"!!! ERROR updating browse cache: {e} !!!")
         print(traceback.format_exc())
-        cursor.execute("ROLLBACK")
+        conn.rollback()
     finally:
         if conn: conn.close()

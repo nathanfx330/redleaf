@@ -1,4 +1,4 @@
-# --- File: ./project/blueprints/api.py ---
+# --- File: ./project/blueprints/api.py (Corrected for Tag Counting) ---
 import sqlite3
 import json
 import os
@@ -730,33 +730,48 @@ def import_metadata_from_xml(doc_id):
     xml_path_str, item_hash = data.get('xml_path'), data.get('item_hash')
     if not xml_path_str or not item_hash:
         return jsonify({'success': False, 'message': 'Missing XML path or item identifier.'}), 400
+    
+    db = get_db()
+    
     full_xml_path = DOCUMENTS_DIR / xml_path_str
     if not full_xml_path.is_file():
         return jsonify({'success': False, 'message': 'XML file not found at the specified path.'}), 404
+
     try:
-        parser, tree = ET.XMLParser(recover=True), ET.fromstring(full_xml_path.read_bytes(), parser=parser)
+        parser = ET.XMLParser(recover=True)
+        tree = ET.fromstring(full_xml_path.read_bytes(), parser=parser)
+        
         channel_title = (tree.find('channel/title').text if tree.find('channel/title') is not None else "")
         namespaces = {'itunes': 'http://www.itunes.com/dtds/podcast-1.0.dtd'}
         channel_author_element = tree.find('channel/itunes:author', namespaces)
         channel_author = channel_author_element.text if channel_author_element is not None and channel_author_element.text else ""
+        
         found_item = None
         for item in tree.findall('channel/item'):
             hash_content = (item.findtext('guid', '') or item.findtext('title', ''))
             if hashlib.md5(hash_content.encode()).hexdigest() == item_hash:
-                found_item = item; break
-        if not found_item: return jsonify({'success': False, 'message': 'Could not find the selected item within the XML file.'}), 404
+                found_item = item
+                break
+        
+        if not found_item:
+            return jsonify({'success': False, 'message': 'Could not find the selected item within the XML file.'}), 404
+        
         csl_data, _ = _parse_podcast_xml_to_csl(found_item, channel_title, channel_author)
-        if not csl_data: return jsonify({'success': False, 'message': 'Failed to parse the found XML item into CSL data.'}), 500
+        if not csl_data:
+            return jsonify({'success': False, 'message': 'Failed to parse the found XML item into CSL data.'}), 500
+        
         csl_data['id'] = f"doc-{doc_id}"
         csl_json_text = json.dumps(csl_data, indent=2)
-        db = get_db()
+        
         db.execute("""INSERT INTO document_metadata (doc_id, csl_json, last_updated, updated_by_user_id) VALUES (?, ?, CURRENT_TIMESTAMP, ?)
                       ON CONFLICT(doc_id) DO UPDATE SET csl_json=excluded.csl_json, last_updated=excluded.last_updated, updated_by_user_id=excluded.updated_by_user_id;
                    """, (doc_id, csl_json_text, g.user['id']))
         db.commit()
         return jsonify({'success': True, 'message': 'Metadata imported successfully.', 'csl_json': csl_json_text})
     except Exception as e:
-        db.rollback(); current_app.logger.error(f"Error during XML import: {e}"); return jsonify({'success': False, 'message': f'An unexpected error occurred: {e}'}), 500
+        db.rollback()
+        current_app.logger.error(f"Error during XML import: {e}")
+        return jsonify({'success': False, 'message': f'An unexpected error occurred: {e}'}), 500
 
 @api_bp.route('/document/<int:doc_id>/media_status', methods=['GET'])
 @login_required
@@ -869,40 +884,34 @@ def get_podcast_episodes(catalog_id):
     offset = request.args.get('offset', 0, type=int)
     limit = request.args.get('limit', 25, type=int)
     
-    # Standard Filters
     year = request.args.get('year')
     duration = request.args.get('duration')
     alpha = request.args.get('alpha')
-    
-    # ===== NEW: Attribute Filters =====
     has_tags = request.args.get('has_tags') == 'true'
     has_comments = request.args.get('has_comments') == 'true'
     has_notes = request.args.get('has_notes') == 'true'
-
-    # Sorting
     sort_key = request.args.get('sort_key', 'date')
     sort_dir = request.args.get('sort_dir', 'desc')
 
     params = [g.user['id'], catalog_id]
-    where_clauses = [] # These will apply to the final query after the CTE
+    where_clauses = []
 
     if year and year.isdigit():
-        where_clauses.append("json_extract(csl_json, '$.issued.\"date-parts\"[0][0]') = ?")
+        where_clauses.append("json_extract(m.csl_json, '$.issued.\"date-parts\"[0][0]') = ?")
         params.append(int(year))
     
     if duration:
         duration_map = { 'under_30': (0, 1800), 'under_60': (1800, 3600), 'under_120': (3600, 7200), 'over_120': (7200, 999999) }
         if duration in duration_map:
             min_sec, max_sec = duration_map[duration]
-            where_clauses.append("duration_seconds BETWEEN ? AND ?")
+            where_clauses.append("d.duration_seconds BETWEEN ? AND ?")
             params.extend([min_sec, max_sec])
 
     if alpha:
-        title_expression = "COALESCE(json_extract(csl_json, '$.title'), relative_path)"
+        title_expression = "COALESCE(json_extract(m.csl_json, '$.title'), d.relative_path)"
         if alpha == '#': where_clauses.append(f"TRIM({title_expression}) GLOB '[0-9]*'")
         elif len(alpha) == 1 and alpha.isalpha(): where_clauses.append(f"{title_expression} LIKE ?"); params.append(f"{alpha}%")
 
-    # ===== NEW: Add attribute filters to WHERE clause =====
     if has_tags: where_clauses.append("tag_count > 0")
     if has_comments: where_clauses.append("comment_count > 0")
     if has_notes: where_clauses.append("has_personal_note = 1")
@@ -910,46 +919,59 @@ def get_podcast_episodes(catalog_id):
     where_string = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
     sort_columns = {
-        'date': "json_extract(csl_json, '$.issued.\"date-parts\"')", 'title': "COALESCE(json_extract(csl_json, '$.title'), relative_path) COLLATE NOCASE",
-        'author': "COALESCE(json_extract(csl_json, '$.author[0].literal'), 'zzzz') COLLATE NOCASE", 'duration': "duration_seconds",
+        'date': "json_extract(m.csl_json, '$.issued.\"date-parts\"')", 'title': "COALESCE(json_extract(m.csl_json, '$.title'), d.relative_path) COLLATE NOCASE",
+        'author': "COALESCE(json_extract(m.csl_json, '$.author[0].literal'), 'zzzz') COLLATE NOCASE", 'duration': "d.duration_seconds",
         'tags': "tag_count", 'comments': "comment_count", 'notes': "has_personal_note"
     }
-    order_by_clause = sort_columns.get(sort_key, sort_columns['date'])
+    
+    primary_order_by_col = sort_columns.get(sort_key, sort_columns['date'])
     direction = "ASC" if sort_dir == 'asc' else "DESC"
+    order_by_clause = f"{primary_order_by_col} {direction}"
+    if sort_key != 'date':
+        order_by_clause += f", {sort_columns['date']} DESC"
+    order_by_clause += f", d.relative_path {direction}"
 
-    # ===== REFACTORED: Use a Common Table Expression (CTE) for clarity and correctness =====
-    base_cte = f"""
-        WITH episodes_with_attributes AS (
-            SELECT 
-                d.id as doc_id, d.relative_path, d.color, d.duration_seconds,
-                (SELECT COUNT(*) FROM document_tags WHERE doc_id = d.id) as tag_count,
-                (SELECT COUNT(*) FROM document_comments WHERE doc_id = d.id) as comment_count,
-                (SELECT 1 FROM document_curation WHERE doc_id = d.id AND user_id = ?) as has_personal_note,
-                m.csl_json
-            FROM documents d
-            JOIN document_catalogs dc ON d.id = dc.doc_id
-            LEFT JOIN document_metadata m ON d.id = m.doc_id
-            WHERE dc.catalog_id = ?
-        )
+    # === START OF FIX: Rewritten query with LEFT JOINs and GROUP BY ===
+    base_query = f"""
+        SELECT 
+            d.id as doc_id, d.relative_path, d.color, d.duration_seconds,
+            m.csl_json,
+            COUNT(DISTINCT dt.tag_id) as tag_count,
+            COUNT(DISTINCT comm.id) as comment_count,
+            MAX(CASE WHEN cur.user_id = ? THEN 1 ELSE 0 END) as has_personal_note
+        FROM documents d
+        JOIN document_catalogs dc ON d.id = dc.doc_id
+        LEFT JOIN document_metadata m ON d.id = m.doc_id
+        LEFT JOIN document_tags dt ON d.id = dt.doc_id
+        LEFT JOIN document_comments comm ON d.id = comm.doc_id
+        LEFT JOIN document_curation cur ON d.id = cur.doc_id
+        WHERE dc.catalog_id = ?
     """
-
-    query = f"""
-        {base_cte}
-        SELECT * FROM episodes_with_attributes
-        {where_string}
-        ORDER BY {order_by_clause} {direction}, relative_path {direction}
-        LIMIT ? OFFSET ?;
-    """
-    final_params = params + [limit, offset]
-    rows = db.execute(query, final_params).fetchall()
 
     count_query = f"""
-        {base_cte}
-        SELECT COUNT(*) FROM episodes_with_attributes
-        {where_string};
+        SELECT COUNT(DISTINCT d.id) 
+        FROM documents d
+        JOIN document_catalogs dc ON d.id = dc.doc_id
+        LEFT JOIN document_metadata m ON d.id = m.doc_id
+        LEFT JOIN document_tags dt ON d.id = dt.doc_id
+        LEFT JOIN document_comments comm ON d.id = comm.doc_id
+        LEFT JOIN document_curation cur ON d.id = cur.doc_id AND cur.user_id = ?
+        {where_string} AND dc.catalog_id = ?
     """
     total_count = db.execute(count_query, params).fetchone()[0]
 
+    final_query = f"""
+        {base_query}
+        GROUP BY d.id
+        HAVING 1=1 {' AND '.join(f'AND {c}' for c in where_clauses)}
+        ORDER BY {order_by_clause}
+        LIMIT ? OFFSET ?;
+    """
+    # Adjust HAVING clause params
+    final_params = [params[0], params[1]] + params[2:] + [limit, offset]
+    rows = db.execute(final_query, final_params).fetchall()
+    # === END OF FIX ===
+    
     episodes = []
     for row in rows:
         ep_title, ep_author, ep_date, ep_date_sort = row['relative_path'], "N/A", None, "0"
@@ -1031,17 +1053,12 @@ def get_entity_mentions_paginated(entity_id):
     """
     db = get_db()
     page = request.args.get('page', 1, type=int)
-    limit = 50  # Number of results per page
+    limit = 50
     offset = (page - 1) * limit
 
-    # First, get the total count for the UI
-    total_count_row = db.execute(
-        "SELECT COUNT(*) FROM entity_appearances WHERE entity_id = ?",
-        (entity_id,)
-    ).fetchone()
+    total_count_row = db.execute("SELECT COUNT(*) FROM entity_appearances WHERE entity_id = ?", (entity_id,)).fetchone()
     total_count = total_count_row[0] if total_count_row else 0
 
-    # Now, fetch the paginated results with all necessary data
     sql_query = """
         SELECT 
             d.id as doc_id, d.relative_path, d.color, d.page_count, d.file_type, ea.page_number,
@@ -1056,30 +1073,18 @@ def get_entity_mentions_paginated(entity_id):
         LIMIT ? OFFSET ?;
     """
     db_results = db.execute(sql_query, (g.user['id'], entity_id, limit, offset)).fetchall()
-
-    # Get the entity text once for snippet generation
     entity = db.execute("SELECT text FROM entities WHERE id = ?", (entity_id,)).fetchone()
     entity_text = entity['text'] if entity else ''
 
-    # Process results to generate snippets (this is now fast, only on 50 items)
     results = []
     for row in db_results:
         row_dict = dict(row)
-        
-        # This snippet generation part is now much more efficient
         if row_dict.get('file_type') == 'SRT':
-            cue_content_row = db.execute(
-                "SELECT dialogue FROM srt_cues WHERE doc_id = ? AND sequence = ?",
-                (row_dict['doc_id'], row_dict['page_number'])
-            ).fetchone()
+            cue_content_row = db.execute("SELECT dialogue FROM srt_cues WHERE doc_id = ? AND sequence = ?", (row_dict['doc_id'], row_dict['page_number'])).fetchone()
             content_for_snippet = cue_content_row['dialogue'] if cue_content_row else ''
         else:
-            # Correctly handle HTML files by treating them as a single page
             page_num_to_query = 1 if row_dict.get('file_type') == 'HTML' else row_dict['page_number']
-            page_content_row = db.execute(
-                "SELECT page_content FROM content_index WHERE doc_id = ? AND page_number = ?",
-                (row_dict['doc_id'], page_num_to_query)
-            ).fetchone()
+            page_content_row = db.execute("SELECT page_content FROM content_index WHERE doc_id = ? AND page_number = ?", (row_dict['doc_id'], page_num_to_query)).fetchone()
             content_for_snippet = page_content_row['page_content'] if page_content_row else ''
             
         row_dict['snippet'] = _create_entity_snippet(content_for_snippet, entity_text)
