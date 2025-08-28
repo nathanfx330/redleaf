@@ -1,5 +1,3 @@
-### File: `readme.md` (Updated)
-
 # Redleaf Engine
 
 **Redleaf is a private, local-first knowledge engine.**
@@ -223,6 +221,11 @@ python manage.py reset-password <username>
 Use this for powerful, system-wide data linking and management. Run `python bulk_manage.py -h` to see all commands.
 
 **Key Commands:**
+
+*   **Link Podcast Metadata & Media:** Scans local `.xml` podcast feeds to automatically link bibliographic metadata (title, author, date) and the original web media URL to your unprocessed `.srt` files. This is the recommended first step before linking local or archived media.
+    ```bash
+    python bulk_manage.py link-podcast-metadata
+    ```
 
 *   **Link Local Audio:** Scans for `.mp3` files in your `documents` directory that match unlinked `.srt` files.
     ```bash
