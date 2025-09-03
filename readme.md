@@ -1,5 +1,3 @@
-<img width="1890" height="1065" alt="image" src="https://github.com/user-attachments/assets/1c3da1ec-9706-4dda-83fe-4d9c0081141f" /># Redleaf Engine
-
 **Redleaf is a private, local-first knowledge engine.**
 It transforms a directory of documents (PDFs, text, HTML, and transcripts) into a searchable, interconnected knowledge graph — all running **entirely on your local machine**.
 
