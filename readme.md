@@ -58,6 +58,9 @@ It’s **local-first**, **privacy-respecting**, and designed to let you focus on
 *   ⚙️ **Concurrent Processing**: Multi-core, non-blocking workflows
 *   ⚡ **Optional GPU Acceleration**: CUDA support for NLP
 
+
+![Entity & Relationship Extraction](https://nathanfx330.github.io/blog/posts/redleaf-engine-update/relationship.jpg)
+
 ---
 
 ## 🧪 Technology Stack
