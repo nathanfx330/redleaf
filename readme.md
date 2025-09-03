@@ -58,6 +58,7 @@ It’s **local-first**, **privacy-respecting**, and designed to let you focus on
 
 
 ![Entity & Relationship Extraction](https://nathanfx330.github.io/blog/posts/redleaf-engine-update/relationship.jpg)
+![PDF viewer and Entity Broswer](https://nathanfx330.github.io/blog/posts/redleaf-engine-update/side_pannel.jpg)
 ![Synthesis Environment](https://nathanfx330.github.io/blog/posts/redleaf-engine-update/pdf_writeup.jpg)
 
 ---
