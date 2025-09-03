@@ -7,7 +7,6 @@ Built for researchers, archivists, and knowledge workers, Redleaf makes it easy 
 
 Redleaf Engine 2.0: https://nathanfx330.github.io/blog/posts/redleaf-engine-update/
 
-https://nathanfx330.github.io/blog/posts/redleaf-engine-update/dashboard.jpg
 ![Dashboard Screenshot](https://nathanfx330.github.io/blog/posts/redleaf-engine-update/dashboard.jpg)
 ---
 
