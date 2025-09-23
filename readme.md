@@ -1,28 +1,32 @@
-**Redleaf is a private, local-first knowledge engine.**
+# Redleaf
+
+**Redleaf is a private, local-first knowledge engine.**  
 It transforms a directory of documents (PDFs, text, HTML, and transcripts) into a searchable, interconnected knowledge graph — all running **entirely on your local machine**.
 
 Built for researchers, archivists, and knowledge workers, Redleaf makes it easy to find meaningful connections across large collections of documents while protecting your privacy.
 
-Redleaf Engine 2.0: https://nathanfx330.github.io/blog/posts/redleaf-engine-update/
+Redleaf Engine 2.0: [https://nathanfx330.github.io/blog/posts/redleaf-engine-update/](https://nathanfx330.github.io/blog/posts/redleaf-engine-update/)
 
 ![Dashboard Screenshot](https://nathanfx330.github.io/blog/posts/redleaf-engine-update/dashboard.jpg)
+
 ---
 
 ## 📚 Table of Contents
 
 *   [Why Redleaf?](#why-redleaf)
 *   [Key Features](#key-features)
+*   [Distributing Knowledge: Precomputed Mode](#distributing-knowledge-precomputed-mode)
+    *   [The Two Roles](#the-two-roles)
+    *   [Workflow for Curators (Creating & Revising)](#workflow-for-curators-creating--revising)
+    *   [Workflow for Explorers (Using)](#workflow-for-explorers-using)
 *   [Technology Stack](#technology-stack)
 *   [Getting Started](#getting-started)
     *   [1. Prerequisites](#1-prerequisites)
     *   [2. Installation](#2-installation)
-    *   [3. Running the Application](#3-running-the-application)
-*   [Core Workflow](#core-workflow)
+    *   [3. Two Modes of Operation](#3-two-modes-of-operation)
+    *   [4. Running the Application](#4-running-the-application)
+*   [Core Workflow (Standard Mode)](#core-workflow-standard-mode)
 *   [Advanced Features](#advanced-features)
-    *   [Synthesis Environment](#synthesis-environment)
-    *   [Transcript & Media Sync](#transcript--media-sync)
-    *   [GPU Acceleration](#gpu-acceleration)
-*   [Configuration](#configuration)
 *   [Management Scripts](#management-scripts)
 *   [License](#license)
 *   [About the Developer](#about-the-developer)
@@ -37,13 +41,14 @@ Modern researchers often face:
 *   Difficulty recalling where a piece of information came from.
 *   Time wasted re-reading documents instead of making connections.
 
-**Redleaf solves this** by creating a searchable, structured knowledge graph on your own computer.
+**Redleaf solves this** by creating a searchable, structured knowledge graph on your own computer.  
 It’s **local-first**, **privacy-respecting**, and designed to let you focus on analysis rather than file management.
 
 ---
 
 ## 🚀 Key Features
 
+*   📦 **Precomputed & Distributable**: Package and share your entire knowledge base for others to explore.
 *   📄 **Multi-Format Document Indexing**: `.pdf`, `.html`, `.txt`, `.srt`
 *   ✍️ **Synthesis Environment**: Dual-pane writing and citation
 *   📚 **Bibliographic Tools**: In-text citations and auto-generated bibliography
@@ -56,10 +61,48 @@ It’s **local-first**, **privacy-respecting**, and designed to let you focus on
 *   ⚙️ **Concurrent Processing**: Multi-core, non-blocking workflows
 *   ⚡ **Optional GPU Acceleration**: CUDA support for NLP
 
-
 ![Entity & Relationship Extraction](https://nathanfx330.github.io/blog/posts/redleaf-engine-update/relationship.jpg)
 ![PDF viewer and Entity Broswer](https://nathanfx330.github.io/blog/posts/redleaf-engine-update/side_pannel.jpg)
 ![Synthesis Environment](https://nathanfx330.github.io/blog/posts/redleaf-engine-update/pdf_writeup.jpg)
+
+---
+
+## 📦 Distributing Knowledge: Precomputed Mode
+
+Redleaf can be used not just as a personal tool, but as a way to distribute a fully analyzed dataset. A **Precomputed Knowledge Base** is a Redleaf repository that includes all the processed data, allowing users to start exploring immediately without needing to perform the time-consuming NLP and indexing steps.
+
+### The Two Roles
+
+*   **The Curator (You):** The person who gathers documents, processes them, and exports the final state of the knowledge base for distribution.
+*   **The Explorer (End-User):** The person who clones the precomputed repository to explore, search, and analyze the data.
+
+### Workflow for Curators (Creating & Revising)
+
+You can update and re-export your knowledge base at any time.
+
+1.  **Revert to Curator Mode:** To make changes, delete the `precomputed.marker` file in the `instance/` directory. This will re-enable all processing features on next run.
+2.  **Make Revisions:** Run the application (`python run.py`) and use it normally. Add/remove documents, re-run the processing workflow, update tags, create catalogs, etc.
+3.  **Export the State:** Stop the server and run:
+    ```bash
+    python bulk_manage.py export-precomputed-state
+    ```
+    This generates `initial_state.sql`, `manifest.json`, and `precomputed.marker`.
+4.  **Commit to Git:** Add the exported files and documents to your repository:
+    ```bash
+    git add documents/
+    git add project/precomputed_data/ instance/precomputed.marker
+    git commit -m "Update knowledge base with new research"
+    git push
+    ```
+
+### Workflow for Explorers (Using)
+
+1.  Clone the Curator's repository.
+2.  Follow the standard installation steps (create environment, download spaCy model).
+3.  Run `python run.py`.
+4.  Redleaf detects the precomputed state and builds the local database.
+5.  Create a personal account on the welcome screen.
+6.  Begin exploring the fully indexed knowledge base immediately.
 
 ---
 
@@ -137,9 +180,18 @@ python -m spacy download en_core_web_lg
 
 ---
 
-### 3. Running the Application
+### 3. Two Modes of Operation
 
-1.  Add your documents to the `documents/` directory.
+Redleaf can run in:
+
+*   **Standard Mode:** For new projects. Creates an empty database. You add and process documents yourself.
+*   **Precomputed Mode:** For cloned repositories with preprocessed data. Redleaf builds the local database from included files, letting you explore immediately.
+
+---
+
+### 4. Running the Application
+
+1.  In Standard Mode, add documents to `documents/`.
 2.  Start the local server:
 
 ```bash
@@ -147,17 +199,19 @@ python run.py
 ```
 
 3.  Open [http://127.0.0.1:5000](http://127.0.0.1:5000) in your browser.
-4.  Follow the prompt to create your administrator account.
+4.  Follow the on-screen prompts to create your account.
 
 ---
 
-## ⚙️ Core Workflow
+## ⚙️ Core Workflow (Standard Mode)
 
-From the dashboard, you can:
+When running in Standard Mode, you can use the dashboard to:
 
 *   **Discover Docs**: Scan and detect new/modified files.
 *   **Process All "New"**: Extract text and metadata via background tasks.
 *   **Update Browse Cache**: Precompute relationships for fast navigation.
+
+> In Precomputed Mode, these features are disabled, as the work has already been done by the curator.
 
 ---
 
@@ -169,8 +223,6 @@ From the dashboard, you can:
 *   Highlight text to create inline citations.
 *   Export to `.odt` with auto-generated bibliography.
 
----
-
 ### 🎧 Transcript & Media Sync
 
 *   Auto-pairs `.srt` with local `.mp3` or `.mp4` files based on filename.
@@ -180,9 +232,7 @@ From the dashboard, you can:
 
 #### Cloud-Based Media Re-linking
 
-For large collections, storing media locally is often impractical. Redleaf can link your local `.srt` transcripts to audio/video files hosted on **Archive.org**. This saves disk space while keeping your media fully integrated. This is done via the `bulk_manage.py` script (see Management Scripts section below).
-
----
+Redleaf can link local `.srt` transcripts to audio/video files hosted on **Archive.org**. This saves disk space while keeping your media fully integrated.
 
 ### ⚡ GPU Acceleration
 
@@ -190,11 +240,6 @@ If you have a compatible NVIDIA GPU:
 
 ```bash
 pip install cupy-cuda11x
-```
-
-Verify GPU access:
-
-```bash
 python check_gpu.py
 ```
 
@@ -202,50 +247,40 @@ Enable in: **Settings → System & Processing**
 
 ---
 
-## ⚙️ Configuration
-
-*   **Secret Key**: Auto-generated on first run, stored in `instance/` (ignored by Git).
-*   **Admin Settings**: Configure background workers, HTML parser, and GPU use in-app.
-
----
-
 ## 🔧 Management Scripts
-
-Redleaf includes powerful command-line scripts for administration and bulk data operations.
 
 ### `manage.py` (User Admin)
 
-Use this for simple, single-user administrative tasks.
+Simple, single-user administrative tasks.
 
 **Example: Reset a user's password**
+
 ```bash
 python manage.py reset-password <username>
 ```
 
 ### `bulk_manage.py` (Data & Content)
 
-Use this for powerful, system-wide data linking and management. Run `python bulk_manage.py -h` to see all commands.
+Use this for system-wide data linking and management. Run `python bulk_manage.py -h` to see all commands.
 
 **Key Commands:**
 
-*   **Link Podcast Metadata & Media:** Scans local `.xml` podcast feeds to automatically link bibliographic metadata (title, author, date) and the original web media URL to your unprocessed `.srt` files. This is the recommended first step before linking local or archived media.
+*   **Export Precomputed State:** Package the public state of the database for distribution.
     ```bash
-    python bulk_manage.py link-podcast-metadata
+    python bulk_manage.py export-precomputed-state
     ```
 
-*   **Link Local Audio:** Scans for `.mp3` files in your `documents` directory that match unlinked `.srt` files.
+*   **Link Local Audio:** Match `.mp3` files to unlinked `.srt` files.
     ```bash
     python bulk_manage.py link-local-audio
     ```
 
-*   **Link from Archive.org:** Scans an Archive.org item and links all matching `.srt` files to the hosted audio. This will **overwrite** existing links.
+*   **Link from Archive.org:** Match `.srt` files to hosted audio. Overwrites existing links.
     ```bash
-    # Usage: python bulk_manage.py link-archive-org <archive-id>
-    # Example for archive.org/details/example-podcast-archive
-    python bulk_manage.py link-archive-org example-podcast-archive
+    python bulk_manage.py link-archive-org <archive-id>
     ```
 
-*   **Reset Transcripts:** A destructive operation to remove all metadata and media links from every `.srt` file.
+*   **Reset Transcripts:** Remove all metadata and media links from `.srt` files.
     ```bash
     python bulk_manage.py unpodcast
     ```
@@ -260,5 +295,5 @@ This project is licensed under the **MIT License**.
 
 ## 👤 About the Developer
 
-Created by **Nathaniel Westveer** as a personal tool for knowledge exploration.
+Created by **Nathaniel Westveer** as a personal tool for knowledge exploration.  
 It is free to use, distribute, and modify.
