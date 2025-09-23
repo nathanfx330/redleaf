@@ -19,6 +19,7 @@ Redleaf Engine 2.0: [https://nathanfx330.github.io/blog/posts/redleaf-engine-upd
     *   [The Two Roles](#the-two-roles)
     *   [Workflow for Curators (Creating & Revising)](#workflow-for-curators-creating--revising)
     *   [Workflow for Explorers (Using)](#workflow-for-explorers-using)
+    *   [Becoming a Curator (Unlocking Processing Features)](#becoming-a-curator-unlocking-processing-features)
 *   [Technology Stack](#technology-stack)
 *   [Getting Started](#getting-started)
     *   [1. Prerequisites](#1-prerequisites)
@@ -80,29 +81,39 @@ Redleaf can be used not just as a personal tool, but as a way to distribute a fu
 
 You can update and re-export your knowledge base at any time.
 
-1.  **Revert to Curator Mode:** To make changes, delete the `precomputed.marker` file in the `instance/` directory. This will re-enable all processing features on next run.
-2.  **Make Revisions:** Run the application (`python run.py`) and use it normally. Add/remove documents, re-run the processing workflow, update tags, create catalogs, etc.
-3.  **Export the State:** Stop the server and run:
+1.  **Revert to Curator Mode:** To make changes, you must first switch your local instance back to the fully-functional mode. Navigate to the `instance/` directory and **delete the `precomputed.marker` file**. This will re-enable all processing features the next time you run the app.
+
+2.  **Make Revisions:** Run the application (`python run.py`) and use it normally. Add/remove documents, re-run the processing workflow from the dashboard, update tags, create catalogs, etc.
+
+3.  **Export the State:** Once you are satisfied with the changes, stop the server and run the export command:
     ```bash
     python bulk_manage.py export-precomputed-state
     ```
-    This generates `initial_state.sql`, `manifest.json`, and `precomputed.marker`.
-4.  **Commit to Git:** Add the exported files and documents to your repository:
-    ```bash
-    git add documents/
-    git add project/precomputed_data/ instance/precomputed.marker
-    git commit -m "Update knowledge base with new research"
-    git push
-    ```
+    The script will prompt you for your name and create the necessary files (`initial_state.sql`, `manifest.json`, and `precomputed.marker`).
+
+4.  **Commit to Git:** Commit all the generated files along with your source documents to your Git repository. This captures the new, updated state of your knowledge base.
 
 ### Workflow for Explorers (Using)
 
+The experience for an end-user is designed to be as simple as possible.
+
 1.  Clone the Curator's repository.
-2.  Follow the standard installation steps (create environment, download spaCy model).
-3.  Run `python run.py`.
-4.  Redleaf detects the precomputed state and builds the local database.
-5.  Create a personal account on the welcome screen.
-6.  Begin exploring the fully indexed knowledge base immediately.
+2.  Follow the standard installation steps.
+3.  Run `python run.py`. The application will automatically build its database from the included data files.
+4.  When you open the browser, you will be greeted by a special welcome screen. Create your personal user account and log in.
+
+Once you are on the dashboard, you will notice that the data processing buttons (**Discover Docs**, **Process All**, etc.) are **greyed out and disabled**. This is intentional. It keeps the focus on discovery and ensures that you can explore the curated data immediately without any complex setup or processing.
+
+### Becoming a Curator (Unlocking Processing Features)
+
+If you receive a precomputed knowledge base and later decide you want to add your *own* documents and take over the role of curator, you can easily switch the application to its fully functional Standard Mode.
+
+**To unlock all processing features:**
+1.  Stop the application.
+2.  Navigate to the `instance/` directory inside your project folder.
+3.  **Delete the `precomputed.marker` file.**
+
+The next time you start the application with `python run.py`, all processing buttons on the dashboard and system options in the Settings page will be fully enabled.
 
 ---
 
@@ -211,89 +222,5 @@ When running in Standard Mode, you can use the dashboard to:
 *   **Process All "New"**: Extract text and metadata via background tasks.
 *   **Update Browse Cache**: Precompute relationships for fast navigation.
 
-> In Precomputed Mode, these features are disabled, as the work has already been done by the curator.
+In Precomputed Mode, these features are disabled to keep the focus on discovery, but can be unlocked by following the steps in the "Becoming a Curator" section.
 
----
-
-## 🌟 Advanced Features
-
-### ✍️ Synthesis Environment
-
-*   Dual-pane view: write on the left, cite on the right.
-*   Highlight text to create inline citations.
-*   Export to `.odt` with auto-generated bibliography.
-
-### 🎧 Transcript & Media Sync
-
-*   Auto-pairs `.srt` with local `.mp3` or `.mp4` files based on filename.
-*   Scrolls transcript in sync with media playback.
-*   Click any line in the transcript to jump to that timestamp in the media.
-*   Add timestamped comments and quotes.
-
-#### Cloud-Based Media Re-linking
-
-Redleaf can link local `.srt` transcripts to audio/video files hosted on **Archive.org**. This saves disk space while keeping your media fully integrated.
-
-### ⚡ GPU Acceleration
-
-If you have a compatible NVIDIA GPU:
-
-```bash
-pip install cupy-cuda11x
-python check_gpu.py
-```
-
-Enable in: **Settings → System & Processing**
-
----
-
-## 🔧 Management Scripts
-
-### `manage.py` (User Admin)
-
-Simple, single-user administrative tasks.
-
-**Example: Reset a user's password**
-
-```bash
-python manage.py reset-password <username>
-```
-
-### `bulk_manage.py` (Data & Content)
-
-Use this for system-wide data linking and management. Run `python bulk_manage.py -h` to see all commands.
-
-**Key Commands:**
-
-*   **Export Precomputed State:** Package the public state of the database for distribution.
-    ```bash
-    python bulk_manage.py export-precomputed-state
-    ```
-
-*   **Link Local Audio:** Match `.mp3` files to unlinked `.srt` files.
-    ```bash
-    python bulk_manage.py link-local-audio
-    ```
-
-*   **Link from Archive.org:** Match `.srt` files to hosted audio. Overwrites existing links.
-    ```bash
-    python bulk_manage.py link-archive-org <archive-id>
-    ```
-
-*   **Reset Transcripts:** Remove all metadata and media links from `.srt` files.
-    ```bash
-    python bulk_manage.py unpodcast
-    ```
-
----
-
-## 📄 License
-
-This project is licensed under the **MIT License**.
-
----
-
-## 👤 About the Developer
-
-Created by **Nathaniel Westveer** as a personal tool for knowledge exploration.  
-It is free to use, distribute, and modify.
