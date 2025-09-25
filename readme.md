@@ -82,19 +82,21 @@ Redleaf can be used not just as a personal tool, but as a way to distribute a fu
 1. **Revert to Curator Mode:** Delete the `precomputed.marker` file in the `instance/` directory. This re-enables all processing features on the next run.  
 2. **Make Revisions:** Run `python run.py` normally. Add/remove documents, re-run processing, update tags, or build catalogs.  
 3. **Export the State:** When satisfied, stop the server and run:  
+
    ```bash
    python bulk_manage.py export-precomputed-state
 ````
 
 This generates `initial_state.sql`, `manifest.json`, and `precomputed.marker`.
+
 4. **Commit to Git:** Add the exported files and your documents to version control:
 
-```bash
-git add documents/
-git add project/precomputed_data/ instance/precomputed.marker
-git commit -m "Update knowledge base with new research"
-git push
-```
+   ```bash
+   git add documents/
+   git add project/precomputed_data/ instance/precomputed.marker
+   git commit -m "Update knowledge base with new research"
+   git push
+   ```
 
 ### Workflow for Explorers (Using)
 
@@ -244,16 +246,19 @@ System-wide data tools. Run `python bulk_manage.py -h` for all options.
   ```bash
   python bulk_manage.py export-precomputed-state
   ```
+
 * Link local audio:
 
   ```bash
   python bulk_manage.py link-local-audio
   ```
+
 * Link from Archive.org:
 
   ```bash
   python bulk_manage.py link-archive-org <archive-id>
   ```
+
 * Reset transcripts (remove media links):
 
   ```bash
