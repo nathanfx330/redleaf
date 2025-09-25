@@ -13,24 +13,24 @@ Redleaf Engine 2.0: [https://nathanfx330.github.io/blog/posts/redleaf-engine-upd
 
 ## 📚 Table of Contents
 
-*   [Why Redleaf?](#why-redleaf)
-*   [Key Features](#key-features)
-*   [Distributing Knowledge: Precomputed Mode](#distributing-knowledge-precomputed-mode)
-    *   [The Two Roles](#the-two-roles)
-    *   [Workflow for Curators (Creating & Revising)](#workflow-for-curators-creating--revising)
-    *   [Workflow for Explorers (Using)](#workflow-for-explorers-using)
-    *   [Becoming a Curator (Unlocking Processing Features)](#becoming-a-curator-unlocking-processing-features)
-*   [Technology Stack](#technology-stack)
-*   [Getting Started](#getting-started)
-    *   [1. Prerequisites](#1-prerequisites)
-    *   [2. Installation](#2-installation)
-    *   [3. Two Modes of Operation](#3-two-modes-of-operation)
-    *   [4. Running the Application](#4-running-the-application)
-*   [Core Workflow (Standard Mode)](#core-workflow-standard-mode)
-*   [Advanced Features](#advanced-features)
-*   [Management Scripts](#management-scripts)
-*   [License](#license)
-*   [About the Developer](#about-the-developer)
+- [Why Redleaf?](#-why-redleaf)  
+- [Key Features](#-key-features)  
+- [Distributing Knowledge: Precomputed Mode](#-distributing-knowledge-precomputed-mode)  
+  - [The Two Roles](#the-two-roles)  
+  - [Workflow for Curators (Creating & Revising)](#workflow-for-curators-creating--revising)  
+  - [Workflow for Explorers (Using)](#workflow-for-explorers-using)  
+  - [Becoming a Curator (Unlocking Processing Features)](#becoming-a-curator-unlocking-processing-features)  
+- [Technology Stack](#-technology-stack)  
+- [Getting Started](#-getting-started)  
+  - [1. Prerequisites](#1-prerequisites)  
+  - [2. Installation](#2-installation)  
+  - [3. Two Modes of Operation](#3-two-modes-of-operation)  
+  - [4. Running the Application](#4-running-the-application)  
+- [Core Workflow (Standard Mode)](#-core-workflow-standard-mode)  
+- [Advanced Features](#-advanced-features)  
+- [Management Scripts](#-management-scripts)  
+- [License](#-license)  
+- [About the Developer](#-about-the-developer)  
 
 ---
 
@@ -38,97 +38,98 @@ Redleaf Engine 2.0: [https://nathanfx330.github.io/blog/posts/redleaf-engine-upd
 
 Modern researchers often face:
 
-*   Hundreds of scattered PDFs, transcripts, and notes.
-*   Difficulty recalling where a piece of information came from.
-*   Time wasted re-reading documents instead of making connections.
+- Hundreds of scattered PDFs, transcripts, and notes.  
+- Difficulty recalling where a piece of information came from.  
+- Time wasted re-reading documents instead of making connections.  
 
 **Redleaf solves this** by creating a searchable, structured knowledge graph on your own computer.  
-It’s **local-first**, **privacy-respecting**, and designed to let you focus on analysis rather than file management.
+It’s **local-first**, **privacy-respecting**, and designed to let you focus on analysis rather than file management.  
 
 ---
 
 ## 🚀 Key Features
 
-*   📦 **Precomputed & Distributable**: Package and share your entire knowledge base for others to explore.
-*   📄 **Multi-Format Document Indexing**: `.pdf`, `.html`, `.txt`, `.srt`
-*   ✍️ **Synthesis Environment**: Dual-pane writing and citation
-*   📚 **Bibliographic Tools**: In-text citations and auto-generated bibliography
-*   🎙️ **Transcript & Media Sync**: Auto-scroll with local or cloud audio/video
-*   ☁️ **Cloud Media Linking**: Connect local transcripts (`.srt`) to audio/video hosted on Archive.org
-*   🔍 **Full-Text Search**: Lightning-fast SQLite FTS5 queries
-*   🧠 **Entity & Relationship Extraction**: spaCy-powered NLP
-*   🗂️ **Deep Document Curation**: Tags, colors, notes, and collections
-*   👥 **Multi-User Support**: Admin/user roles with invites
-*   ⚙️ **Concurrent Processing**: Multi-core, non-blocking workflows
-*   ⚡ **Optional GPU Acceleration**: CUDA support for NLP
+- 📦 **Precomputed & Distributable**: Package and share your entire knowledge base for others to explore.  
+- 📄 **Multi-Format Document Indexing**: `.pdf`, `.html`, `.txt`, `.srt`  
+- ✍️ **Synthesis Environment**: Dual-pane writing and citation  
+- 📚 **Bibliographic Tools**: In-text citations and auto-generated bibliography  
+- 🎙️ **Transcript & Media Sync**: Auto-scroll with local or cloud audio/video  
+- ☁️ **Cloud Media Linking**: Connect local transcripts (`.srt`) to audio/video hosted on Archive.org  
+- 🔍 **Full-Text Search**: Lightning-fast SQLite FTS5 queries  
+- 🧠 **Entity & Relationship Extraction**: spaCy-powered NLP  
+- 🗂️ **Deep Document Curation**: Tags, colors, notes, and collections  
+- 👥 **Multi-User Support**: Admin/user roles with invites  
+- ⚙️ **Concurrent Processing**: Multi-core, non-blocking workflows  
+- ⚡ **Optional GPU Acceleration**: CUDA support for NLP  
 
-![Entity & Relationship Extraction](https://nathanfx330.github.io/blog/posts/redleaf-engine-update/relationship.jpg)
-![PDF viewer and Entity Broswer](https://nathanfx330.github.io/blog/posts/redleaf-engine-update/side_pannel.jpg)
-![Synthesis Environment](https://nathanfx330.github.io/blog/posts/redleaf-engine-update/pdf_writeup.jpg)
+![Entity & Relationship Extraction](https://nathanfx330.github.io/blog/posts/redleaf-engine-update/relationship.jpg)  
+![PDF viewer and Entity Browser](https://nathanfx330.github.io/blog/posts/redleaf-engine-update/side_pannel.jpg)  
+![Synthesis Environment](https://nathanfx330.github.io/blog/posts/redleaf-engine-update/pdf_writeup.jpg)  
 
 ---
 
 ## 📦 Distributing Knowledge: Precomputed Mode
 
-Redleaf can be used not just as a personal tool, but as a way to distribute a fully analyzed dataset. A **Precomputed Knowledge Base** is a Redleaf repository that includes all the processed data, allowing users to start exploring immediately without needing to perform the time-consuming NLP and indexing steps.
+Redleaf can be used not just as a personal tool, but as a way to distribute a fully analyzed dataset. A **Precomputed Knowledge Base** is a Redleaf repository that includes all processed data, allowing users to start exploring immediately without running heavy NLP and indexing steps.  
 
 ### The Two Roles
 
-*   **The Curator (You):** The person who gathers documents, processes them, and exports the final state of the knowledge base for distribution.
-*   **The Explorer (End-User):** The person who clones the precomputed repository to explore, search, and analyze the data.
+- **Curator:** Gathers documents, processes them, and exports the final state of the knowledge base.  
+- **Explorer:** Clones the precomputed repository to search and analyze the data immediately.  
 
 ### Workflow for Curators (Creating & Revising)
 
-You can update and re-export your knowledge base at any time.
+1. **Revert to Curator Mode:** Delete the `precomputed.marker` file in the `instance/` directory. This re-enables all processing features on the next run.  
+2. **Make Revisions:** Run `python run.py` normally. Add/remove documents, re-run processing, update tags, or build catalogs.  
+3. **Export the State:** When satisfied, stop the server and run:  
+   ```bash
+   python bulk_manage.py export-precomputed-state
+````
 
-1.  **Revert to Curator Mode:** To make changes, you must first switch your local instance back to the fully-functional mode. Navigate to the `instance/` directory and **delete the `precomputed.marker` file**. This will re-enable all processing features the next time you run the app.
+This generates `initial_state.sql`, `manifest.json`, and `precomputed.marker`.
+4. **Commit to Git:** Add the exported files and your documents to version control:
 
-2.  **Make Revisions:** Run the application (`python run.py`) and use it normally. Add/remove documents, re-run the processing workflow from the dashboard, update tags, create catalogs, etc.
-
-3.  **Export the State:** Once you are satisfied with the changes, stop the server and run the export command:
-    ```bash
-    python bulk_manage.py export-precomputed-state
-    ```
-    The script will prompt you for your name and create the necessary files (`initial_state.sql`, `manifest.json`, and `precomputed.marker`).
-
-4.  **Commit to Git:** Commit all the generated files along with your source documents to your Git repository. This captures the new, updated state of your knowledge base.
+```bash
+git add documents/
+git add project/precomputed_data/ instance/precomputed.marker
+git commit -m "Update knowledge base with new research"
+git push
+```
 
 ### Workflow for Explorers (Using)
 
-The experience for an end-user is designed to be as simple as possible.
+1. Clone the curator’s repository.
+2. Follow the standard installation steps.
+3. Run `python run.py`. Redleaf detects the precomputed state and builds the database automatically.
+4. Create a personal account on the welcome screen.
+5. Begin exploring immediately.
 
-1.  Clone the Curator's repository.
-2.  Follow the standard installation steps.
-3.  Run `python run.py`. The application will automatically build its database from the included data files.
-4.  When you open the browser, you will be greeted by a special welcome screen. Create your personal user account and log in.
-
-Once you are on the dashboard, you will notice that the data processing buttons (**Discover Docs**, **Process All**, etc.) are **greyed out and disabled**. This is intentional. It keeps the focus on discovery and ensures that you can explore the curated data immediately without any complex setup or processing.
+> **Note:** Data processing buttons (like **Discover Docs** and **Process All**) are intentionally disabled in Precomputed Mode.
 
 ### Becoming a Curator (Unlocking Processing Features)
 
-If you receive a precomputed knowledge base and later decide you want to add your *own* documents and take over the role of curator, you can easily switch the application to its fully functional Standard Mode.
+If you want to add your *own* documents:
 
-**To unlock all processing features:**
-1.  Stop the application.
-2.  Navigate to the `instance/` directory inside your project folder.
-3.  **Delete the `precomputed.marker` file.**
+1. Stop the application.
+2. Delete the `precomputed.marker` file in the `instance/` folder.
+3. Restart with `python run.py`.
 
-The next time you start the application with `python run.py`, all processing buttons on the dashboard and system options in the Settings page will be fully enabled.
+Processing features will now be fully enabled.
 
 ---
 
 ## 🧪 Technology Stack
 
-| Layer | Technology |
-| :--- | :--- |
-| **Backend** | Python (Flask) |
-| **Database** | SQLite + FTS5 |
-| **NLP** | spaCy (`en_core_web_lg`) |
-| **Parsing** | PyMuPDF (PDFs), BeautifulSoup4 (HTML) |
-| **Frontend** | HTML5, CSS3, JS (ES6+, [Tiptap.js](https://tiptap.dev/)) |
-| **Async Tasks** | `concurrent.futures.ProcessPoolExecutor` |
-| **Citations** | `citeproc-py` |
-| **External Requests**| `requests` |
+| Layer                 | Technology                                               |
+| :-------------------- | :------------------------------------------------------- |
+| **Backend**           | Python (Flask)                                           |
+| **Database**          | SQLite + FTS5                                            |
+| **NLP**               | spaCy (`en_core_web_lg`)                                 |
+| **Parsing**           | PyMuPDF (PDFs), BeautifulSoup4 (HTML)                    |
+| **Frontend**          | HTML5, CSS3, JS (ES6+, [Tiptap.js](https://tiptap.dev/)) |
+| **Async Tasks**       | `concurrent.futures.ProcessPoolExecutor`                 |
+| **Citations**         | `citeproc-py`                                            |
+| **External Requests** | `requests`                                               |
 
 ---
 
@@ -136,91 +137,140 @@ The next time you start the application with `python run.py`, all processing but
 
 ### 1. Prerequisites
 
-*   Python **3.9+**
-*   [Anaconda](https://www.anaconda.com/download) or [Miniconda](https://docs.conda.io/projects/miniconda/en/latest/) (recommended)
-
----
+* Python **3.9+**
+* [Anaconda](https://www.anaconda.com/download) or [Miniconda](https://docs.conda.io/projects/miniconda/en/latest/) (recommended)
 
 ### 2. Installation
-
-#### Clone the Repository
 
 ```bash
 git clone <your-repository-url>
 cd <repository-directory>
-```
-
-#### Create and Activate the Conda Environment
-
-```bash
 conda env create -f environment.yml
 conda activate redleaf-env
-```
-
-#### Download the NLP Model
-
-```bash
 python -m spacy download en_core_web_lg
 ```
 
 <details>
-<summary><strong>💡 Alternative Installation (venv + pip)</strong></summary>
-
-Create a virtual environment:
+<summary>💡 Alternative (venv + pip)</summary>
 
 ```bash
 python3 -m venv venv
-source venv/bin/activate        # Linux/macOS
-# OR
-.\venv\Scripts\activate         # Windows
-```
-
-Install dependencies:
-
-```bash
+source venv/bin/activate   # Linux/macOS
+.\venv\Scripts\activate    # Windows
 pip install -r requirements.txt
-```
-
-Download the spaCy model:
-
-```bash
 python -m spacy download en_core_web_lg
 ```
 
 </details>
 
----
-
 ### 3. Two Modes of Operation
 
-Redleaf can run in:
-
-*   **Standard Mode:** For new projects. Creates an empty database. You add and process documents yourself.
-*   **Precomputed Mode:** For cloned repositories with preprocessed data. Redleaf builds the local database from included files, letting you explore immediately.
-
----
+* **Standard Mode:** Start fresh, add and process your own documents.
+* **Precomputed Mode:** Use preprocessed repositories for instant exploration.
 
 ### 4. Running the Application
-
-1.  In Standard Mode, add documents to `documents/`.
-2.  Start the local server:
 
 ```bash
 python run.py
 ```
 
-3.  Open [http://127.0.0.1:5000](http://127.0.0.1:5000) in your browser.
-4.  Follow the on-screen prompts to create your account.
+Then open [http://127.0.0.1:5000](http://127.0.0.1:5000).
 
 ---
 
 ## ⚙️ Core Workflow (Standard Mode)
 
-When running in Standard Mode, you can use the dashboard to:
+From the dashboard you can:
 
-*   **Discover Docs**: Scan and detect new/modified files.
-*   **Process All "New"**: Extract text and metadata via background tasks.
-*   **Update Browse Cache**: Precompute relationships for fast navigation.
+* **Discover Docs**: Scan for new/modified files.
+* **Process All "New"**: Extract text and metadata in the background.
+* **Update Browse Cache**: Precompute relationships for fast navigation.
 
-In Precomputed Mode, these features are disabled to keep the focus on discovery, but can be unlocked by following the steps in the "Becoming a Curator" section.
+In Precomputed Mode, these are disabled.
 
+---
+
+## 🌟 Advanced Features
+
+### ✍️ Synthesis Environment
+
+* Dual-pane view: write on the left, cite on the right.
+* Highlight text to create inline citations.
+* Export to `.odt` with auto-generated bibliography.
+
+### 🎧 Transcript & Media Sync
+
+* Auto-pairs `.srt` with local `.mp3`/`.mp4` by filename.
+* Scrolls transcript in sync with playback.
+* Click any line to jump to that timestamp.
+* Add timestamped comments and quotes.
+
+#### Cloud-Based Media Linking
+
+* Link `.srt` transcripts to audio/video hosted on **Archive.org**.
+
+### ⚡ GPU Acceleration
+
+If you have an NVIDIA GPU:
+
+```bash
+pip install cupy-cuda11x
+python check_gpu.py
+```
+
+Enable in **Settings → System & Processing**.
+
+---
+
+## 🔧 Management Scripts
+
+### `manage.py` (User Admin)
+
+Simple admin tasks.
+**Example: Reset a user password**
+
+```bash
+python manage.py reset-password <username>
+```
+
+### `bulk_manage.py` (Data & Content)
+
+System-wide data tools. Run `python bulk_manage.py -h` for all options.
+
+**Key Commands:**
+
+* Export precomputed state:
+
+  ```bash
+  python bulk_manage.py export-precomputed-state
+  ```
+* Link local audio:
+
+  ```bash
+  python bulk_manage.py link-local-audio
+  ```
+* Link from Archive.org:
+
+  ```bash
+  python bulk_manage.py link-archive-org <archive-id>
+  ```
+* Reset transcripts (remove media links):
+
+  ```bash
+  python bulk_manage.py unpodcast
+  ```
+
+---
+
+## 📄 License
+
+Licensed under the **MIT License**.
+
+---
+
+## 👤 About the Developer
+
+Created by **Nathaniel Westveer** as a personal tool for knowledge exploration.
+Free to use, distribute, and modify.
+Do you want me to also generate a **shorter README “lite version”** (just the elevator pitch, install steps, and screenshot) for GitHub visitors who don’t want to read the full doc?
+```
