@@ -85,7 +85,7 @@ Redleaf can be used not just as a personal tool, but as a way to distribute a fu
 
    ```bash
    python bulk_manage.py export-precomputed-state
-````
+
 
 This generates `initial_state.sql`, `manifest.json`, and `precomputed.marker`.
 
