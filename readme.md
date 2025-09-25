@@ -272,5 +272,3 @@ Licensed under the **MIT License**.
 
 Created by **Nathaniel Westveer** as a personal tool for knowledge exploration.
 Free to use, distribute, and modify.
-Do you want me to also generate a **shorter README “lite version”** (just the elevator pitch, install steps, and screenshot) for GitHub visitors who don’t want to read the full doc?
-```
