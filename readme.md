@@ -1,6 +1,6 @@
 # Redleaf
 
-**Redleaf is a private, local-first knowledge engine.**
+**Redleaf is a private, local-first knowledge engine.**  
 It transforms a directory of documents (PDFs, text, HTML, and transcripts) into a searchable, interconnected knowledge graph — all running **entirely on your local machine**.
 
 Built for researchers, archivists, and knowledge workers, Redleaf makes it easy to find meaningful connections across large collections of documents while protecting your privacy.
@@ -13,26 +13,24 @@ Redleaf Engine 2.0: [https://nathanfx330.github.io/blog/posts/redleaf-engine-upd
 
 ## 📚 Table of Contents
 
-* [Why Redleaf?](#-why-redleaf)
-* [Key Features](#-key-features)
-* [Distributing Knowledge: The Precomputed Model](#-distributing-knowledge-the-precomputed-model)
-
-  * [The Two Roles](#the-two-roles)
-  * [Workflow for Curators (Creating & Revising)](#workflow-for-curators-creating--revising)
-  * [Workflow for Explorers (Using)](#workflow-for-explorers-using)
-  * [Becoming a Curator (Removing the Bracing)](#becoming-a-curator-removing-the-bracing)
-* [Technology Stack](#-technology-stack)
-* [Getting Started](#-getting-started)
-
-  * [1. Prerequisites](#1-prerequisites)
-  * [2. Installation](#2-installation)
-  * [3. Two Modes of Operation](#3-two-modes-of-operation)
-  * [4. Running the Application](#4-running-the-application)
-* [Core Workflow (Standard Mode)](#-core-workflow-standard-mode)
-* [Advanced Features](#-advanced-features)
-* [Management Scripts](#-management-scripts)
-* [License](#-license)
-* [About the Developer](#-about-the-developer)
+- [Why Redleaf?](#-why-redleaf)  
+- [Key Features](#-key-features)  
+- [Distributing Knowledge: The Precomputed Model](#-distributing-knowledge-the-precomputed-model)  
+  - [The Two Roles](#the-two-roles)  
+  - [Workflow for Curators (Creating & Revising)](#workflow-for-curators-creating--revising)  
+  - [Workflow for Explorers (Using)](#workflow-for-explorers-using)  
+  - [Becoming a Curator (Removing the Bracing)](#becoming-a-curator-removing-the-bracing)  
+- [Technology Stack](#-technology-stack)  
+- [Getting Started](#-getting-started)  
+  - [1. Prerequisites](#1-prerequisites)  
+  - [2. Installation](#2-installation)  
+  - [3. Two Modes of Operation](#3-two-modes-of-operation)  
+  - [4. Running the Application](#4-running-the-application)  
+- [Core Workflow (Standard Mode)](#-core-workflow-standard-mode)  
+- [Advanced Features](#-advanced-features)  
+- [Management Scripts](#-management-scripts)  
+- [License](#-license)  
+- [About the Developer](#-about-the-developer)  
 
 ---
 
@@ -40,33 +38,33 @@ Redleaf Engine 2.0: [https://nathanfx330.github.io/blog/posts/redleaf-engine-upd
 
 Modern researchers often face:
 
-* Hundreds of scattered PDFs, transcripts, and notes.
-* Difficulty recalling where a piece of information came from.
-* Time wasted re-reading documents instead of making connections.
+- Hundreds of scattered PDFs, transcripts, and notes.  
+- Difficulty recalling where a piece of information came from.  
+- Time wasted re-reading documents instead of making connections.  
 
-**Redleaf solves this** by creating a searchable, structured knowledge graph on your own computer.
-It’s **local-first**, **privacy-respecting**, and designed to let you focus on analysis rather than file management.
+**Redleaf solves this** by creating a searchable, structured knowledge graph on your own computer.  
+It’s **local-first**, **privacy-respecting**, and designed to let you focus on analysis rather than file management.  
 
 ---
 
 ## 🚀 Key Features
 
-* 📦 **Precomputed & Distributable**: Package and share your entire knowledge base for others to explore.
-* 📄 **Multi-Format Document Indexing**: `.pdf`, `.html`, `.txt`, `.srt`
-* ✍️ **Synthesis Environment**: Dual-pane writing and citation
-* 📚 **Bibliographic Tools**: In-text citations and auto-generated bibliography
-* 🎙️ **Transcript & Media Sync**: Auto-scroll with local or cloud audio/video
-* ☁️ **Cloud Media Linking**: Connect local transcripts (`.srt`) to audio/video hosted on Archive.org
-* 🔍 **Full-Text Search**: Lightning-fast SQLite FTS5 queries
-* 🧠 **Entity & Relationship Extraction**: spaCy-powered NLP
-* 🗂️ **Deep Document Curation**: Tags, colors, notes, and collections
-* 👥 **Multi-User Support**: Admin/user roles with invites
-* ⚙️ **Concurrent Processing**: Multi-core, non-blocking workflows
-* ⚡ **Optional GPU Acceleration**: CUDA support for NLP
+- 📦 **Precomputed & Distributable**: Package and share your entire knowledge base for others to explore.  
+- 📄 **Multi-Format Document Indexing**: `.pdf`, `.html`, `.txt`, `.srt`  
+- ✍️ **Synthesis Environment**: Dual-pane writing and citation  
+- 📚 **Bibliographic Tools**: In-text citations and auto-generated bibliography  
+- 🎙️ **Transcript & Media Sync**: Auto-scroll with local or cloud audio/video  
+- ☁️ **Cloud Media Linking**: Connect local transcripts (`.srt`) to audio/video hosted on Archive.org  
+- 🔍 **Full-Text Search**: Lightning-fast SQLite FTS5 queries  
+- 🧠 **Entity & Relationship Extraction**: spaCy-powered NLP  
+- 🗂️ **Deep Document Curation**: Tags, colors, notes, and collections  
+- 👥 **Multi-User Support**: Admin/user roles with invites  
+- ⚙️ **Concurrent Processing**: Multi-core, non-blocking workflows  
+- ⚡ **Optional GPU Acceleration**: CUDA support for NLP  
 
-![Entity & Relationship Extraction](https://nathanfx330.github.io/blog/posts/redleaf-engine-update/relationship.jpg)
-![PDF viewer and Entity Browser](https://nathanfx330.github.io/blog/posts/redleaf-engine-update/side_pannel.jpg)
-![Synthesis Environment](https://nathanfx330.github.io/blog/posts/redleaf-engine-update/pdf_writeup.jpg)
+![Entity & Relationship Extraction](https://nathanfx330.github.io/blog/posts/redleaf-engine-update/relationship.jpg)  
+![PDF viewer and Entity Browser](https://nathanfx330.github.io/blog/posts/redleaf-engine-update/side_pannel.jpg)  
+![Synthesis Environment](https://nathanfx330.github.io/blog/posts/redleaf-engine-update/pdf_writeup.jpg)  
 
 ---
 
@@ -76,36 +74,34 @@ Redleaf can be used not just as a personal tool, but as a way to distribute a fu
 
 ### The Two Roles
 
-* **The Curator:** Gathers and processes documents, enriches the data, and exports the final "exhibit" for distribution.
-* **The Explorer:** Clones the precomputed repository to immediately search, analyze, and add their own local annotations to the data.
+*   **The Curator:** Gathers and processes documents, enriches the data, and exports the final "exhibit" for distribution.
+*   **The Explorer:** Clones the precomputed repository to immediately search, analyze, and add their own local annotations to the data.
 
 ### Workflow for Curators (Creating & Revising)
 
-1. **Work Locally:** Use Redleaf in its standard, fully-featured mode. Add documents, run the processing workflow from the dashboard, update tags, and import contributions from your team.
-2. **Export the State:** When you are ready to publish, stop the server and run the export command. **This is a destructive action for your local instance**—it will wipe all user accounts to ensure the distributed package is clean.
-
-   ```bash
-   python bulk_manage.py export-precomputed-state
-   ```
-
-   This generates `instance/initial_state.sql` (the public data) and `instance/precomputed.marker`.
-3. **Commit to Git:** Add the exported files and your documents to your Git repository. This captures the new state of your knowledge base.
+1.  **Work Locally:** Use Redleaf in its standard, fully-featured mode. Add documents, run the processing workflow from the dashboard, update tags, and import contributions from your team.
+2.  **Export the State:** When you are ready to publish, stop the server and run the export command. **This is a destructive action for your local instance**—it will wipe all user accounts to ensure the distributed package is clean.
+    ```bash
+    python bulk_manage.py export-precomputed-state
+    ```
+    This generates `instance/initial_state.sql` (the public data) and `instance/precomputed.marker`.
+3.  **Commit to Git:** Add the exported files and your documents to your Git repository. This captures the new state of your knowledge base.
 
 ### Workflow for Explorers (Using)
 
-1. Clone the Curator's repository.
-2. Follow the standard installation steps.
-3. Run `python run.py`. Redleaf automatically detects the precomputed state and builds the database from the included files.
-4. When you open your browser, you will be greeted by a special welcome screen. Create your personal, local user account and log in.
-5. Begin exploring immediately. The data processing buttons on the dashboard and advanced system settings will be disabled ("braced for transit") to keep the focus on discovery.
+1.  Clone the Curator's repository.
+2.  Follow the standard installation steps.
+3.  Run `python run.py`. Redleaf automatically detects the precomputed state and builds the database from the included files.
+4.  When you open your browser, you will be greeted by a special welcome screen. Create your personal, local user account and log in.
+5.  Begin exploring immediately. The data processing buttons on the dashboard and advanced system settings will be disabled ("braced for transit") to keep the focus on discovery.
 
 ### Becoming a Curator (Removing the Bracing)
 
 If you receive a precomputed knowledge base and later decide you want to add your *own* documents and take over as the curator, you can easily unlock the application's full features.
 
-1. Stop the application.
-2. Navigate to the `instance/` directory.
-3. **Delete the `precomputed.marker` file.**
+1.  Stop the application.
+2.  Navigate to the `instance/` directory.
+3.  **Delete the `precomputed.marker` file.**
 
 The next time you start the application, all processing features will be fully enabled.
 
@@ -187,8 +183,8 @@ In Precomputed Mode, these are disabled.
 
 ### 🤝 Collaborative Annotations
 
-* **Export Contributions:** An Explorer can export their personal tags and comments into a lightweight `.json` file.
-* **Review & Merge:** A Curator can upload this file to a special review panel, where they can approve or reject each suggestion before merging it into the main knowledge base.
+*   **Export Contributions:** An Explorer can export their personal tags and comments into a lightweight `.json` file.
+*   **Review & Merge:** A Curator can upload this file to a special review panel, where they can approve or reject each suggestion before merging it into the main knowledge base.
 
 ### ✍️ Synthesis Environment
 
@@ -226,7 +222,6 @@ Enable in **Settings → System & Processing**.
 
 Simple admin tasks.
 **Example: Reset a user password**
-
 ```bash
 python manage.py reset-password <username>
 ```
@@ -238,21 +233,18 @@ System-wide data tools. Run `python bulk_manage.py -h` for all options.
 **Key Commands:**
 
 #### Export for Distribution (Curator):
-
 ```bash
 # Wipes local users, then exports public data for distribution.
 python bulk_manage.py export-precomputed-state
 ```
 
 #### Export Annotations (Explorer):
-
 ```bash
 # Exports your local tags/comments to a shareable .json file.
 python bulk_manage.py export-contributions <your-username>
 ```
 
 #### Podcast & Media Linking:
-
 ```bash
 # Link podcast XML metadata to SRTs.
 python bulk_manage.py link-podcast-metadata
@@ -277,5 +269,6 @@ Licensed under the **MIT License**.
 
 ## 👤 About the Developer
 
-Created by **Nathaniel Westveer** as a personal tool for knowledge exploration.
+Created by **Nathaniel Westveer** as a personal tool for knowledge exploration.  
 Free to use, distribute, and modify.
+
