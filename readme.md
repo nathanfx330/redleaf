@@ -247,6 +247,12 @@ System-wide data tools. Run `python bulk_manage.py -h` for all options.
   python bulk_manage.py export-precomputed-state
   ```
 
+* Link podcast XML to Meta for SRT:
+
+  ```bash
+  python bulk_manage.py link-podcast-metadata
+  ```
+  
 * Link local audio:
 
   ```bash
