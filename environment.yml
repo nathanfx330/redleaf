@@ -28,6 +28,11 @@ dependencies:
   - beautifulsoup4=4.12.2
   - lxml=4.9.3
   - spacy=3.6.1
+  
+  # --- START OF CHANGE ---
+  # Database command-line tool (needed for precomputed export)
+  - sqlite
+  # --- END OF CHANGE ---
 
   # Pip is included to manage packages not on Conda
   - pip

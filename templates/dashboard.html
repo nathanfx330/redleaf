@@ -1,4 +1,4 @@
-<!-- File: ./templates/dashboard.html -->
+<!-- File: ./templates/dashboard.html (Updated) -->
 {% extends 'layout.html' %}
 {% block title %}Dashboard - Redleaf{% endblock %}
 
@@ -6,25 +6,30 @@
 <div class="page-heading">
     <h1>Dashboard</h1>
     <div class="toolbar">
+        {# --- START OF CHANGE: Add conditional disabling based on precomputed mode --- #}
         <a href="{{ url_for('main.dashboard_discover') }}"
-           class="button workflow-btn {{ 'button-primary' if task_states.discover == 'primary' }} {{ 'disabled' if task_states.discover == 'disabled' }}"
-           id="discover-btn">
+           class="button workflow-btn {{ 'button-primary' if task_states.discover == 'primary' and not g.is_precomputed }} {{ 'disabled' if task_states.discover == 'disabled' or g.is_precomputed }}"
+           id="discover-btn"
+           {% if g.is_precomputed %} title="Processing is disabled in Explorer Mode." {% endif %}>
            {{ 'Discovering...' if task_states.discover == 'disabled' else '1. Discover Docs' }}
         </a>
         <a href="{{ url_for('main.dashboard_process_all_new') }}"
-           class="button workflow-btn {{ 'button-primary' if task_states.process == 'primary' }} {{ 'disabled' if task_states.process == 'disabled' }}"
-           id="process-all-btn">
+           class="button workflow-btn {{ 'button-primary' if task_states.process == 'primary' and not g.is_precomputed }} {{ 'disabled' if task_states.process == 'disabled' or g.is_precomputed }}"
+           id="process-all-btn"
+           {% if g.is_precomputed %} title="Processing is disabled in Explorer Mode." {% endif %}>
            {{ 'Processing...' if task_states.process == 'disabled' else '2. Process All \'New\'' }}
         </a>
         <a href="{{ url_for('main.dashboard_update_cache') }}"
-           class="button workflow-btn {{ 'button-primary' if task_states.cache == 'primary' }} {{ 'disabled' if task_states.cache == 'disabled' }}"
-           id="update-cache-btn">
+           class="button workflow-btn {{ 'button-primary' if task_states.cache == 'primary' and not g.is_precomputed }} {{ 'disabled' if task_states.cache == 'disabled' or g.is_precomputed }}"
+           id="update-cache-btn"
+           {% if g.is_precomputed %} title="Processing is disabled in Explorer Mode." {% endif %}>
            {% if task_states.cache == 'disabled' %}
                Updating Cache...
            {% else %}
                3. Update Browse Cache
            {% endif %}
         </a>
+        {# --- END OF CHANGE --- #}
     </div>
 </div>
 
@@ -101,6 +106,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const sortControls = document.getElementById('registry-sort-controls');
     const queueSizeDisplay = document.getElementById('queue-size-display');
     const docCountDisplay = document.getElementById('doc-count-display');
+    const isPrecomputed = {{ g.is_precomputed|tojson }}; // <-- NEW: Get mode from Flask
     const workflowButtons = {
         discover: document.getElementById('discover-btn'),
         process: document.getElementById('process-all-btn'),
@@ -145,24 +151,29 @@ document.addEventListener('DOMContentLoaded', () => {
                     attributesHtml = '<span class="text-muted">—</span>';
                 }
 
-                // DYNAMIC ACTION BUTTON LOGIC
+                // --- START OF CHANGE: Conditionally disable re-process button ---
                 let actionsHtml = '';
-                switch (doc.status) {
-                    case 'New':
-                        actionsHtml = `<a href="/dashboard/process/${doc.id}" class="button button-small">Process</a>`;
-                        break;
-                    case 'Queued':
-                    case 'Indexing':
-                        actionsHtml = `<button class="button button-small disabled">Processing...</button>`;
-                        break;
-                    case 'Indexed':
-                    case 'Error':
-                        actionsHtml = `<a href="/dashboard/process/${doc.id}" class="button button-small">Re-Process</a>`;
-                        break;
-                    default:
-                        actionsHtml = `<span class="text-muted">—</span>`;
-                        break;
+                if (isPrecomputed) {
+                     actionsHtml = `<a href="/document/${doc.id}" class="button button-small">View</a>`;
+                } else {
+                    switch (doc.status) {
+                        case 'New':
+                            actionsHtml = `<a href="/dashboard/process/${doc.id}" class="button button-small">Process</a>`;
+                            break;
+                        case 'Queued':
+                        case 'Indexing':
+                            actionsHtml = `<button class="button button-small disabled">Processing...</button>`;
+                            break;
+                        case 'Indexed':
+                        case 'Error':
+                            actionsHtml = `<a href="/dashboard/process/${doc.id}" class="button button-small">Re-Process</a>`;
+                            break;
+                        default:
+                            actionsHtml = `<span class="text-muted">—</span>`;
+                            break;
+                    }
                 }
+                // --- END OF CHANGE ---
 
                 const fileSize = formatFileSize(doc.file_size_bytes);
                 const duration = formatDuration(doc.duration_seconds);
@@ -195,6 +206,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function pollStatus() {
         clearTimeout(pollingTimer);
+        // --- START OF CHANGE: Don't poll in precomputed mode ---
+        if (isPrecomputed) {
+            return;
+        }
+        // --- END OF CHANGE ---
         try {
             const response = await fetch('/api/dashboard/status');
             if (!response.ok) throw new Error(`Status poll failed: ${response.status}`);

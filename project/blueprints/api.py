@@ -1,4 +1,4 @@
-# --- File: ./project/blueprints/api.py (Corrected for Tag Counting) ---
+# --- File: ./project/blueprints/api.py (Updated) ---
 import sqlite3
 import json
 import os
@@ -823,9 +823,6 @@ def check_url_status(doc_id):
 @api_bp.route('/discover/all-entities')
 @login_required
 def get_all_discover_entities():
-    """
-    Fetches all cached entity data for the asynchronous Discovery view.
-    """
     db = get_db()
     
     cached_entities = db.execute("""
@@ -931,7 +928,6 @@ def get_podcast_episodes(catalog_id):
         order_by_clause += f", {sort_columns['date']} DESC"
     order_by_clause += f", d.relative_path {direction}"
 
-    # === START OF FIX: Rewritten query with LEFT JOINs and GROUP BY ===
     base_query = f"""
         SELECT 
             d.id as doc_id, d.relative_path, d.color, d.duration_seconds,
@@ -967,10 +963,8 @@ def get_podcast_episodes(catalog_id):
         ORDER BY {order_by_clause}
         LIMIT ? OFFSET ?;
     """
-    # Adjust HAVING clause params
     final_params = [params[0], params[1]] + params[2:] + [limit, offset]
     rows = db.execute(final_query, final_params).fetchall()
-    # === END OF FIX ===
     
     episodes = []
     for row in rows:
@@ -1096,3 +1090,65 @@ def get_entity_mentions_paginated(entity_id):
         'page': page,
         'has_more': (page * limit) < total_count
     })
+
+# ===================================================================
+# --- START: NEW API ENDPOINTS FOR MISSION II ---
+# ===================================================================
+@api_bp.route('/contributions/accept-tag', methods=['POST'])
+@admin_required
+def accept_contribution_tag():
+    data = request.json
+    doc_path = data.get('doc_path')
+    tag_name = data.get('value')
+    if not doc_path or not tag_name:
+        return jsonify({'success': False, 'message': 'Missing document path or tag name.'}), 400
+
+    db = get_db()
+    try:
+        doc_row = db.execute("SELECT id FROM documents WHERE relative_path = ?", (doc_path,)).fetchone()
+        if not doc_row:
+            return jsonify({'success': False, 'message': f'Document not found: {doc_path}'}), 404
+        doc_id = doc_row['id']
+
+        db.execute("BEGIN")
+        db.execute("INSERT OR IGNORE INTO tags (name) VALUES (?)", (tag_name,))
+        tag_id = db.execute("SELECT id FROM tags WHERE name = ?", (tag_name,)).fetchone()['id']
+        db.execute("INSERT OR IGNORE INTO document_tags (doc_id, tag_id) VALUES (?, ?)", (doc_id, tag_id))
+        db.commit()
+        return jsonify({'success': True, 'message': 'Tag accepted.'})
+    except sqlite3.Error as e:
+        db.rollback()
+        return jsonify({'success': False, 'message': f'Database error: {e}'}), 500
+
+@api_bp.route('/contributions/accept-comment', methods=['POST'])
+@admin_required
+def accept_contribution_comment():
+    data = request.json
+    doc_path = data.get('doc_path')
+    comment_text = data.get('value')
+    contributor = data.get('contributor', 'Explorer')
+    if not doc_path or not comment_text:
+        return jsonify({'success': False, 'message': 'Missing document path or comment text.'}), 400
+
+    db = get_db()
+    try:
+        doc_row = db.execute("SELECT id FROM documents WHERE relative_path = ?", (doc_path,)).fetchone()
+        if not doc_row:
+            return jsonify({'success': False, 'message': f'Document not found: {doc_path}'}), 404
+        doc_id = doc_row['id']
+        
+        # We attribute the comment to the admin who accepted it, but prefix the text
+        full_comment_text = f"[From {contributor}]:\n\n{comment_text}"
+
+        db.execute(
+            "INSERT INTO document_comments (doc_id, user_id, comment_text) VALUES (?, ?, ?)",
+            (doc_id, g.user['id'], full_comment_text)
+        )
+        db.commit()
+        return jsonify({'success': True, 'message': 'Comment accepted.'})
+    except sqlite3.Error as e:
+        db.rollback()
+        return jsonify({'success': False, 'message': f'Database error: {e}'}), 500
+# ===================================================================
+# --- END: NEW API ENDPOINTS FOR MISSION II ---
+# ===================================================================

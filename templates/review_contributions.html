@@ -1,0 +1,192 @@
+<!-- File: ./templates/review_contributions.html (New File) -->
+{% extends 'layout.html' %}
+{% block title %}Review Contributions - Redleaf{% endblock %}
+
+{% block content %}
+<div class="breadcrumb">
+    <a href="{{ url_for('settings.settings_page') }}">Settings</a> /
+    <span>Review Contributions</span>
+</div>
+
+<div class="page-heading">
+    <h1>Review Contributions</h1>
+</div>
+
+<div class="panel">
+    <div class="panel-body">
+        <h3>Contributions from <mark>{{ contributions.exported_by }}</mark></h3>
+        <p class="text-muted">
+            Package generated on: {{ contributions.export_date_utc | strftime('%Y-%m-%d %H:%M:%S') }} UTC<br>
+            Review and selectively accept the annotations below to merge them into the main knowledge base. Rejected items will be discarded.
+        </p>
+    </div>
+</div>
+
+<div class="accordion" id="contributions-accordion">
+    {% for doc_path, items in contributions.contributions.items() %}
+        <details class="accordion-item" open>
+            <summary class="accordion-header">
+                <span>{{ doc_path }}</span>
+                <span class="chip" id="summary-chip-{{ loop.index }}">
+                    {% set total = items.get('tags', [])|length + items.get('comments', [])|length %}
+                    {{ total }} pending item(s)
+                </span>
+            </summary>
+            <div class="accordion-body">
+                
+                <!-- Tags Section -->
+                {% if items.tags %}
+                <div class="contribution-section">
+                    <h4>Suggested Tags</h4>
+                    <ul class="simple-list" data-doc-path="{{ doc_path }}">
+                        {% for tag in items.tags %}
+                        <li class="contribution-item" data-item-type="tag" data-item-value="{{ tag }}">
+                            <div class="item-content">
+                                <span class="chip" style="font-size: 1em;">{{ tag }}</span>
+                            </div>
+                            <div class="item-actions">
+                                <button class="button button-small accept-btn">Accept</button>
+                                <button class="button button-small reject-btn">Reject</button>
+                            </div>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+                {% endif %}
+
+                <!-- Comments Section -->
+                {% if items.comments %}
+                <div class="contribution-section mt-4">
+                    <h4>Suggested Comments</h4>
+                    <ul class="simple-list" data-doc-path="{{ doc_path }}">
+                        {% for comment in items.comments %}
+                        <li class="contribution-item" data-item-type="comment" data-item-value="{{ comment.text }}">
+                            <div class="item-content">
+                                <blockquote>
+                                    <p>"{{ comment.text }}"</p>
+                                    <footer class="text-muted" style="font-size: 0.9em;">— {{ contributions.exported_by }} on {{ comment.created_at | strftime }}</footer>
+                                </blockquote>
+                            </div>
+                            <div class="item-actions">
+                                <button class="button button-small accept-btn">Accept</button>
+                                <button class="button button-small reject-btn">Reject</button>
+                            </div>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+                {% endif %}
+                
+                <!-- Private Note Section -->
+                {% if items.private_note %}
+                <div class="contribution-section mt-4">
+                    <h4>Private Note (for your reference only)</h4>
+                    <div class="panel">
+                        <div class="panel-body" style="white-space: pre-wrap;">{{ items.private_note.text }}</div>
+                        <div class="panel-footer text-muted" style="font-size: 0.9em;">
+                            Last updated by {{ contributions.exported_by }} on {{ items.private_note.updated_at | strftime }}
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+
+            </div>
+        </details>
+    {% else %}
+        <div class="panel">
+            <div class="panel-body empty-state">
+                <p>This contribution package is empty.</p>
+            </div>
+        </div>
+    {% endfor %}
+</div>
+
+<a href="{{ url_for('settings.settings_page') }}" class="button mt-4">← Back to Settings</a>
+
+{% endblock %}
+
+{% block head_extra %}
+<style>
+    .contribution-section h4 {
+        border-bottom: 1px solid var(--border-color);
+        padding-bottom: 0.5rem;
+        margin-bottom: 1rem;
+    }
+    .contribution-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.75rem 0 !important;
+    }
+    .item-actions { display: flex; gap: 0.5rem; }
+    .item-content blockquote {
+        margin: 0;
+        padding-left: 1rem;
+        border-left: 3px solid var(--border-color);
+    }
+    .contribution-item.processed .item-content {
+        opacity: 0.5;
+    }
+    .status-badge {
+        font-weight: bold;
+        padding: 0.25rem 0.5rem;
+        border-radius: 4px;
+        font-size: 0.9em;
+    }
+    .status-badge.accepted { color: #4ADE80; }
+    .status-badge.rejected { color: var(--red-danger); }
+</style>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    // This form is on the main settings page, but we need its token for our API calls.
+    // We assume it's available in the base layout (`layout.html`).
+    const csrfToken = document.querySelector('input[name="csrf_token"]').value;
+    const contributorUsername = "{{ contributions.exported_by }}";
+
+    document.getElementById('contributions-accordion').addEventListener('click', async (event) => {
+        const button = event.target.closest('.accept-btn, .reject-btn');
+        if (!button) return;
+
+        const itemElement = button.closest('.contribution-item');
+        const docPath = itemElement.closest('ul').dataset.docPath;
+        const itemType = itemElement.dataset.itemType;
+        const itemValue = itemElement.dataset.itemValue;
+        const action = button.classList.contains('accept-btn') ? 'accept' : 'reject';
+
+        button.closest('.item-actions').innerHTML = `<span class="status-badge">Processing...</span>`;
+
+        let success = true;
+        if (action === 'accept') {
+            try {
+                const response = await fetch(`/api/contributions/accept-${itemType}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+                    body: JSON.stringify({
+                        doc_path: docPath,
+                        value: itemValue,
+                        contributor: contributorUsername
+                    })
+                });
+                const result = await response.json();
+                if (!response.ok) throw new Error(result.message);
+            } catch (error) {
+                console.error(`Failed to accept ${itemType}:`, error);
+                alert(`Error: ${error.message}`);
+                success = false;
+            }
+        }
+        
+        // Update UI based on action and success
+        const actionText = (action === 'accept' && success) ? 'Accepted' : 'Rejected';
+        const actionClass = (action === 'accept' && success) ? 'accepted' : 'rejected';
+        
+        itemElement.classList.add('processed');
+        itemElement.querySelector('.item-actions').innerHTML = `<span class="status-badge ${actionClass}">${actionText}</span>`;
+    });
+});
+</script>
+{% endblock %}

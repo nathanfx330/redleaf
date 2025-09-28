@@ -5,6 +5,23 @@
 #
 # After installing these, you must also download the required spaCy model.
 
+# --- START OF CHANGE ---
+# == System-Level Dependencies ==
+#
+# The following tools are required by the management scripts but are NOT Python packages
+# and cannot be installed by pip. Please ensure they are installed on your system.
+#
+# 1. sqlite3 (Command-Line Tool)
+#    - WHY: Required for the `export-precomputed-state` command.
+#    - HOW TO CHECK: Open a terminal and run `sqlite3 --version`. If you get a version number, you're all set.
+#    - HOW TO INSTALL:
+#      - Windows: Download the "command-line tools" zip from the official SQLite website (sqlite.org)
+#                 and add the folder containing sqlite3.exe to your system's PATH.
+#      - macOS: Usually pre-installed. If not, use Homebrew: `brew install sqlite`
+#      - Linux (Debian/Ubuntu): `sudo apt-get update && sudo apt-get install sqlite3`
+#      - Linux (Fedora/CentOS): `sudo dnf install sqlite`
+# --- END OF CHANGE ---
+
 # == Core Web Framework ==
 Flask==2.3.3         # The web server framework.
 Flask-WTF==1.1.1     # Handles web forms and CSRF protection.

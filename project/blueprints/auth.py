@@ -1,4 +1,4 @@
-# --- File: ./project/blueprints/auth.py ---
+# --- File: ./project/blueprints/auth.py (Updated) ---
 import sqlite3
 from pathlib import Path
 from functools import wraps
@@ -13,7 +13,6 @@ from ..database import get_db, close_connection
 import storage_setup
 import secrets
 
-# We no longer need template_folder here. The app knows where to look.
 auth_bp = Blueprint('auth', __name__)
 
 class SecureForm(FlaskForm):
@@ -41,6 +40,11 @@ def admin_required(f):
 
 @auth_bp.route('/setup', methods=['GET', 'POST'])
 def setup():
+    # --- START OF CHANGE: Redirect if in precomputed mode ---
+    if g.is_precomputed:
+        return redirect(url_for('auth.welcome'))
+    # --- END OF CHANGE ---
+
     db = get_db()
     try:
         if db.execute('SELECT COUNT(id) FROM users').fetchone()[0] > 0:
@@ -52,6 +56,7 @@ def setup():
             db_path.unlink()
         storage_setup.create_unified_index(db_path)
         return redirect(url_for('auth.setup'))
+    
     form = SecureForm()
     if form.validate_on_submit():
         username = request.form.get('username', '').strip()
@@ -65,6 +70,43 @@ def setup():
             flash("Admin account created successfully! Please log in.", "success")
             return redirect(url_for('auth.login'))
     return render_template('setup.html', form=form)
+
+# ===================================================================
+# --- START: NEW ROUTE FOR MISSION III ---
+# ===================================================================
+@auth_bp.route('/welcome', methods=['GET', 'POST'])
+def welcome():
+    # If not in precomputed mode, this page shouldn't be accessed.
+    if not g.is_precomputed:
+        return redirect(url_for('auth.setup'))
+
+    db = get_db()
+    try:
+        # If a user already exists, they should just log in.
+        if db.execute('SELECT COUNT(id) FROM users').fetchone()[0] > 0:
+            return redirect(url_for('auth.login'))
+    except sqlite3.OperationalError:
+        # This can happen if the DB is still being built.
+        return "Building precomputed database, please wait a moment and refresh...", 503
+
+    form = SecureForm()
+    if form.validate_on_submit():
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password')
+        if not username or not password:
+            flash("Username and password are required.", "danger")
+        else:
+            hashed_password = generate_password_hash(password)
+            # The first user in a precomputed instance is always an 'admin' of their own instance
+            db.execute("INSERT INTO users (username, password_hash, role) VALUES (?, ?, 'admin')", (username, hashed_password))
+            db.commit()
+            flash("Your personal account has been created! Please log in to begin exploring.", "success")
+            return redirect(url_for('auth.login'))
+            
+    return render_template('welcome.html', form=form)
+# ===================================================================
+# --- END: NEW ROUTE FOR MISSION III ---
+# ===================================================================
 
 @auth_bp.route('/login', methods=['GET', 'POST'])
 def login():

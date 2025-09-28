@@ -1,3 +1,4 @@
+<!-- File: ./templates/settings.html (Updated) -->
 {% extends 'layout.html' %}
 {% block title %}Settings - Redleaf{% endblock %}
 
@@ -13,11 +14,21 @@
         <!-- Tab Navigation -->
         <nav class="tabs-nav">
             <button class="tab-link active" data-tab="access">Users & Access</button>
+            
+            {# --- START OF CHANGE: Conditionally hide tabs in precomputed mode --- #}
+            {% if not g.is_precomputed %}
             <button class="tab-link" data-tab="system">System & Processing</button>
+            {% endif %}
+            {# --- END OF CHANGE --- #}
+
             <button class="tab-link" data-tab="archive">Archived Items</button>
-            <!-- NEW TAB BUTTON -->
             <button class="tab-link" data-tab="transfer">Import / Export</button>
+
+            {# --- START OF CHANGE: Conditionally hide tabs in precomputed mode --- #}
+            {% if not g.is_precomputed %}
             <button class="tab-link" data-tab="danger">Reset</button>
+            {% endif %}
+            {# --- END OF CHANGE --- #}
         </nav>
 
         <!-- Tab Content: Users & Access -->
@@ -121,6 +132,8 @@
             </div>
         </div>
 
+        {# --- START OF CHANGE: Wrap content in conditional block --- #}
+        {% if not g.is_precomputed %}
         <!-- Tab Content: System & Processing -->
         <div id="tab-system" class="tab-content">
             <h3 class="mt-4">System & Processing</h3>
@@ -163,6 +176,8 @@
                 </div>
             </div>
         </div>
+        {% endif %}
+        {# --- END OF CHANGE --- #}
 
         <!-- Tab Content: Archived Items -->
         <div id="tab-archive" class="tab-content">
@@ -184,7 +199,7 @@
             </div>
         </div>
 
-        <!-- NEW TAB CONTENT: Import / Export -->
+        <!-- Tab Content: Import / Export -->
         <div id="tab-transfer" class="tab-content">
             <h3 class="mt-4">Knowledge Package Transfer</h3>
             <div class="panel">
@@ -218,8 +233,27 @@
                     </form>
                 </div>
             </div>
+            
+            <div class="panel">
+                <div class="panel-header">Import Explorer Contributions</div>
+                <div class="panel-body">
+                    <p class="text-muted">
+                        Upload a <code>.json</code> contribution package from an Explorer to review and merge their annotations (tags, comments, etc.) into the main knowledge base.
+                    </p>
+                    <form action="{{ url_for('settings.import_contributions') }}" method="POST" enctype="multipart/form-data" id="import-contributions-form">
+                        {{ form.hidden_tag() }}
+                        <div class="form-group">
+                            <label for="contribution_file" class="form-label">Select a <code>.json</code> contribution file:</label>
+                            <input type="file" name="contribution_file" id="contribution_file" class="form-control" accept=".json" required>
+                        </div>
+                        <button type="submit" class="button" id="import-contributions-btn">Upload for Review</button>
+                    </form>
+                </div>
+            </div>
         </div>
 
+        {# --- START OF CHANGE: Wrap content in conditional block --- #}
+        {% if not g.is_precomputed %}
         <!-- Tab Content: Reset Zone -->
         <div id="tab-danger" class="tab-content">
              <h3 class="mt-4">Reset</h3>
@@ -234,6 +268,8 @@
                 </div>
              </div>
         </div>
+        {% endif %}
+        {# --- END OF CHANGE --- #}
     </div>
 </div>
 {% endblock %}
@@ -380,14 +416,12 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // --- NEW SCRIPT FOR IMPORT/EXPORT FEEDBACK ---
     const exportForm = document.getElementById('export-form');
     if (exportForm) {
         exportForm.addEventListener('submit', () => {
             const btn = document.getElementById('export-btn');
             btn.textContent = 'Generating Package...';
             btn.disabled = true;
-            // The browser will handle the download, so we don't need to revert the button text.
         });
     }
 
@@ -402,6 +436,21 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             const btn = document.getElementById('import-btn');
             btn.textContent = 'Importing... Please wait.';
+            btn.disabled = true;
+        });
+    }
+    
+    const importContributionsForm = document.getElementById('import-contributions-form');
+    if (importContributionsForm) {
+        importContributionsForm.addEventListener('submit', () => {
+            const fileInput = document.getElementById('contribution_file');
+            if (fileInput.files.length === 0) {
+                alert('Please select a contribution file to upload.');
+                event.preventDefault();
+                return;
+            }
+            const btn = document.getElementById('import-contributions-btn');
+            btn.textContent = 'Uploading...';
             btn.disabled = true;
         });
     }

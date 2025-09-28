@@ -1,14 +1,16 @@
-# --- File: ./bulk_manage.py (Feature Restored) ---
+# --- File: ./bulk_manage.py (Definitive Fix, Complete and Full) ---
 import argparse
 import os
 import sys
 import json
 from pathlib import Path
 import hashlib
+import subprocess
 from lxml import etree as ET
 from email.utils import parsedate_to_datetime
 from typing import Union
 import requests
+from datetime import datetime
 
 # Add the project directory to the Python path
 project_dir = Path(__file__).resolve().parent
@@ -16,7 +18,7 @@ sys.path.append(str(project_dir))
 
 from project import create_app
 from project.database import get_db
-from project.config import DOCUMENTS_DIR
+from project.config import DOCUMENTS_DIR, DATABASE_FILE, INSTANCE_DIR
 
 # --- Helper functions ---
 
@@ -106,7 +108,6 @@ def link_podcast_metadata():
     app = create_app()
     with app.app_context():
         db = get_db()
-        # Find SRTs that are indexed but have no metadata and no media links yet
         docs_to_process = db.execute("""
             SELECT d.id, d.relative_path
             FROM documents d
@@ -229,7 +230,6 @@ def link_local_audio():
             srt_path = Path(doc['relative_path'])
             target_stem = srt_path.stem
             
-            # Prefer match in the same directory
             preferred_mp3 = srt_path.with_suffix('.mp3').as_posix()
             preferred_mp4 = srt_path.with_suffix('.mp4').as_posix()
 
@@ -238,7 +238,7 @@ def link_local_audio():
                 found_path, media_type = preferred_mp4, 'video'
             elif preferred_mp3 in all_media_files:
                 found_path, media_type = preferred_mp3, 'audio'
-            else: # Fallback to global search by stem
+            else:
                 for media_file in all_media_files:
                     if Path(media_file).stem == target_stem:
                         found_path = media_file
@@ -272,7 +272,7 @@ def unpodcast_documents():
         print("Deleting all bibliographic metadata from SRTs...")
         db.execute("DELETE FROM document_metadata WHERE doc_id IN (SELECT id FROM documents WHERE file_type='SRT')")
         print("Deleting all 'podcast' type collections...")
-        db.execute("DELETE FROM catalogs WHERE catalog_type='podcast'") # This will cascade to document_catalogs
+        db.execute("DELETE FROM catalogs WHERE catalog_type='podcast'")
         db.commit()
         print("\n--- All SRT documents have been reset. ---")
 
@@ -364,6 +364,154 @@ def link_archive_org(archive_id: str):
         print("---------------------------------")
 
 
+def export_contributions(username: str):
+    """Exports a user's annotations into a JSON contribution package."""
+    app = create_app()
+    with app.app_context():
+        db = get_db()
+        user = db.execute("SELECT id, username FROM users WHERE username = ?", (username,)).fetchone()
+        if not user:
+            print(f"[FAIL] User '{username}' not found in the database.")
+            return
+
+        print(f"\n--- Exporting contributions for user: {user['username']} (ID: {user['id']}) ---")
+        
+        tags_query = """
+            SELECT d.relative_path, t.name
+            FROM document_tags dt
+            JOIN tags t ON dt.tag_id = t.id
+            JOIN documents d ON dt.doc_id = d.id
+            ORDER BY d.relative_path, t.name;
+        """
+        user_tags = db.execute(tags_query).fetchall()
+        print(f"Found {len(user_tags)} tag associations.")
+
+        comments_query = """
+            SELECT d.relative_path, dc.comment_text, dc.created_at
+            FROM document_comments dc
+            JOIN documents d ON dc.doc_id = d.id
+            WHERE dc.user_id = ?
+            ORDER BY d.relative_path, dc.created_at;
+        """
+        user_comments = db.execute(comments_query, (user['id'],)).fetchall()
+        print(f"Found {len(user_comments)} comments.")
+        
+        notes_query = """
+            SELECT d.relative_path, cur.note, cur.updated_at
+            FROM document_curation cur
+            JOIN documents d ON cur.doc_id = d.id
+            WHERE cur.user_id = ? AND cur.note IS NOT NULL AND cur.note != ''
+            ORDER BY d.relative_path;
+        """
+        user_notes = db.execute(notes_query, (user['id'],)).fetchall()
+        print(f"Found {len(user_notes)} private notes.")
+        
+        contributions_by_doc = {}
+        for row in user_tags:
+            doc_path = row['relative_path']
+            if doc_path not in contributions_by_doc: contributions_by_doc[doc_path] = {}
+            if 'tags' not in contributions_by_doc[doc_path]: contributions_by_doc[doc_path]['tags'] = []
+            contributions_by_doc[doc_path]['tags'].append(row['name'])
+
+        for row in user_comments:
+            doc_path = row['relative_path']
+            if doc_path not in contributions_by_doc: contributions_by_doc[doc_path] = {}
+            if 'comments' not in contributions_by_doc[doc_path]: contributions_by_doc[doc_path]['comments'] = []
+            contributions_by_doc[doc_path]['comments'].append({'text': row['comment_text'], 'created_at': row['created_at'].isoformat()})
+
+        for row in user_notes:
+            doc_path = row['relative_path']
+            if doc_path not in contributions_by_doc: contributions_by_doc[doc_path] = {}
+            contributions_by_doc[doc_path]['private_note'] = {'text': row['note'], 'updated_at': row['updated_at'].isoformat()}
+
+        output_data = {
+            "exported_by": user['username'],
+            "export_date_utc": datetime.utcnow().isoformat(),
+            "redleaf_version": "2.1-contribution",
+            "contributions": contributions_by_doc
+        }
+
+        filename = f"contribution-{user['username']}-{datetime.now().strftime('%Y%m%d%H%M%S')}.json"
+        output_path = Path.cwd() / filename
+        
+        try:
+            with open(output_path, 'w', encoding='utf-8') as f:
+                json.dump(output_data, f, indent=2)
+            print(f"\n[SUCCESS] Contributions exported successfully!")
+            print(f"File saved to: {output_path.resolve()}")
+        except IOError as e:
+            print(f"\n[FAIL] Could not write to file: {e}")
+
+def export_precomputed_state():
+    """Dumps the public data to an SQL file for precomputed distribution."""
+    print("\n--- Exporting Precomputed State for Distribution ---")
+    
+    app = create_app()
+    with app.app_context():
+        db = get_db()
+        user_count = db.execute("SELECT COUNT(id) FROM users").fetchone()[0]
+        
+        print("\n[WARNING] This process will create a public snapshot of your database.")
+        print("To ensure no private data is included, the following tables will be WIPED from your CURRENT database before exporting:")
+        print("  - users, invitation_tokens, document_curation, synthesis_reports, synthesis_citations")
+        print(f"This will permanently delete all {user_count} user accounts and their associated private data from THIS instance.")
+        
+        confirm = input("This is a DESTRUCTIVE action. Are you absolutely sure you want to proceed? [y/N]: ")
+        if confirm.lower() != 'y':
+            print("Operation cancelled.")
+            return
+
+        print("\n[1/5] Wiping private data from the current database...")
+        try:
+            tables_to_wipe = [
+                'users', 'invitation_tokens', 'document_curation', 
+                'synthesis_reports', 'synthesis_citations'
+            ]
+            for table in tables_to_wipe:
+                db.execute(f"DELETE FROM {table};")
+            db.commit()
+            print("  [OK]   Private data has been wiped.")
+        except Exception as e:
+            db.rollback()
+            print(f"[FAIL] Could not wipe private data. Aborting. Error: {e}")
+            return
+
+    INSTANCE_DIR.mkdir(exist_ok=True)
+    output_sql_path = INSTANCE_DIR / "initial_state.sql"
+    marker_path = INSTANCE_DIR / "precomputed.marker"
+    
+    print(f"[2/5] Checking for existing database at '{DATABASE_FILE}'...")
+    if not DATABASE_FILE.exists():
+        print(f"[FAIL] Database file not found. Cannot export.")
+        return
+
+    print(f"[3/5] Dumping clean database to '{output_sql_path}'...")
+    try:
+        with open(output_sql_path, 'w', encoding='utf-8') as f_out:
+            subprocess.run(['sqlite3', str(DATABASE_FILE), '.dump'], stdout=f_out, check=True)
+        print("  [OK]   Database dump successful.")
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        print(f"[FAIL] Could not dump database. Ensure 'sqlite3' is in your system's PATH.")
+        print(f"       Error: {e}")
+        return
+
+    # Step 4 is no longer sanitization, as we cleaned the source DB
+    print(f"[4/5] Creating precomputed mode marker file...")
+    try:
+        marker_path.touch()
+        print(f"  [OK]   Marker file created at '{marker_path}'")
+    except IOError as e:
+        print(f"[FAIL] Could not create marker file: {e}")
+        return
+
+    print("\n--- Precomputed State Export Complete! ---")
+    print("[5/5] IMPORTANT: Your local instance no longer has any user accounts.")
+    print("You will need to create a new admin account the next time you run the app in normal (Curator) mode.")
+    print("\nCommit the following files to your repository for distribution:")
+    print(f"  - {output_sql_path.relative_to(project_dir.parent)}")
+    print(f"  - {marker_path.relative_to(project_dir.parent)}")
+    print("  - Your entire 'documents/' directory.")
+
 # --- Main CLI setup ---
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Redleaf Engine Bulk Management Tool.")
@@ -394,6 +542,21 @@ if __name__ == "__main__":
         help="The identifier of the item on Archive.org (e.g., 'gaslit')."
     )
 
+    parser_export_contrib = subparsers.add_parser(
+        'export-contributions',
+        help="Exports a user's annotations (tags, comments, notes) to a JSON file."
+    )
+    parser_export_contrib.add_argument(
+        'username',
+        type=str,
+        help="The username of the user whose contributions you want to export."
+    )
+    
+    parser_export_precomputed = subparsers.add_parser(
+        'export-precomputed-state',
+        help="[CURATOR] Exports the public DB state for precomputed distribution."
+    )
+
     args = parser.parse_args()
 
     if args.command == 'link-podcast-metadata':
@@ -404,3 +567,7 @@ if __name__ == "__main__":
         link_local_audio()
     elif args.command == 'link-archive-org':
         link_archive_org(args.archive_id)
+    elif args.command == 'export-contributions':
+        export_contributions(args.username)
+    elif args.command == 'export-precomputed-state':
+        export_precomputed_state()

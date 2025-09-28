@@ -1,7 +1,8 @@
-# --- File: ./project/blueprints/settings.py ---
+# --- File: ./project/blueprints/settings.py (Updated) ---
 import os
 import sqlite3
 import secrets
+import json
 from datetime import datetime
 from pathlib import Path
 
@@ -38,7 +39,6 @@ def settings_page():
         html_parsing_mode=system_settings['html_parsing_mode']
     )
 
-# === UPDATED ROUTE FOR EXPORTING ===
 @settings_bp.route('/export', methods=['POST'])
 @admin_required
 def export_package():
@@ -49,12 +49,9 @@ def export_package():
 
     filename = f"redleaf_export_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.rklf"
     
-    # === THIS IS THE FIX: The function is now called with no arguments ===
     success, result_or_error = export_knowledge_package()
-    # ====================================================================
     
     if success:
-        # The result is the BytesIO buffer
         memory_buffer = result_or_error
         return send_file(
             memory_buffer,
@@ -63,12 +60,9 @@ def export_package():
             download_name=filename
         )
     else:
-        # The result is an error message
         flash(f"Export failed: {result_or_error}", "danger")
         return redirect(url_for('settings.settings_page'))
 
-
-# === ROUTE FOR IMPORTING (Unchanged but included for completeness) ===
 @settings_bp.route('/import', methods=['POST'])
 @admin_required
 def import_package():
@@ -101,7 +95,6 @@ def import_package():
         else:
             flash(f"Import Failed: {message}", 'danger')
             
-        # Clean up the uploaded file
         if temp_path.exists():
             temp_path.unlink()
             
@@ -110,6 +103,66 @@ def import_package():
         flash('Invalid file type. Please upload a .rklf or .zip package.', 'danger')
         return redirect(url_for('settings.settings_page'))
 
+# ===================================================================
+# --- START: NEW ROUTES FOR MISSION II ---
+# ===================================================================
+@settings_bp.route('/import-contributions', methods=['POST'])
+@admin_required
+def import_contributions():
+    form = SecureForm()
+    if not form.validate_on_submit():
+        flash("CSRF validation failed.", "danger")
+        return redirect(url_for('settings.settings_page'))
+
+    if 'contribution_file' not in request.files:
+        flash('No file part in the request.', 'danger')
+        return redirect(url_for('settings.settings_page'))
+        
+    file = request.files['contribution_file']
+    if file.filename == '' or not file.filename.endswith('.json'):
+        flash('No file selected or invalid file type (must be .json).', 'danger')
+        return redirect(url_for('settings.settings_page'))
+
+    upload_dir = Path(current_app.instance_path) / "contributions"
+    upload_dir.mkdir(exist_ok=True)
+    
+    # Secure filename and add a timestamp to prevent overwrites
+    base_filename = secure_filename(file.filename).replace('.json', '')
+    timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+    final_filename = f"{base_filename}_{timestamp}.json"
+    temp_path = upload_dir / final_filename
+    
+    try:
+        file.save(temp_path)
+        flash(f"Contribution package '{file.filename}' uploaded successfully. Please review the suggestions below.", "success")
+        return redirect(url_for('settings.review_contributions', filename=final_filename))
+    except Exception as e:
+        flash(f"Failed to save uploaded file: {e}", "danger")
+        return redirect(url_for('settings.settings_page'))
+
+@settings_bp.route('/review-contributions/<filename>')
+@admin_required
+def review_contributions(filename):
+    contributions_dir = Path(current_app.instance_path) / "contributions"
+    file_path = contributions_dir / secure_filename(filename)
+
+    if not file_path.exists():
+        flash("Contribution file not found.", "danger")
+        return redirect(url_for('settings.settings_page'))
+
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, IOError) as e:
+        flash(f"Error reading contribution file: {e}", "danger")
+        return redirect(url_for('settings.settings_page'))
+        
+    form = SecureForm()
+    return render_template('review_contributions.html', contributions=data, filename=filename, form=form)
+
+# ===================================================================
+# --- END: NEW ROUTES FOR MISSION II ---
+# ===================================================================
 
 @settings_bp.route('/workers', methods=['POST'])
 @admin_required
