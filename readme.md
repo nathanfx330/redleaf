@@ -64,7 +64,7 @@ It’s **local-first**, **privacy-respecting**, and designed to let you focus on
 
 
 ## ✨ From Text to Knowledge Graph: Automatic Relationship Detection
-![Entity & Relationship Extraction](https://nathanfx330.github.io/blog/posts/redleaf-engine-update/relationship.jpg)  
+
 
 Redleaf’s most powerful feature is its ability to understand the *context* that connects the entities it finds. It doesn't just list names and places; it reads the sentences where they appear and intelligently infers the relationship between them.
 
@@ -79,7 +79,7 @@ Redleaf’s most powerful feature is its ability to understand the *context* tha
 Now, you can click on the **Blackwood Estate** and instantly see every other document in your collection that mentions it, who else was seen there, and what other events took place on the property.
 
 This transforms your research from a linear reading process into an interactive exploration. You can follow a web of interconnected evidence, discovering patterns and links across your entire collection that would be impossible to find with simple keyword search.
-
+![Entity & Relationship Extraction](https://nathanfx330.github.io/blog/posts/redleaf-engine-update/relationship.jpg)  
 
 
 
