@@ -47,6 +47,22 @@ It’s **local-first**, **privacy-respecting**, and designed to let you focus on
 
 ---
 
+## 🚀 Key Features
+
+- 📦 **Precomputed & Distributable**: Package and share your entire knowledge base for others to explore.  
+- 📄 **Multi-Format Document Indexing**: `.pdf`, `.html`, `.txt`, `.srt`  
+- ✍️ **Synthesis Environment**: Dual-pane writing and citation  
+- 📚 **Bibliographic Tools**: In-text citations and auto-generated bibliography  
+- 🎙️ **Transcript & Media Sync**: Auto-scroll with local or cloud audio/video  
+- ☁️ **Cloud Media Linking**: Connect local transcripts (`.srt`) to audio/video hosted on Archive.org  
+- 🔍 **Full-Text Search**: Lightning-fast SQLite FTS5 queries  
+- 🧠 **Entity & Relationship Extraction**: spaCy-powered NLP  
+- 🗂️ **Deep Document Curation**: Tags, colors, notes, and collections  
+- 👥 **Multi-User Support**: Admin/user roles with invites  
+- ⚙️ **Concurrent Processing**: Multi-core, non-blocking workflows  
+- ⚡ **Optional GPU Acceleration**: CUDA support for NLP  
+
+
 ## ✨ From Text to Knowledge Graph: Automatic Relationship Detection
 ![Entity & Relationship Extraction](https://nathanfx330.github.io/blog/posts/redleaf-engine-update/relationship.jpg)  
 
@@ -66,20 +82,6 @@ This transforms your research from a linear reading process into an interactive 
 
 
 
-## 🚀 Key Features
-
-- 📦 **Precomputed & Distributable**: Package and share your entire knowledge base for others to explore.  
-- 📄 **Multi-Format Document Indexing**: `.pdf`, `.html`, `.txt`, `.srt`  
-- ✍️ **Synthesis Environment**: Dual-pane writing and citation  
-- 📚 **Bibliographic Tools**: In-text citations and auto-generated bibliography  
-- 🎙️ **Transcript & Media Sync**: Auto-scroll with local or cloud audio/video  
-- ☁️ **Cloud Media Linking**: Connect local transcripts (`.srt`) to audio/video hosted on Archive.org  
-- 🔍 **Full-Text Search**: Lightning-fast SQLite FTS5 queries  
-- 🧠 **Entity & Relationship Extraction**: spaCy-powered NLP  
-- 🗂️ **Deep Document Curation**: Tags, colors, notes, and collections  
-- 👥 **Multi-User Support**: Admin/user roles with invites  
-- ⚙️ **Concurrent Processing**: Multi-core, non-blocking workflows  
-- ⚡ **Optional GPU Acceleration**: CUDA support for NLP  
 
 ![PDF viewer and Entity Browser](https://nathanfx330.github.io/blog/posts/redleaf-engine-update/side_pannel.jpg)  
 ![Synthesis Environment](https://nathanfx330.github.io/blog/posts/redleaf-engine-update/pdf_writeup.jpg)  
