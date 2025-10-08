@@ -1,50 +1,22 @@
 # ===================================================================
-# --- CRITICAL FOLDERS TO IGNORE ---
+# --- Files and Folders to ALWAYS IGNORE ---
 # ===================================================================
 
-# User's private data folder. NEVER commit this.
-documents/
+# The live, private database file and its temporary files.
+# The public version is initial_state.sql, which is NOT ignored.
+knowledge_base.db
+knowledge_base.db-journal
+knowledge_base.db-wal
+knowledge_base.db-shm
 
-# Flask instance folder. Contains the secret key. NEVER commit this.
-instance/
-
-# NodeJS dependencies. These are installed via `npm install`.
-node_modules/
-
-# User's private database file. The app creates this on first run.
-*.db
-*.sqlite3
-
-# ===================================================================
-# --- COMMON MEDIA FORMATS (Images, Video, Audio) ---
-# ===================================================================
-# Images
-*.jpg
-*.jpeg
-*.png
-*.gif
-*.bmp
-*.tiff
-*.webp
-*.svg
-*.ico
-
-# Video
-*.mp4
-*.mov
-*.avi
-*.mkv
-*.webm
-
-# Audio
-*.mp3
-*.wav
-*.ogg
-*.flac
-*.m4a
+# The instance folder contains the secret key and temporary user uploads.
+# We ignore specific private files within it, NOT the whole folder.
+instance/secret.key
+instance/uploads/
+instance/contributions/
 
 # ===================================================================
-# --- STANDARD PYTHON & VIRTUAL ENVIRONMENT ---
+# --- Standard Python & Virtual Environment ---
 # ===================================================================
 
 # Python cache and artifacts
@@ -58,11 +30,9 @@ venv/
 .venv/
 env/
 .env/
-
-# ===================================================================
-# --- STANDARD PYTHON DISTRIBUTION / PACKAGING ---
-# ===================================================================
 .Python
+
+# Distribution / packaging
 build/
 develop-eggs/
 dist/
@@ -81,7 +51,9 @@ wheels/
 MANIFEST
 
 # ===================================================================
-# --- OS-SPECIFIC FILES ---
+# --- OS-Specific & IDE Files ---
 # ===================================================================
 .DS_Store
 Thumbs.db
+.vscode/
+.idea/

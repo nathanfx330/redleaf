@@ -13,7 +13,7 @@
 <body class="{% if page_layout == 'full_height' %}full-height-body{% endif %}">
     <header class="page-header">
         <div class="container-fluid d-flex align-items-center">
-            <a href="{{ url_for('main.dashboard') if g.user else url_for('auth.login') }}" class="logo">Redleaf</a>
+            <a href="{{ url_for('main.dashboard') if g.user else url_for('auth.login') }}" class="logo">{{ g.project_name }}</a>
             <nav class="main-nav">
                 {% if g.user %}
                     <a href="{{ url_for('main.dashboard') }}" class="nav-link {% if request.endpoint == 'main.dashboard' %}active{% endif %}">Dashboard</a>
@@ -60,27 +60,16 @@
     <div id="about-modal" class="modal-overlay">
         <div class="modal-dialog">
             <div class="modal-header">
-                <h3 class="modal-title">About Redleaf Engine</h3>
+                <h3 class="modal-title">About {{ g.project_name }}</h3>
                 <button class="modal-close-btn" aria-label="Close">×</button>
             </div>
             <div class="modal-body">
-                <h4>A Note from the Developer</h4>
-                <p>
-                    Thank you for choosing to use Redleaf. This project has been a deeply personal passion—created not just as a tool, but as an invitation to explore knowledge on your own terms. Your interest, feedback, and curiosity are what bring it to life.
-                </p>
-            
-                <h4>About the Project</h4>
-                <p>
-                    Redleaf is a full-stack web application designed to help you index, search, and explore documents, creating a personal datapool on your local machine to uncover meaningful connections within your collection of PDF, TXT, HTML and SRT documents. Built with a Python Flask backend and a lightweight JavaScript frontend, it offers a fast and flexible user experience.
-                </p>
-            
-                <h4>Open Source Spirit</h4>
-                <p>
-                    Redleaf is free to use, distribute, and modify. While it reflects one developer’s vision, it is meant to evolve through the hands of others. The source code is yours to explore, adapt, or improve—wherever your ideas lead.
-                </p>
-            
-                <p style="margin-top: 2em; font-style: italic;">
-                    — Nathaniel Westveer
+                <div id="custom-about-content">
+                    {{ g.about_content_html | safe }}
+                </div>
+                <hr style="border-top: 1px solid var(--border-color); margin-top: 2rem; margin-bottom: 1rem;">
+                <p style="font-size: 0.9em; color: var(--text-muted);">
+                    This instance is powered by the Redleaf Engine, an open-source project for local-first knowledge exploration.
                 </p>
             </div>
         </div>

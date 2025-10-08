@@ -1,4 +1,4 @@
-# --- File: ./project/background.py ---
+# --- File: ./project/background.py (Definitive Final Version) ---
 import os
 import sys
 import queue
@@ -10,16 +10,14 @@ import sqlite3
 from concurrent.futures import ProcessPoolExecutor, CancelledError
 from flask import current_app
 
-# A custom exception for older Python versions that don't have this built-in
 try:
     from concurrent.futures import BrokenProcessPool
 except ImportError:
     class BrokenProcessPool(Exception):
         pass
 
-# Import local project modules.
 import processing_pipeline
-import spacy # spacy is imported here for the init_worker function
+import spacy 
 
 # --- Manager Thread Architecture ---
 task_queue = queue.Queue()
@@ -28,40 +26,28 @@ active_tasks_lock = threading.Lock()
 executor = None
 restart_executor_event = threading.Event()
 
-# ===================================================================
-# THIS FUNCTION HAS BEEN MOVED HERE TO BREAK THE CIRCULAR IMPORT
-# ===================================================================
 def get_system_settings():
     """Reads all settings from the database and returns them as a dict."""
     defaults = {'max_workers': 2, 'use_gpu': False, 'html_parsing_mode': 'generic'}
     settings = defaults.copy()
     conn = None
     try:
-        # Use a direct connection as this might be called from outside app context.
         conn = sqlite3.connect(current_app.config['DATABASE_FILE'])
         rows = conn.execute("SELECT key, value FROM app_settings").fetchall()
         db_settings = {row[0]: row[1] for row in rows}
-
         if db_settings.get('max_workers', '').isdigit():
             settings['max_workers'] = int(db_settings['max_workers'])
-
         settings['use_gpu'] = db_settings.get('use_gpu') == 'true'
-
         if db_settings.get('html_parsing_mode') in ['generic', 'pipermail']:
             settings['html_parsing_mode'] = db_settings['html_parsing_mode']
-
     except Exception as e:
         print(f"Could not read app_settings from DB, using defaults. Error: {e}")
     finally:
-        if conn:
-            conn.close()
+        if conn: conn.close()
     return settings
-# ===================================================================
 
 def init_worker(use_gpu=False):
-    """
-    Initializes a worker process when it's spawned by the ProcessPoolExecutor.
-    """
+    """Initializes a worker process when it's spawned by the ProcessPoolExecutor."""
     print(f"Initializing worker process: {os.getpid()}...")
     if use_gpu:
         try:
@@ -69,7 +55,6 @@ def init_worker(use_gpu=False):
             print(f"--- SUCCESS: Worker {os.getpid()} has acquired GPU access. ---")
         except Exception as e:
             print(f"!!! WARNING: Worker {os.getpid()} failed to acquire GPU, falling back to CPU. Error: {e} !!!")
-
     try:
         processing_pipeline.load_spacy_model()
         print(f"Worker {os.getpid()} successfully initialized spaCy model.")
@@ -78,9 +63,7 @@ def init_worker(use_gpu=False):
         raise
 
 def manager_thread_loop():
-    """
-    The main loop for the background task manager thread.
-    """
+    """The main loop for the background task manager thread."""
     global executor, active_tasks
     print("--- Task Manager Thread Started ---")
     current_settings = get_system_settings()
@@ -103,7 +86,7 @@ def manager_thread_loop():
                     initializer=initializer_func
                 )
                 with active_tasks_lock:
-                    active_tasks = {}
+                    active_tasks.clear() # Ensure active tasks are cleared with the new pool
 
             with active_tasks_lock:
                 active_process_count = sum(1 for v in active_tasks.values() if v[0] == 'process')
@@ -112,22 +95,16 @@ def manager_thread_loop():
                 task_type, item_id = task_queue.get_nowait()
                 if task_type == 'process':
                     if active_process_count < current_settings['max_workers']:
-                        # === START OF THE FIX ===
-                        # The manager thread now sets the 'Queued' status,
-                        # ensuring no conflict with the main Flask app.
                         print(f"Manager: Queuing Doc ID {item_id} for processing.")
                         db_conn = None
                         try:
-                            # Use a direct, temporary connection for this update.
                             db_conn = sqlite3.connect(current_app.config['DATABASE_FILE'], timeout=10)
                             db_conn.execute("UPDATE documents SET status = 'Queued', status_message = 'Waiting for free worker...' WHERE id = ?", (item_id,))
                             db_conn.commit()
                         except sqlite3.Error as e:
                             print(f"!!! MANAGER FAILED to set 'Queued' status for Doc ID {item_id}: {e} !!!")
                         finally:
-                            if db_conn:
-                                db_conn.close()
-                        # === END OF THE FIX ===
+                            if db_conn: db_conn.close()
                         
                         future = executor.submit(processing_pipeline.process_document, item_id)
                         with active_tasks_lock:
@@ -135,10 +112,7 @@ def manager_thread_loop():
                     else:
                         task_queue.put((task_type, item_id))
                 elif task_type in ['discover', 'cache']:
-                    target_func = {
-                        'discover': processing_pipeline.discover_and_register_documents,
-                        'cache': processing_pipeline.update_browse_cache
-                    }.get(task_type)
+                    target_func = {'discover': processing_pipeline.discover_and_register_documents, 'cache': processing_pipeline.update_browse_cache}.get(task_type)
                     if target_func:
                         print(f"Manager: Starting lightweight task '{task_type}' in a new thread.")
                         thread = threading.Thread(target=target_func)
@@ -166,7 +140,11 @@ def manager_thread_loop():
                         print(f"Manager: Process task '{task_info[0]}' for item '{task_info[1]}' completed successfully.")
                     except Exception as e:
                         print(f"!!! MANAGER DETECTED A WORKER FAILURE for task '{task_info[0]}' on item '{task_info[1]}': {type(e).__name__} !!!")
-                        print(traceback.format_exc())
+                        # Only print full traceback for non-BrokenProcessPool errors
+                        if not isinstance(e, BrokenProcessPool):
+                            print(traceback.format_exc())
+                        # Re-raise the exception to be caught by the main handler
+                        raise e
                 else:
                     print(f"Manager: Thread task '{task_info[0]}' completed.")
 
@@ -178,13 +156,31 @@ def manager_thread_loop():
                     task_queue.put(('cache', None))
 
             time.sleep(1)
+            
         except (BrokenProcessPool, Exception) as e:
-            print(f"!!! FATAL ERROR IN MANAGER THREAD: {e} !!!")
-            print(traceback.format_exc())
+            print(f"!!! MANAGER THREAD ENCOUNTERED AN ERROR: {e} !!!")
+
+            with active_tasks_lock:
+                # Find any tasks that were running in the now-broken pool
+                tasks_to_requeue = [info for future, info in active_tasks.items() if isinstance(future, object) and not future.done()]
+                
+                if tasks_to_requeue:
+                    print("Manager: Re-queueing tasks that were active during the crash.")
+                    # Re-queue items by inserting them at the front of the main queue
+                    for task_type, item_id in reversed(tasks_to_requeue):
+                        print(f"Manager: Re-queueing item {item_id} for processing.")
+                        task_queue.queue.appendleft((task_type, item_id))
+                
+                # Clear the dictionary of dead future objects
+                active_tasks.clear()
+            
+            # Shutdown the broken pool and mark it for recreation
             if executor:
                 executor.shutdown(wait=False, cancel_futures=True)
             executor = None
-            time.sleep(10)
+            
+            print("Manager: Pool marked for recreation. Restarting in 5 seconds...")
+            time.sleep(5)
 
 def start_manager_thread(app):
     """Initializes and starts the background manager thread."""

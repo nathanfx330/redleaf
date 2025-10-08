@@ -4,6 +4,9 @@ import sqlite3
 import threading
 import multiprocessing
 from pathlib import Path
+import json
+import re
+from markupsafe import escape
 
 from flask import Flask, g, session, request, redirect, url_for, flash
 from flask_wtf import CSRFProtect
@@ -16,9 +19,7 @@ import storage_setup
 
 csrf = CSRFProtect()
 
-# --- START OF FIX: Add `start_background_thread` parameter ---
 def create_app(test_config=None, start_background_thread=True):
-# --- END OF FIX ---
     """Application factory function."""
     app = Flask(
         __name__, 
@@ -35,6 +36,40 @@ def create_app(test_config=None, start_background_thread=True):
         app.config.update(test_config)
     app.config.from_object('project.config')
 
+    # --- START: Custom Branding & About ---
+    config_path = INSTANCE_DIR / "config.json"
+    about_md_path = INSTANCE_DIR / "ABOUT.md"
+    project_name = "Redleaf"
+    about_html = """
+    <p><strong>Welcome to Redleaf.</strong></p>
+    <p>This is the default 'About' text. To customize this message for your own fork or distribution, create a file named <code>ABOUT.md</code> inside your <code>instance/</code> directory and write your own content there using Markdown syntax.</p>
+    """
+
+    if config_path.exists():
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                user_config = json.load(f)
+                project_name = user_config.get("PROJECT_NAME", "Redleaf").strip()
+        except (json.JSONDecodeError, IOError) as e:
+            print(f"[WARNING] Could not read or parse instance/config.json: {e}")
+
+    if about_md_path.exists():
+        try:
+            about_md_content = about_md_path.read_text(encoding='utf-8')
+            escaped_content = escape(about_md_content)
+            # First, split into paragraphs based on double newlines
+            paragraphs = re.split(r'\n\s*\n', escaped_content.strip())
+            # Then, process each paragraph to replace internal newlines with <br> tags
+            processed_paragraphs = [p.replace('\n', '<br>') for p in paragraphs]
+            # Finally, wrap each processed paragraph in <p> tags
+            about_html = "".join(f"<p>{p}</p>" for p in processed_paragraphs)
+        except IOError as e:
+            print(f"[WARNING] Could not read instance/ABOUT.md: {e}")
+
+    app.config['PROJECT_NAME'] = project_name
+    app.config['ABOUT_CONTENT_HTML'] = about_html
+    # --- END: Custom Branding & About ---
+    
     app.config['PRECOMPUTED_MARKER'] = INSTANCE_DIR / "precomputed.marker"
     
     csrf.init_app(app)
@@ -60,6 +95,8 @@ def create_app(test_config=None, start_background_thread=True):
     def check_setup_and_load_user():
         g.user = None
         g.is_precomputed = app.config['PRECOMPUTED_MARKER'].exists()
+        g.project_name = app.config.get('PROJECT_NAME', 'Redleaf')
+        g.about_content_html = app.config.get('ABOUT_CONTENT_HTML', '')
 
         is_public_endpoint = request.endpoint in [
             'static', 'auth.setup', 'auth.login', 'auth.register',
@@ -129,10 +166,8 @@ def create_app(test_config=None, start_background_thread=True):
             flash("You must be logged in to access this page.", "warning")
             return redirect(url_for('auth.login'))
 
-    # --- START OF FIX: Conditionally start the background thread ---
     if start_background_thread and not hasattr(app, 'manager_thread_started'):
         start_manager_thread(app)
         app.manager_thread_started = True
-    # --- END OF FIX ---
 
     return app
