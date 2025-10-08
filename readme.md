@@ -63,6 +63,7 @@ Now, you can click on the **Blackwood Estate** and instantly see every other doc
 
 This transforms your research from a linear reading process into an interactive exploration. You can follow a web of interconnected evidence, discovering patterns and links across your entire collection that would be impossible to find with simple keyword search.
 
+
 ![Entity & Relationship Extraction](https://nathanfx330.github.io/blog/posts/redleaf-engine-update/relationship.jpg)  
 
 ## 🚀 Key Features
