@@ -63,6 +63,8 @@ Now, you can click on the **Blackwood Estate** and instantly see every other doc
 
 This transforms your research from a linear reading process into an interactive exploration. You can follow a web of interconnected evidence, discovering patterns and links across your entire collection that would be impossible to find with simple keyword search.
 
+![Entity & Relationship Extraction](https://nathanfx330.github.io/blog/posts/redleaf-engine-update/relationship.jpg)  
+
 ## 🚀 Key Features
 
 - 📦 **Precomputed & Distributable**: Package and share your entire knowledge base for others to explore.  
@@ -78,7 +80,6 @@ This transforms your research from a linear reading process into an interactive 
 - ⚙️ **Concurrent Processing**: Multi-core, non-blocking workflows  
 - ⚡ **Optional GPU Acceleration**: CUDA support for NLP  
 
-![Entity & Relationship Extraction](https://nathanfx330.github.io/blog/posts/redleaf-engine-update/relationship.jpg)  
 ![PDF viewer and Entity Browser](https://nathanfx330.github.io/blog/posts/redleaf-engine-update/side_pannel.jpg)  
 ![Synthesis Environment](https://nathanfx330.github.io/blog/posts/redleaf-engine-update/pdf_writeup.jpg)  
 
