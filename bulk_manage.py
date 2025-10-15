@@ -1,4 +1,4 @@
-# --- File: ./bulk_manage.py (Definitive Fix, Complete and Full) ---
+# --- File: ./bulk_manage.py (FINAL, WITH ZIP COMPRESSION) ---
 import argparse
 import os
 import sys
@@ -11,6 +11,7 @@ from email.utils import parsedate_to_datetime
 from typing import Union
 import requests
 from datetime import datetime
+import zipfile  # <-- ADDED IMPORT
 
 # Add the project directory to the Python path
 project_dir = Path(__file__).resolve().parent
@@ -20,7 +21,7 @@ from project import create_app
 from project.database import get_db
 from project.config import DOCUMENTS_DIR, DATABASE_FILE, INSTANCE_DIR
 
-# --- Helper functions ---
+# --- Helper functions (No changes in this section) ---
 
 def _parse_podcast_xml_to_csl(item_element: ET.Element, channel_title_text: str = None, channel_author_text: str = None) -> tuple[dict, Union[str, None]]:
     csl_data = {}
@@ -101,10 +102,10 @@ def _fetch_archive_files(archive_id: str) -> Union[dict, None]:
         print("[FAIL] Could not parse the JSON response from Archive.org.")
         return None
 
-# --- Main Command Functions ---
+# --- Main Command Functions (No changes until export_precomputed_state) ---
 
 def link_podcast_metadata():
-    """Restored Feature: Links unprocessed SRTs to podcast metadata and media from XML files."""
+    # ... (This function remains unchanged)
     app = create_app()
     with app.app_context():
         db = get_db()
@@ -205,7 +206,7 @@ def link_podcast_metadata():
         print("----------------------------------------")
 
 def link_local_audio():
-    """Scans for local audio files for any SRT without a media link."""
+    # ... (This function remains unchanged)
     app = create_app()
     with app.app_context():
         db = get_db()
@@ -256,9 +257,8 @@ def link_local_audio():
         
         print(f"\n--- Summary: Linked {found_count} SRTs to local media. ---")
 
-
 def unpodcast_documents():
-    """[DESTRUCTIVE] Resets all SRTs by removing metadata, media links, and podcast collections."""
+    # ... (This function remains unchanged)
     confirm = input("[WARNING] This will remove ALL bibliographic metadata and media links from ALL SRT documents.\nIt will also delete ALL 'podcast' type collections.\nThis is a destructive action. Are you sure? [y/N]: ")
     if confirm.lower() != 'y':
         print("Operation cancelled.")
@@ -277,7 +277,7 @@ def unpodcast_documents():
         print("\n--- All SRT documents have been reset. ---")
 
 def link_archive_org(archive_id: str):
-    """Links SRTs to audio files hosted in a specified Archive.org item."""
+    # ... (This function remains unchanged)
     archive_file_map = _fetch_archive_files(archive_id)
     if not archive_file_map:
         print("\n--- Operation cancelled due to failure fetching archive data. ---")
@@ -363,9 +363,8 @@ def link_archive_org(archive_id: str):
         print(f"  XML match had no audio: {counts['no_enclosure']}")
         print("---------------------------------")
 
-
 def export_contributions(username: str):
-    """Exports a user's annotations into a JSON contribution package."""
+    # ... (This function remains unchanged)
     app = create_app()
     with app.app_context():
         db = get_db()
@@ -442,8 +441,9 @@ def export_contributions(username: str):
         except IOError as e:
             print(f"\n[FAIL] Could not write to file: {e}")
 
+# --- MODIFIED FUNCTION ---
 def export_precomputed_state():
-    """Dumps the public data to an SQL file for precomputed distribution."""
+    """Dumps the public data to a compressed SQL zip file for precomputed distribution."""
     print("\n--- Exporting Precomputed State for Distribution ---")
     
     app = create_app()
@@ -477,7 +477,8 @@ def export_precomputed_state():
             return
 
     INSTANCE_DIR.mkdir(exist_ok=True)
-    output_sql_path = INSTANCE_DIR / "initial_state.sql"
+    # --- START OF MODIFICATION ---
+    output_zip_path = INSTANCE_DIR / "initial_state.sql.zip"
     marker_path = INSTANCE_DIR / "precomputed.marker"
     
     print(f"[2/5] Checking for existing database at '{DATABASE_FILE}'...")
@@ -485,17 +486,30 @@ def export_precomputed_state():
         print(f"[FAIL] Database file not found. Cannot export.")
         return
 
-    print(f"[3/5] Dumping clean database to '{output_sql_path}'...")
+    print(f"[3/5] Dumping and compressing clean database to '{output_zip_path}'...")
     try:
-        with open(output_sql_path, 'w', encoding='utf-8') as f_out:
-            subprocess.run(['sqlite3', str(DATABASE_FILE), '.dump'], stdout=f_out, check=True)
-        print("  [OK]   Database dump successful.")
-    except (subprocess.CalledProcessError, FileNotFoundError) as e:
-        print(f"[FAIL] Could not dump database. Ensure 'sqlite3' is in your system's PATH.")
+        # Use subprocess.Popen to stream the output of sqlite3 .dump
+        process = subprocess.Popen(['sqlite3', str(DATABASE_FILE), '.dump'], stdout=subprocess.PIPE)
+        
+        # Write the streamed output directly to a compressed file within the zip archive
+        with zipfile.ZipFile(output_zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+            with zf.open('initial_state.sql', 'w') as f_out:
+                for line in iter(process.stdout.readline, b''):
+                    f_out.write(line)
+        
+        process.wait() # Wait for the sqlite3 process to finish
+        if process.returncode != 0:
+            raise subprocess.CalledProcessError(process.returncode, process.args)
+            
+        print("  [OK]   Database dump and compression successful.")
+    except (subprocess.CalledProcessError, FileNotFoundError, IOError) as e:
+        print(f"[FAIL] Could not dump and compress database. Ensure 'sqlite3' is in your system's PATH.")
         print(f"       Error: {e}")
+        if output_zip_path.exists():
+            output_zip_path.unlink()
         return
+    # --- END OF MODIFICATION ---
 
-    # Step 4 is no longer sanitization, as we cleaned the source DB
     print(f"[4/5] Creating precomputed mode marker file...")
     try:
         marker_path.touch()
@@ -508,11 +522,12 @@ def export_precomputed_state():
     print("[5/5] IMPORTANT: Your local instance no longer has any user accounts.")
     print("You will need to create a new admin account the next time you run the app in normal (Curator) mode.")
     print("\nCommit the following files to your repository for distribution:")
-    print(f"  - {output_sql_path.relative_to(project_dir.parent)}")
+    # --- MODIFIED PRINT STATEMENTS ---
+    print(f"  - {output_zip_path.relative_to(project_dir.parent)}")
     print(f"  - {marker_path.relative_to(project_dir.parent)}")
     print("  - Your entire 'documents/' directory.")
 
-# --- Main CLI setup ---
+# --- Main CLI setup (No changes in this section) ---
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Redleaf Engine Bulk Management Tool.")
     subparsers = parser.add_subparsers(dest='command', required=True, help='Available commands')
