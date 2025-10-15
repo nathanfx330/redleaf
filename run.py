@@ -1,8 +1,9 @@
-# --- File: ./run.py (Definitive Final Version) ---
+# --- File: ./run.py (FINAL, WITH fileno FIX) ---
 import sqlite3
 import multiprocessing
 import subprocess
 from pathlib import Path
+import zipfile
 
 from project import create_app
 from project.config import DATABASE_FILE, INSTANCE_DIR
@@ -13,24 +14,38 @@ def run_startup_logic():
 
     db_path = Path(DATABASE_FILE)
     marker_path = Path(INSTANCE_DIR) / "precomputed.marker"
-    sql_path = Path(INSTANCE_DIR) / "initial_state.sql"
+    zip_path = Path(INSTANCE_DIR) / "initial_state.sql.zip"
 
     if marker_path.exists():
         print("--- Precomputed Mode Detected ---")
         if db_path.exists():
             db_path.unlink()
-        if not sql_path.exists():
-            print(f"[FATAL] Precomputed mode failed: '{sql_path.name}' not found.")
+        if not zip_path.exists():
+            print(f"[FATAL] Precomputed mode failed: '{zip_path.name}' not found.")
             exit(1)
-        print(f"Building database from '{sql_path.name}'...")
+        print(f"Building database from '{zip_path.name}'...")
         try:
-            with open(sql_path, 'r', encoding='utf-8') as f_in:
-                subprocess.run(['sqlite3', str(db_path)], stdin=f_in, check=True, capture_output=True)
+            # --- START OF MODIFICATION ---
+            sql_content = None
+            with zipfile.ZipFile(zip_path, 'r') as zf:
+                # Open the initial_state.sql file *inside* the zip archive
+                with zf.open('initial_state.sql', 'r') as f_in:
+                    # Read the entire decompressed content into memory as bytes
+                    sql_content = f_in.read()
+            
+            # Now, run the subprocess, passing the content via the 'input' argument
+            # This avoids the 'fileno' error and is cross-platform compatible.
+            if sql_content:
+                subprocess.run(['sqlite3', str(db_path)], input=sql_content, check=True, capture_output=True)
+            else:
+                raise ValueError("SQL content from zip file is empty.")
+            # --- END OF MODIFICATION ---
+            
             print("  [OK]   Database successfully built.")
-            sql_path.unlink()
-            print("  [OK]   Cleaned up temporary SQL file.")
-        except (subprocess.CalledProcessError, FileNotFoundError, IOError) as e:
-            print(f"[FATAL] Failed to build precomputed database.")
+            zip_path.unlink() # Clean up the zip file after successful import
+            print("  [OK]   Cleaned up temporary SQL zip file.")
+        except (subprocess.CalledProcessError, FileNotFoundError, IOError, zipfile.BadZipFile, KeyError, ValueError) as e:
+            print(f"[FATAL] Failed to build precomputed database from zip.")
             stderr = getattr(e, 'stderr', b'').decode('utf-8', 'ignore')
             print(f"       Error: {stderr or e}")
             if db_path.exists(): db_path.unlink()
