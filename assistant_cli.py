@@ -1,4 +1,4 @@
-# --- File: assistant_cli.py (With Final Help Text Improvements) ---
+# --- File: assistant_cli.py (With Bibliography URL Feature) ---
 import sys
 import getpass
 import re
@@ -24,6 +24,10 @@ MODEL_NAME = "gemma3:12b"
 MAX_REASONING_TURNS = 5
 MAX_CONTEXT_CHARS = 12000
 MAX_GLOBAL_SEARCH_RESULTS = 10
+# --- START OF MODIFICATION 1 ---
+# Base URL for your Redleaf instance. Change if you run it on a different host or port.
+REDLEAF_BASE_URL = "http://127.0.0.1:5000"
+# --- END OF MODIFICATION 1 ---
 
 # --- Style class ---
 class Style:
@@ -36,7 +40,7 @@ class Style:
     CYAN = '\033[96m'
     END = '\033[0m'
 
-# --- AI Tools & Helpers (No changes in this section) ---
+# --- AI Tools & Helpers ---
 def find_documents(query: Union[str, int]) -> str:
     db = get_db()
     results = []
@@ -116,6 +120,8 @@ def _internal_cross_doc_search(query: str, limit: int = MAX_GLOBAL_SEARCH_RESULT
     sanitized = query.replace('"', '""'); fts_query = f'"{sanitized}"'
     sql = "SELECT ci.doc_id, ci.page_number FROM content_index ci WHERE ci.content_index MATCH ? ORDER BY rank LIMIT ?"
     return [dict(r) for r in db.execute(sql, [fts_query, limit]).fetchall()]
+
+# --- START OF MODIFICATION 2 ---
 def read_specific_pages(sources: List[Dict[str, int]]) -> str:
     db = get_db()
     if not sources: return "No sources were provided to read."
@@ -127,10 +133,12 @@ def read_specific_pages(sources: List[Dict[str, int]]) -> str:
         info = doc_map.get(src['doc_id'])
         if not info: context += f"[ERROR] Could not find doc ID {src['doc_id']}.\n\n"; continue
         text = extract_text_for_copying(DOCUMENTS_DIR/info['relative_path'], info['file_type'], start_page=src['page_number'], end_page=src['page_number'])
-        entry = f"--- CONTEXT from Document #{src['doc_id']} ({info['relative_path']}), Page {src['page_number']} ---\n{text}\n\n"
+        doc_url = f"{REDLEAF_BASE_URL}/document/{src['doc_id']}"
+        entry = f"--- CONTEXT from Document #{src['doc_id']} ({info['relative_path']}) URL: {doc_url}, Page {src['page_number']} ---\n{text}\n\n"
         if len(context) + len(entry) > MAX_CONTEXT_CHARS: context += "[INFO] Context limit reached.\n"; break
         context += entry
     return context
+# --- END OF MODIFICATION 2 ---
 
 AVAILABLE_TOOLS = { "find_documents": find_documents, "search_document_content": search_document_content, "get_page_content": get_page_content, "find_most_mentioned_entities": find_most_mentioned_entities, "summarize_document": summarize_document, "read_specific_pages": read_specific_pages, }
 ROUTER_PROMPT = """You are a tool-routing assistant. Your only job is to analyze a user's request and choose a single tool to use from the list below. The user may use a special `search:` command which is handled by the system; you will only be activated for other questions. Respond with ONLY a single JSON object for the tool call.
@@ -150,6 +158,8 @@ The user is working with Document ID {doc_id}: '{doc_path}'. Pages already seen:
 - `find_most_mentioned_entities(doc_id: int, entity_label: str = None, limit: int = 5)`
 - `search_document_content(doc_id: int, search_term: str, exclude_pages: list[int] = None)`
 - `read_specific_pages(sources: list[dict])`"""
+
+# --- START OF MODIFICATION 3 ---
 WRITER_PROMPT = """You are a factual reporting agent. Your purpose is to synthesize a helpful answer to the user's instruction using ONLY the provided "Tool Output / Context".
 
 Your response MUST follow this two-part structure precisely:
@@ -159,19 +169,20 @@ Your response MUST follow this two-part structure precisely:
         - If context is from `--- CONTEXT from Page XX ---`, cite with `[p. XX]`.
         - If context is from `--- CONTEXT from Document #XX (...), Page YY ---`, cite with the short format `[Doc. XX/p. YY]`.
 2.  **Bibliography:** After the summary, add a separator (`---`), a heading `Sources Cited:`, and then list every unique document you cited.
-    - For each document, provide its ID and full filename.
-    - Format: `[Doc. XX]: filename.pdf`
+    - For each document, provide its ID, full filename, and the URL provided in the context.
+    - Format: `[Doc. XX]: filename.pdf (URL)`
 
 **Example Response Structure:**
 This is a summary of the findings based on the provided text [Doc. 12/p. 1]. The text also mentions another point here [Doc. 34/p. 5].
 
 ---
 Sources Cited:
-[Doc. 12]: path/to/first_document.pdf
-[Doc. 34]: another/path/report.txt
+[Doc. 12]: path/to/first_document.pdf (http://127.0.0.1:5000/document/12)
+[Doc. 34]: another/path/report.txt (http://127.0.0.1:5000/document/34)
 
 **CRITICAL:** Do NOT add any information not present in the context. If the context is empty or irrelevant, your ONLY response is: "The provided text excerpts do not contain information to answer that question."
 """
+# --- END OF MODIFICATION 3 ---
 
 def get_assistant_response(messages: List[Dict], use_json: bool = False) -> str:
     try:
@@ -179,7 +190,6 @@ def get_assistant_response(messages: List[Dict], use_json: bool = False) -> str:
         return response['message']['content']
     except Exception as e: return f"Error contacting Ollama: {e}"
 
-# --- START OF THE FIX ---
 def print_help():
     print(f"\n{Style.BOLD}Redleaf AI Assistant Commands:{Style.END}")
     print(f"  {Style.GREEN}find [query]{Style.END}            - Find documents by path without loading them.")
@@ -192,7 +202,6 @@ def print_help():
     print(f"  {Style.GREEN}/help{Style.END}               - Show this help message.")
     print(f"  {Style.GREEN}/clear{Style.END}              - Unload doc and return to the global 'All Docs' view.")
     print(f"  {Style.GREEN}/exit{Style.END}               - Exit the assistant.")
-# --- END OF THE FIX ---
 
 def handle_local_command(db, user_input: str) -> Tuple[bool, Union[Dict, None], Tuple[str, str]]:
     search_match = re.search(r'^search:\s*(.+)', user_input, re.IGNORECASE)
@@ -360,11 +369,15 @@ def main():
                 print(f"{Style.CYAN}[Thinking... Generating final answer]{Style.END}")
                 final_context_for_writer = tool_output_raw
                 if active_doc:
+                    # --- START OF MODIFICATION 4 ---
+                    doc_url = f"{REDLEAF_BASE_URL}/document/{active_doc['id']}"
                     doc_info_header = (
                         f"[Active Document Information]\n"
                         f"[Doc. {active_doc['id']}]: {active_doc['relative_path']}\n"
+                        f"URL: {doc_url}\n"
                         f"---\n\n"
                     )
+                    # --- END OF MODIFICATION 4 ---
                     final_context_for_writer = doc_info_header + tool_output_raw
                 
                 writer_messages = [
