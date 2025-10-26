@@ -1,4 +1,4 @@
-# --- File: assistant_cli.py (Final Fix for Conversational Memory) ---
+# --- File: assistant_cli.py (With Final Help Text Improvements) ---
 import sys
 import getpass
 import re
@@ -179,18 +179,21 @@ def get_assistant_response(messages: List[Dict], use_json: bool = False) -> str:
         return response['message']['content']
     except Exception as e: return f"Error contacting Ollama: {e}"
 
+# --- START OF THE FIX ---
 def print_help():
     print(f"\n{Style.BOLD}Redleaf AI Assistant Commands:{Style.END}")
+    print(f"  {Style.GREEN}find [query]{Style.END}            - Find documents by path without loading them.")
+    print(f"  {Style.GREEN}load [doc_id|path]{Style.END}   - Load a specific document for focused questions.")
     print(f"  {Style.GREEN}search: [query]{Style.END} - Search all docs and summarize top results.")
     print(f"  {Style.GREEN}search: [query] + [instruction]{Style.END} - Search and follow a custom instruction.")
     print(f"    ↳ e.g., `search: Sam Smith + list all key figures mentioned`")
     print(f"  {Style.GREEN}search: [query] + for each + [instruction]{Style.END} - Run instruction on each found doc.")
     print(f"    ↳ e.g., `search: meeting minutes + for each + summarize the key decisions`")
     print(f"  {Style.GREEN}/help{Style.END}               - Show this help message.")
-    print(f"  {Style.GREEN}/clear{Style.END}              - Unload the current document.")
+    print(f"  {Style.GREEN}/clear{Style.END}              - Unload doc and return to the global 'All Docs' view.")
     print(f"  {Style.GREEN}/exit{Style.END}               - Exit the assistant.")
+# --- END OF THE FIX ---
 
-# --- START OF MODIFICATION: Final Fix for Conversational Memory ---
 def handle_local_command(db, user_input: str) -> Tuple[bool, Union[Dict, None], Tuple[str, str]]:
     search_match = re.search(r'^search:\s*(.+)', user_input, re.IGNORECASE)
     find_match = re.search(r'^(?:find|search for)\s+(.+)', user_input, re.IGNORECASE)
@@ -205,13 +208,10 @@ def handle_local_command(db, user_input: str) -> Tuple[bool, Union[Dict, None], 
         sources = _internal_cross_doc_search(search_query)
         if not sources:
             print(f"{Style.YELLOW}[INFO] No documents mentioned '{search_query}'.{Style.END}")
-            # Even on failure, clear the memory.
             return True, None, ("", "")
 
-        # Always read the full context from all found sources for potential follow-up questions.
         combined_context = read_specific_pages(sources=sources)
         
-        # Check for the "for each" command structure after finding sources.
         if len(parts) == 3 and parts[1].lower() == 'for each':
             _, _, for_each_instruction = parts
             
@@ -222,7 +222,6 @@ def handle_local_command(db, user_input: str) -> Tuple[bool, Union[Dict, None], 
             for doc_id, page_numbers in grouped_sources.items():
                 doc_info = db.execute("SELECT relative_path FROM documents WHERE id = ?", (doc_id,)).fetchone()
                 print(f"\n{Style.BOLD}--- Analyzing Document #{doc_id} ({doc_info['relative_path']}) ---{Style.END}")
-                # Use a specific context for each iteration of the loop.
                 loop_context = read_specific_pages(sources=[{'doc_id': doc_id, 'page_number': p} for p in page_numbers])
                 
                 print(f"{Style.CYAN}[Thinking... Fulfilling: '{for_each_instruction}']{Style.END}")
@@ -231,10 +230,13 @@ def handle_local_command(db, user_input: str) -> Tuple[bool, Union[Dict, None], 
                 print(f"\n{Style.GREEN}{final_answer}{Style.END}")
 
             print(f"\n{Style.BOLD}--- Batch processing complete. ---{Style.END}\n")
-            # After the loop, return the COMBINED context for memory.
+            
+            print(f"{Style.MAGENTA}{Style.BOLD}[Session Active] The combined content from all {len(grouped_sources)} documents is now in memory.{Style.END}")
+            print(f"{Style.MAGENTA}You can now ask follow-up questions about the entire search result set.{Style.END}")
+            print(f"{Style.MAGENTA}e.g., 'Compare the findings in Doc X and Doc Y' or 'which document mentioned financials?'.{Style.END}\n")
+
             return True, None, (search_query, combined_context)
         
-        # Handle standard search (single or custom instruction).
         else:
             writer_instruction = parts[1] if len(parts) > 1 else f"Give a high-level abstract summary about '{search_query}'."
             
@@ -242,7 +244,6 @@ def handle_local_command(db, user_input: str) -> Tuple[bool, Union[Dict, None], 
             messages = [{"role": "system", "content": WRITER_PROMPT}, {"role": "user", "content": writer_instruction}, {"role": "assistant", "content": f"Context:\n\n{combined_context}"}]
             final_answer = get_assistant_response(messages)
             print(f"\n{Style.GREEN}{final_answer}{Style.END}\n")
-            # Return the combined context for memory.
             return True, None, (search_query, combined_context)
 
     if find_match:
@@ -303,7 +304,8 @@ def main():
             
             if search_info and search_info[0]:
                 last_global_query, last_global_context = search_info
-                print(f"{Style.CYAN}[Memory] Stored context from search for '{last_global_query}'. Ask a follow-up question directly.{Style.END}")
+                if "for each" not in user_input:
+                     print(f"{Style.CYAN}[Memory] Stored context from search for '{last_global_query}'. Ask a follow-up question directly.{Style.END}")
             elif was_handled:
                  last_global_context = ""; last_global_query = ""
 
@@ -345,7 +347,7 @@ def main():
                 if isinstance(tool_call_data, dict) and "tool_call" in tool_call_data: tool_call_data = tool_call_data["tool_call"]
                 tool_name, tool_args = None, None
                 if isinstance(tool_call_data, dict):
-                    for k in ["tool_name", "name"]:
+                    for k in ["tool_name", "name", "tool"]:
                         if k in tool_call_data: tool_name = tool_call_data.pop(k); break
                     tool_args = tool_call_data.get("arguments", tool_call_data)
                 if tool_name not in AVAILABLE_TOOLS or not isinstance(tool_args, dict): raise ValueError("Parsed JSON is not a valid tool call.")
@@ -356,14 +358,26 @@ def main():
                 print(f"{Style.MAGENTA}[Tool Output Received]{Style.END}")
                 
                 print(f"{Style.CYAN}[Thinking... Generating final answer]{Style.END}")
-                writer_messages = [{"role": "system", "content": WRITER_PROMPT}, {"role": "user", "content": f"My question was: '{user_input}'"}, {"role": "assistant", "content": f"Context:\n\n{tool_output_raw}"}]
+                final_context_for_writer = tool_output_raw
+                if active_doc:
+                    doc_info_header = (
+                        f"[Active Document Information]\n"
+                        f"[Doc. {active_doc['id']}]: {active_doc['relative_path']}\n"
+                        f"---\n\n"
+                    )
+                    final_context_for_writer = doc_info_header + tool_output_raw
+                
+                writer_messages = [
+                    {"role": "system", "content": WRITER_PROMPT},
+                    {"role": "user", "content": f"My question was: '{user_input}'"},
+                    {"role": "assistant", "content": f"Context:\n\n{final_context_for_writer}"}
+                ]
                 final_answer = get_assistant_response(writer_messages)
                 print(f"\n{Style.GREEN}{final_answer}{Style.END}\n")
                 conversation_history.extend([{"role": "user", "content": user_input}, {"role": "assistant", "content": final_answer}])
 
             except (json.JSONDecodeError, TypeError, ValueError, KeyError) as e:
                 print(f"{Style.RED}[Error] Could not execute AI action. Raw response printed above.{Style.END}\nDetails: {e}")
-# --- END OF MODIFICATION ---
 
 if __name__ == "__main__":
     main()
