@@ -1,4 +1,4 @@
-# --- File: assistant_cli.py (With Final Prompt and Citation Logic) ---
+# --- File: assistant_cli.py (Final Fix for Conversational Memory) ---
 import sys
 import getpass
 import re
@@ -6,6 +6,7 @@ import json
 import ollama
 from pathlib import Path
 from typing import Dict, Any, Union, List, Tuple
+from collections import defaultdict
 
 # --- Add project to Python path to access its modules ---
 project_dir = Path(__file__).resolve().parent
@@ -35,9 +36,8 @@ class Style:
     CYAN = '\033[96m'
     END = '\033[0m'
 
-# --- AI Tools & Helpers ---
+# --- AI Tools & Helpers (No changes in this section) ---
 def find_documents(query: Union[str, int]) -> str:
-    """Finds documents by either their ID number or a query string matching their filename."""
     db = get_db()
     results = []
     try:
@@ -48,9 +48,7 @@ def find_documents(query: Union[str, int]) -> str:
         results = db.execute("SELECT id, relative_path FROM documents WHERE relative_path LIKE ?", (f"%{query}%",)).fetchall()
     if not results: return f"No documents found matching '{query}'."
     return "\n".join([f"ID: {doc['id']}, Path: {doc['relative_path']}" for doc in results])
-
 def search_document_content(doc_id: int, search_term: str, exclude_pages: List[int] = None) -> str:
-    """Searches for a specific term within a single document's content."""
     db = get_db()
     doc = db.execute("SELECT relative_path, file_type FROM documents WHERE id = ?", (doc_id,)).fetchone()
     if not doc: return f"Error: No document found with ID {doc_id}."
@@ -72,9 +70,7 @@ def search_document_content(doc_id: int, search_term: str, exclude_pages: List[i
             context_block += "[INFO] Context limit reached.\n"; break
         context_block += page_entry
     return context_block
-
 def get_page_content(doc_id: int, page_number: int) -> str:
-    """Retrieves the full text content of a specific page number from a document."""
     db = get_db()
     doc = db.execute("SELECT relative_path, file_type, page_count FROM documents WHERE id = ?", (doc_id,)).fetchone()
     if not doc: return f"Error: No document found with ID {doc_id}."
@@ -82,9 +78,7 @@ def get_page_content(doc_id: int, page_number: int) -> str:
     page_text = extract_text_for_copying(DOCUMENTS_DIR / doc['relative_path'], doc['file_type'], start_page=page_number, end_page=page_number)
     if not page_text.strip(): return f"Page {page_number} was found but contains no text."
     return f"--- CONTEXT from Page {page_number} ---\n{page_text}\n\n"
-
 def find_most_mentioned_entities(doc_id: int, entity_label: str = None, limit: int = 5) -> str:
-    """Finds the most frequently mentioned entities in a single document."""
     db = get_db()
     sql = "SELECT e.text, e.label, COUNT(ea.entity_id) as mention_count FROM entity_appearances ea JOIN entities e ON ea.entity_id = e.id WHERE ea.doc_id = ?"
     params = [doc_id]
@@ -96,9 +90,7 @@ def find_most_mentioned_entities(doc_id: int, entity_label: str = None, limit: i
     results = db.execute(sql, params).fetchall()
     if not results: return f"No entities of type '{entity_label}' found." if entity_label else f"No entities found."
     return "Top mentioned entities:\n" + "\n".join([f"- {r['text']} ({r['label']}): {r['mention_count']} mentions" for r in results])
-
 def summarize_document(doc_id: int, topic: str = None) -> str:
-    """Retrieves relevant parts of a single document for a summary."""
     db = get_db()
     doc = db.execute("SELECT relative_path, file_type, page_count FROM documents WHERE id = ?", (doc_id,)).fetchone()
     if not doc: return f"Error: No document found with ID {doc_id}."
@@ -119,16 +111,12 @@ def summarize_document(doc_id: int, topic: str = None) -> str:
         if len(context) + len(entry) > MAX_CONTEXT_CHARS: break
         context += entry
     return context
-
 def _internal_cross_doc_search(query: str, limit: int = MAX_GLOBAL_SEARCH_RESULTS) -> List[Dict]:
-    """Internal helper to find the most relevant pages across all documents."""
     db = get_db()
     sanitized = query.replace('"', '""'); fts_query = f'"{sanitized}"'
     sql = "SELECT ci.doc_id, ci.page_number FROM content_index ci WHERE ci.content_index MATCH ? ORDER BY rank LIMIT ?"
     return [dict(r) for r in db.execute(sql, [fts_query, limit]).fetchall()]
-
 def read_specific_pages(sources: List[Dict[str, int]]) -> str:
-    """Reads and returns the text content from a specific list of document/page sources."""
     db = get_db()
     if not sources: return "No sources were provided to read."
     doc_ids = list(set(s['doc_id'] for s in sources))
@@ -145,8 +133,6 @@ def read_specific_pages(sources: List[Dict[str, int]]) -> str:
     return context
 
 AVAILABLE_TOOLS = { "find_documents": find_documents, "search_document_content": search_document_content, "get_page_content": get_page_content, "find_most_mentioned_entities": find_most_mentioned_entities, "summarize_document": summarize_document, "read_specific_pages": read_specific_pages, }
-
-# --- System Prompts (Updated) ---
 ROUTER_PROMPT = """You are a tool-routing assistant. Your only job is to analyze a user's request and choose a single tool to use from the list below. The user may use a special `search:` command which is handled by the system; you will only be activated for other questions. Respond with ONLY a single JSON object for the tool call.
 ## Tool Selection Rules (Requires an Active Document):
 - To **find or list** documents, use `find_documents`.
@@ -164,7 +150,6 @@ The user is working with Document ID {doc_id}: '{doc_path}'. Pages already seen:
 - `find_most_mentioned_entities(doc_id: int, entity_label: str = None, limit: int = 5)`
 - `search_document_content(doc_id: int, search_term: str, exclude_pages: list[int] = None)`
 - `read_specific_pages(sources: list[dict])`"""
-
 WRITER_PROMPT = """You are a factual reporting agent. Your purpose is to synthesize a helpful answer to the user's instruction using ONLY the provided "Tool Output / Context".
 
 Your response MUST follow this two-part structure precisely:
@@ -188,7 +173,6 @@ Sources Cited:
 **CRITICAL:** Do NOT add any information not present in the context. If the context is empty or irrelevant, your ONLY response is: "The provided text excerpts do not contain information to answer that question."
 """
 
-# --- Main Script Logic (Updated) ---
 def get_assistant_response(messages: List[Dict], use_json: bool = False) -> str:
     try:
         response = ollama.chat(model=MODEL_NAME, messages=messages, format="json" if use_json else "")
@@ -200,55 +184,83 @@ def print_help():
     print(f"  {Style.GREEN}search: [query]{Style.END} - Search all docs and summarize top results.")
     print(f"  {Style.GREEN}search: [query] + [instruction]{Style.END} - Search and follow a custom instruction.")
     print(f"    ↳ e.g., `search: Sam Smith + list all key figures mentioned`")
+    print(f"  {Style.GREEN}search: [query] + for each + [instruction]{Style.END} - Run instruction on each found doc.")
+    print(f"    ↳ e.g., `search: meeting minutes + for each + summarize the key decisions`")
     print(f"  {Style.GREEN}/help{Style.END}               - Show this help message.")
     print(f"  {Style.GREEN}/clear{Style.END}              - Unload the current document.")
     print(f"  {Style.GREEN}/exit{Style.END}               - Exit the assistant.")
 
-def handle_local_command(db, user_input: str) -> Tuple[bool, Union[Dict, None], bool]:
+# --- START OF MODIFICATION: Final Fix for Conversational Memory ---
+def handle_local_command(db, user_input: str) -> Tuple[bool, Union[Dict, None], Tuple[str, str]]:
     search_match = re.search(r'^search:\s*(.+)', user_input, re.IGNORECASE)
     find_match = re.search(r'^(?:find|search for)\s+(.+)', user_input, re.IGNORECASE)
     load_match = re.search(r'^(?:load|open|get)\s+(?:doc|document)?\s*(?:#|id)?\s*(\S+)', user_input, re.IGNORECASE)
 
     if search_match:
         full_query = search_match.group(1).strip()
-        if ' + ' in full_query:
-            parts = full_query.split(' + ', 1)
-            search_query, writer_instruction = parts[0].strip(), parts[1].strip()
-        else:
-            search_query, writer_instruction = full_query, f"Give a high-level abstract summary about '{full_query}'."
+        parts = [p.strip() for p in full_query.split(' + ')]
+        search_query = parts[0]
+        
         print(f"{Style.CYAN}[INFO] Searching all docs for: '{search_query}'{Style.END}")
         sources = _internal_cross_doc_search(search_query)
         if not sources:
             print(f"{Style.YELLOW}[INFO] No documents mentioned '{search_query}'.{Style.END}")
-            return True, None, True
-        print(f"{Style.CYAN}[INFO] Found {len(sources)} relevant pages. Reading...{Style.END}")
-        context = read_specific_pages(sources=sources)
-        print(f"{Style.CYAN}[Thinking... Fulfilling: '{writer_instruction}']{Style.END}")
-        messages = [{"role": "system", "content": WRITER_PROMPT}, {"role": "user", "content": writer_instruction}, {"role": "assistant", "content": f"Context:\n\n{context}"}]
-        final_answer = get_assistant_response(messages)
-        print(f"\n{Style.GREEN}{final_answer}{Style.END}\n")
-        return True, None, True
+            # Even on failure, clear the memory.
+            return True, None, ("", "")
+
+        # Always read the full context from all found sources for potential follow-up questions.
+        combined_context = read_specific_pages(sources=sources)
+        
+        # Check for the "for each" command structure after finding sources.
+        if len(parts) == 3 and parts[1].lower() == 'for each':
+            _, _, for_each_instruction = parts
+            
+            grouped_sources = defaultdict(list)
+            for source in sources: grouped_sources[source['doc_id']].append(source['page_number'])
+
+            print(f"{Style.CYAN}[INFO] Found results in {len(grouped_sources)} documents. Processing each...{Style.END}")
+            for doc_id, page_numbers in grouped_sources.items():
+                doc_info = db.execute("SELECT relative_path FROM documents WHERE id = ?", (doc_id,)).fetchone()
+                print(f"\n{Style.BOLD}--- Analyzing Document #{doc_id} ({doc_info['relative_path']}) ---{Style.END}")
+                # Use a specific context for each iteration of the loop.
+                loop_context = read_specific_pages(sources=[{'doc_id': doc_id, 'page_number': p} for p in page_numbers])
+                
+                print(f"{Style.CYAN}[Thinking... Fulfilling: '{for_each_instruction}']{Style.END}")
+                messages = [{"role": "system", "content": WRITER_PROMPT}, {"role": "user", "content": for_each_instruction}, {"role": "assistant", "content": f"Context:\n\n{loop_context}"}]
+                final_answer = get_assistant_response(messages)
+                print(f"\n{Style.GREEN}{final_answer}{Style.END}")
+
+            print(f"\n{Style.BOLD}--- Batch processing complete. ---{Style.END}\n")
+            # After the loop, return the COMBINED context for memory.
+            return True, None, (search_query, combined_context)
+        
+        # Handle standard search (single or custom instruction).
+        else:
+            writer_instruction = parts[1] if len(parts) > 1 else f"Give a high-level abstract summary about '{search_query}'."
+            
+            print(f"{Style.CYAN}[Thinking... Fulfilling: '{writer_instruction}']{Style.END}")
+            messages = [{"role": "system", "content": WRITER_PROMPT}, {"role": "user", "content": writer_instruction}, {"role": "assistant", "content": f"Context:\n\n{combined_context}"}]
+            final_answer = get_assistant_response(messages)
+            print(f"\n{Style.GREEN}{final_answer}{Style.END}\n")
+            # Return the combined context for memory.
+            return True, None, (search_query, combined_context)
 
     if find_match:
         query = find_match.group(1).strip()
         results = db.execute("SELECT id, relative_path FROM documents WHERE relative_path LIKE ?", (f"%{query}%",)).fetchall()
         if not results: print(f"{Style.YELLOW}[INFO] No documents found matching '{query}'.{Style.END}")
-        else:
-            print(f"{Style.GREEN}[INFO] Found {len(results)} doc(s):{Style.END}")
-            for doc in results: print(f"  {Style.BOLD}#{doc['id']}:{Style.END} {doc['relative_path']}")
-        return True, None, False
-
+        else: print(f"{Style.GREEN}[INFO] Found {len(results)} doc(s):{Style.END}"); [print(f"  {Style.BOLD}#{doc['id']}:{Style.END} {doc['relative_path']}") for doc in results]
+        return True, None, ("", "")
     if load_match:
         identifier = load_match.group(1).strip()
         doc_to_load = None
         try: doc_id = int(identifier); doc_to_load = db.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)).fetchone()
         except (ValueError, TypeError): doc_to_load = db.execute("SELECT * FROM documents WHERE relative_path LIKE ?", (f"%{identifier}%",)).fetchone()
-        if not doc_to_load: print(f"{Style.RED}[FAIL] Document '{identifier}' not found.{Style.END}"); return True, None, False
+        if not doc_to_load: print(f"{Style.RED}[FAIL] Document '{identifier}' not found.{Style.END}"); return True, None, ("", "")
         active_doc = dict(doc_to_load)
         print(f"{Style.GREEN}[OK] Loaded Doc ID {active_doc['id']}: '{active_doc['relative_path']}'{Style.END}")
-        return True, active_doc, False
-        
-    return False, None, False
+        return True, active_doc, ("", "")
+    return False, None, ("", "")
 
 def main():
     app = create_app(start_background_thread=False)
@@ -264,16 +276,13 @@ def main():
                 print(f"\n{Style.GREEN}Welcome, {user['username']}!{Style.END} Model: {Style.BLUE}{MODEL_NAME}{Style.END}"); print_help(); break
             else: print(f"{Style.RED}[FAIL] Invalid credentials.{Style.END}\n")
         
-        active_doc = None; conversation_history = []; seen_pages_for_doc = set(); last_search_term = ""
+        active_doc = None; conversation_history = []; seen_pages_for_doc = set()
+        last_global_context = ""; last_global_query = ""
         TOOLS_REQUIRING_DOC = ["search_document_content", "get_page_content", "find_most_mentioned_entities", "summarize_document"]
 
         while True:
-            # --- START: MODIFICATION - Final prompt logic ---
-            if active_doc:
-                doc_prompt = f"#{active_doc['id']}"
-            else:
-                doc_prompt = "All Docs"
-            # --- END: MODIFICATION ---
+            if active_doc: doc_prompt = f"#{active_doc['id']}"
+            else: doc_prompt = "All Docs"
                 
             try: user_input = input(f"{Style.BOLD}({doc_prompt}){Style.END} > ").strip()
             except (KeyboardInterrupt, EOFError): print("\nGoodbye!"); break
@@ -284,15 +293,37 @@ def main():
                 if command == '/exit': print("Goodbye!"); break
                 elif command == '/help': print_help()
                 elif command == '/clear':
-                    active_doc=None; conversation_history=[]; seen_pages_for_doc=set(); last_search_term=""
-                    print("[OK] Document context cleared.")
+                    active_doc=None; conversation_history=[]; seen_pages_for_doc=set()
+                    last_global_context = ""; last_global_query = ""
+                    print("[OK] Document and search context cleared.")
                 else: print(f"{Style.RED}Unknown command: {command}.{Style.END}")
                 continue
             
-            was_handled, new_doc, _ = handle_local_command(db, user_input)
+            was_handled, new_doc, search_info = handle_local_command(db, user_input)
+            
+            if search_info and search_info[0]:
+                last_global_query, last_global_context = search_info
+                print(f"{Style.CYAN}[Memory] Stored context from search for '{last_global_query}'. Ask a follow-up question directly.{Style.END}")
+            elif was_handled:
+                 last_global_context = ""; last_global_query = ""
+
             if was_handled:
                 if new_doc:
-                    active_doc = new_doc; conversation_history = []; seen_pages_for_doc = set(); last_search_term = ""
+                    active_doc = new_doc; conversation_history = []; seen_pages_for_doc = set()
+                    last_global_context = ""; last_global_query = ""
+                continue
+            
+            if not was_handled and not active_doc and last_global_context:
+                print(f"{Style.CYAN}[INFO] Answering based on the context of the last search for '{last_global_query}'.{Style.END}")
+                print(f"{Style.CYAN}[Thinking... Answering your follow-up question]{Style.END}")
+                
+                writer_messages = [
+                    {"role": "system", "content": WRITER_PROMPT},
+                    {"role": "user", "content": f"My original search was about '{last_global_query}'. Now, using the same provided text, answer this new question: '{user_input}'"},
+                    {"role": "assistant", "content": f"Context:\n\n{last_global_context}"}
+                ]
+                final_answer = get_assistant_response(writer_messages)
+                print(f"\n{Style.GREEN}{final_answer}{Style.END}\n")
                 continue
 
             if not active_doc:
@@ -302,7 +333,6 @@ def main():
             router_system_prompt = ROUTER_PROMPT.format(doc_id=active_doc['id'], doc_path=active_doc['relative_path'], seen_pages=sorted(list(seen_pages_for_doc)))
             router_messages = [{"role": "system", "content": router_system_prompt}, *conversation_history, {"role": "user", "content": user_input}]
             tool_choice_response = get_assistant_response(router_messages, use_json=True)
-            
             try:
                 try:
                     parsed_choice = json.loads(tool_choice_response)
@@ -325,11 +355,6 @@ def main():
                 tool_output_raw = AVAILABLE_TOOLS[tool_name](**tool_args)
                 print(f"{Style.MAGENTA}[Tool Output Received]{Style.END}")
                 
-                if tool_name == "find_most_mentioned_entities":
-                    match = re.search(r"^- (.+?) \([A-Z]+\):", tool_output_raw, re.MULTILINE)
-                    if match and 'no entities' not in match.group(1).lower(): last_search_term = match.group(1).strip(); print(f"{Style.CYAN}[Memory] New topic: '{last_search_term}'{Style.END}")
-                    else: last_search_term = ""
-                
                 print(f"{Style.CYAN}[Thinking... Generating final answer]{Style.END}")
                 writer_messages = [{"role": "system", "content": WRITER_PROMPT}, {"role": "user", "content": f"My question was: '{user_input}'"}, {"role": "assistant", "content": f"Context:\n\n{tool_output_raw}"}]
                 final_answer = get_assistant_response(writer_messages)
@@ -338,6 +363,7 @@ def main():
 
             except (json.JSONDecodeError, TypeError, ValueError, KeyError) as e:
                 print(f"{Style.RED}[Error] Could not execute AI action. Raw response printed above.{Style.END}\nDetails: {e}")
+# --- END OF MODIFICATION ---
 
 if __name__ == "__main__":
     main()
