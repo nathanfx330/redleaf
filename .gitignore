@@ -8,6 +8,7 @@ knowledge_base.db
 knowledge_base.db-journal
 knowledge_base.db-wal
 knowledge_base.db-shm
+.assistant_config.json
 
 # The instance folder contains the secret key and temporary user uploads.
 # We ignore specific private files within it, NOT the whole folder.

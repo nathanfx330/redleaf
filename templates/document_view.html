@@ -1,4 +1,4 @@
-<!-- File: ./templates/document_view.html (FINAL CORRECTED VERSION) -->
+<!-- File: ./templates/document_view.html -->
 {% extends 'layout.html' %}
 {% set page_layout = 'full_height' %}
 
@@ -63,7 +63,6 @@
 
     <form id="csrf-form-container" style="display: none;">{{ form.hidden_tag() }}</form>
     
-    <!-- START OF FIX: This entire block is updated -->
     <div class="document-main-header">
         <div class="document-title-and-pills">
             <h1 title="{{ doc.relative_path }}" class="document-title-heading">
@@ -113,6 +112,8 @@
                         <div class="input-group">
                             <input type="number" class="form-control form-control-small" id="page-num-single" placeholder="e.g., 1" min="1" max="{{ doc.page_count or 1 }}">
                             <button class="button button-small" id="copy-single-page-btn">Copy</button>
+                            <!-- NEW BUTTON FOR SINGLE PAGE -->
+                            <button class="button button-small" id="copy-assistant-single-page-btn" title="Copy an AI assistant command to summarize this page">AI Cmd</button>
                         </div>
                     </div>
                     <div class="dropdown-divider"></div>
@@ -125,13 +126,14 @@
                             <input type="number" class="form-control form-control-small" id="page-num-start" placeholder="Start" min="1" max="{{ doc.page_count or 1 }}">
                             <input type="number" class="form-control form-control-small" id="page-num-end" placeholder="End" min="1" max="{{ doc.page_count or 1 }}">
                             <button class="button button-small" id="copy-range-page-btn">Copy</button>
+                            <!-- NEW BUTTON FOR PAGE RANGE -->
+                            <button class="button button-small" id="copy-assistant-range-btn" title="Copy an AI assistant command to summarize this range">AI Cmd</button>
                         </div>
                     </div>
                 </div>
             </div>
         </div>
     </div>
-    <!-- END OF FIX -->
 
     <div class="workbench-layout">
         <div class="workbench-viewer">

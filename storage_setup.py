@@ -53,9 +53,7 @@ def create_unified_index(db_path):
             linked_video_path TEXT,
             linked_audio_url TEXT,
             last_audio_position REAL DEFAULT 0.0,
-            -- === START OF CHANGE ===
             audio_offset_seconds REAL DEFAULT 0.0,
-            -- === END OF CHANGE ===
             last_pdf_zoom REAL,
             last_pdf_page INTEGER
         );
@@ -234,7 +232,7 @@ def create_unified_index(db_path):
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_rel_subject ON entity_relationships (subject_entity_id);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_rel_object ON entity_relationships (object_entity_id);")
     
-    # === NEW: 6b. SRT Cue Index ===
+    # === 6b. SRT Cue Index ===
     print("Creating SRT Cue Index...")
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS srt_cues (
@@ -303,6 +301,20 @@ def create_unified_index(db_path):
             FOREIGN KEY (source_doc_id) REFERENCES documents(id) ON DELETE CASCADE
         );
     """)
+    
+    # === 9. Vector Search Index ===
+    print("Creating Vector Search Index...")
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS embedding_chunks (
+            id INTEGER PRIMARY KEY,
+            doc_id INTEGER NOT NULL,
+            page_number INTEGER NOT NULL,
+            chunk_text TEXT NOT NULL,
+            embedding BLOB NOT NULL,
+            FOREIGN KEY (doc_id) REFERENCES documents(id) ON DELETE CASCADE
+        );
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_embedding_doc_id ON embedding_chunks (doc_id);")
 
 
     conn.commit()

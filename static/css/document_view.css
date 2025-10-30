@@ -1,4 +1,4 @@
-/* --- File: static/css/document_view.css (FINAL CORRECTED VERSION) --- */
+/* --- File: static/css/document_view.css --- */
 
 /* === Main Layout === */
 .workbench-container {
@@ -9,7 +9,6 @@
     gap: 1rem;
 }
 
-/* --- START OF FIX: New styles for the flexible header --- */
 .document-main-header {
     display: flex;
     justify-content: space-between;
@@ -32,7 +31,6 @@
 .document-main-header .toolbar {
     flex-shrink: 0; /* Prevent toolbar from wrapping */
 }
-/* --- END OF FIX --- */
 
 .workbench-layout {
     flex-grow: 1;
@@ -190,7 +188,7 @@
     top: 100%;
     margin-top: 5px;
     background-color: var(--background-light);
-    min-width: 260px;
+    min-width: 360px; /* MODIFIED: Increased width for new buttons */
     box-shadow: 0 8px 16px rgba(0,0,0,0.4);
     z-index: 100;
     border-radius: var(--border-radius);
@@ -332,3 +330,25 @@
     color: var(--text-muted);
     margin-right: 0.4em;
 }
+
+/* --- START OF CSS FIX FOR DROPDOWN MENU --- */
+/* This ensures the corners of the input groups are always rounded correctly */
+.dropdown-form .input-group > * {
+    border-radius: 0; /* Reset all corners first */
+    margin-left: -1px; /* Overlap borders for a clean look */
+}
+.dropdown-form .input-group > *:first-child {
+    border-top-left-radius: var(--border-radius);
+    border-bottom-left-radius: var(--border-radius);
+    margin-left: 0;
+}
+.dropdown-form .input-group > *:last-child {
+    border-top-right-radius: var(--border-radius);
+    border-bottom-right-radius: var(--border-radius);
+}
+/* Prevent the text inputs from growing too much and squishing the buttons */
+.dropdown-form .input-group input[type="number"] {
+    flex-grow: 1;
+    min-width: 50px;
+}
+/* --- END OF CSS FIX --- */

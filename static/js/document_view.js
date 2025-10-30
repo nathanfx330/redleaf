@@ -1,4 +1,4 @@
-// --- File: static/js/document_view.js (FINAL CORRECTED VERSION) ---
+// --- File: static/js/document_view.js ---
 
 document.addEventListener('DOMContentLoaded', () => {
     // === GLOBAL ELEMENT SELECTORS ===
@@ -633,6 +633,11 @@ document.addEventListener('DOMContentLoaded', () => {
         const pageNumSingleInput = document.getElementById('page-num-single');
         const pageNumStartInput = document.getElementById('page-num-start');
         const pageNumEndInput = document.getElementById('page-num-end');
+        
+        // NEW: Get the assistant command buttons
+        const copyAssistantSingleBtn = document.getElementById('copy-assistant-single-page-btn');
+        const copyAssistantRangeBtn = document.getElementById('copy-assistant-range-btn');
+
         const fetchAndCopyText = async (buttonElement, startPage = null, endPage = null) => {
             const originalText = buttonElement.textContent;
             buttonElement.textContent = 'Copying...'; buttonElement.disabled = true;
@@ -669,18 +674,68 @@ document.addEventListener('DOMContentLoaded', () => {
                 }, 2000);
             }
         };
+        
+        // NEW: Reusable function to copy the assistant command
+        const copyAssistantCommand = (buttonElement, pageString) => {
+            const originalText = buttonElement.textContent;
+            const commandString = `id:${docId} + page:${pageString} + summarize`;
+
+            buttonElement.textContent = 'Copying...';
+            buttonElement.disabled = true;
+
+            navigator.clipboard.writeText(commandString).then(() => {
+                buttonElement.textContent = 'Copied!';
+            }).catch(err => {
+                console.error('Failed to copy command:', err);
+                alert('Could not copy the command. See console for details.');
+                buttonElement.textContent = 'Error';
+            }).finally(() => {
+                setTimeout(() => {
+                    buttonElement.textContent = originalText;
+                    buttonElement.disabled = false;
+                    copyTextMenu.classList.remove('show');
+                }, 2000);
+            });
+        };
+
         copyTextBtn.addEventListener('click', (e) => { e.stopPropagation(); copyTextMenu.classList.toggle('show'); });
         document.addEventListener('click', (e) => { if (!copyTextMenu.contains(e.target) && !copyTextBtn.contains(e.target)) copyTextMenu.classList.remove('show'); });
+        
         copyAllBtn.addEventListener('click', (e) => { e.preventDefault(); fetchAndCopyText(copyAllBtn); });
+        
         copySinglePageBtn.addEventListener('click', (e) => {
-            e.preventDefault(); const pageNum = parseInt(pageNumSingleInput.value, 10);
+            e.preventDefault();
+            const pageNum = parseInt(pageNumSingleInput.value, 10);
             if (isNaN(pageNum) || pageNum < 1 || pageNum > docPageCount) { alert(`Please enter a valid page number between 1 and ${docPageCount}.`); return; }
             fetchAndCopyText(copySinglePageBtn, pageNum);
         });
+        
         copyRangeBtn.addEventListener('click', (e) => {
-            e.preventDefault(); const startPage = parseInt(pageNumStartInput.value, 10); const endPage = parseInt(pageNumEndInput.value, 10);
+            e.preventDefault();
+            const startPage = parseInt(pageNumStartInput.value, 10);
+            const endPage = parseInt(pageNumEndInput.value, 10);
             if (isNaN(startPage) || isNaN(endPage) || startPage < 1 || endPage > docPageCount || endPage < startPage) { alert(`Please enter a valid page range between 1 and ${docPageCount}.`); return; }
             fetchAndCopyText(copyRangeBtn, startPage, endPage);
         });
+
+        // NEW: Add event listeners for the new buttons
+        if (copyAssistantSingleBtn) {
+            copyAssistantSingleBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                const pageNum = parseInt(pageNumSingleInput.value, 10);
+                if (isNaN(pageNum) || pageNum < 1 || pageNum > docPageCount) { alert(`Please enter a valid page number between 1 and ${docPageCount}.`); return; }
+                copyAssistantCommand(copyAssistantSingleBtn, `${pageNum}`);
+            });
+        }
+
+        if (copyAssistantRangeBtn) {
+            copyAssistantRangeBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                const startPage = parseInt(pageNumStartInput.value, 10);
+                const endPage = parseInt(pageNumEndInput.value, 10);
+                if (isNaN(startPage) || isNaN(endPage) || startPage < 1 || endPage > docPageCount || endPage < startPage) { alert(`Please enter a valid page range between 1 and ${docPageCount}.`); return; }
+                copyAssistantCommand(copyAssistantRangeBtn, `${startPage}-${endPage}`);
+            });
+        }
     }
 });

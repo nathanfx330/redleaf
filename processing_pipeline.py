@@ -7,16 +7,21 @@ import datetime
 import re
 from pathlib import Path
 from itertools import combinations
-from typing import Union
+from typing import Union, List
 
 import fitz
 import spacy
 from bs4 import BeautifulSoup
+import ollama
+import numpy as np
 
 # --- Configuration ---
+from project.config import EMBEDDING_MODEL
 DATABASE_FILE = "knowledge_base.db"
 DOCUMENTS_DIR = Path("./documents").resolve()
 SPACY_MODEL = "en_core_web_lg"
+CHUNK_SIZE = 400
+CHUNK_OVERLAP = 50
 
 NLP_MODEL = None
 
@@ -49,16 +54,11 @@ def _paginate_text(text, words_per_page=300):
     for i in range(0, len(words), words_per_page):
         page_number = (i // words_per_page) + 1
         page_content_map[page_number] = " ".join(words[i:i + words_per_page])
-    # Handle empty text case
     if not page_content_map:
         page_content_map[1] = ""
     return page_content_map
 
 def extract_text_for_copying(doc_path: Path, file_type: str, start_page=None, end_page=None) -> str:
-    """
-    Extracts text for copying. For PDFs, it reads the file. For TXT, HTML, and SRT files, it reads
-    the paginated content from the database for consistency with the viewer.
-    """
     if file_type in ['TXT', 'HTML', 'SRT']:
         conn = None
         try:
@@ -69,7 +69,6 @@ def extract_text_for_copying(doc_path: Path, file_type: str, start_page=None, en
                 return f"Error: Document not found in database for path {rel_path_str}"
             
             doc_id = doc_id_row['id']
-            # For HTML/SRT, we now ignore page numbers as it's all one block
             if file_type in ['HTML', 'SRT']:
                 start_page = None
                 end_page = None
@@ -122,96 +121,51 @@ def extract_text_for_copying(doc_path: Path, file_type: str, start_page=None, en
         return f"Cannot extract text from unsupported file type: {file_type}"
 
 def _extract_text_from_pipermail(html_content: str) -> str:
-    """Extracts content from a Pipermail HTML page with vertical separation."""
     soup = BeautifulSoup(html_content, 'lxml')
-    
-    title = soup.find('h1')
-    subject = soup.find('b')
-    author = soup.find('i')
-    body = soup.find('pre')
-
+    title, subject, author, body = soup.find('h1'), soup.find('b'), soup.find('i'), soup.find('pre')
     parts = []
-    if title:
-        parts.append(f"List: {title.get_text(strip=True)}")
-    if subject:
-        parts.append(f"Subject: {subject.get_text(strip=True)}")
-    if author:
-        parts.append(f"Author: {author.get_text(strip=True)}")
-    if body:
-        parts.append(f"--- Message Body ---\n{body.get_text()}") # Keep single newline inside body
-
+    if title: parts.append(f"List: {title.get_text(strip=True)}")
+    if subject: parts.append(f"Subject: {subject.get_text(strip=True)}")
+    if author: parts.append(f"Author: {author.get_text(strip=True)}")
+    if body: parts.append(f"--- Message Body ---\n{body.get_text()}")
     return "\n\n".join(parts)
 
 def _extract_text_with_block_separation(html_content: str) -> str:
-    """
-    Extracts text from generic HTML, preserving block-level separation with double newlines.
-    """
     soup = BeautifulSoup(html_content, 'lxml')
-    
     for script_or_style in soup(["script", "style"]):
         script_or_style.decompose()
-
-    block_tags = ['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'blockquote', 'pre', 'tr', 'div']
-    
     text_blocks = []
     title_tag = soup.find('title')
     if title_tag and title_tag.get_text(strip=True):
         text_blocks.append(f"Title: {title_tag.get_text(strip=True)}")
-
-    for tag in soup.find_all(block_tags):
+    for tag in soup.find_all(['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'blockquote', 'pre', 'tr', 'div']):
         text = tag.get_text(separator=' ', strip=True)
         if text:
             text_blocks.append(text)
-            
     return "\n\n".join(text_blocks)
 
 def _extract_text_from_srt(srt_content: str) -> str:
-    """
-    Parses the content of an SRT file, extracting only the dialogue.
-    - Ignores sequence numbers and timestamps.
-    - Joins multi-line subtitles.
-    - Returns a single string with each subtitle on a new line.
-    """
     lines = []
-    # Split the file into subtitle blocks, which are separated by double newlines.
     for block in srt_content.strip().split('\n\n'):
         parts = block.strip().split('\n')
         if len(parts) >= 3:
-            # The first line is the sequence number, the second is the timestamp.
-            # All subsequent lines are the dialogue.
-            dialogue = " ".join(parts[2:])
-            lines.append(dialogue)
+            lines.append(" ".join(parts[2:]))
     return "\n".join(lines)
 
 def _parse_srt_for_db(srt_content: str) -> list[dict]:
-    """Parses SRT content into a list of dicts for database insertion."""
     cues = []
-    # This regex is robust against different newline formats and optional formatting tags
-    cue_pattern = re.compile(
-        r'(\d+)\s*(\d{2}:\d{2}:\d{2},\d{3}\s*-->\s*\d{2}:\d{2}:\d{2},\d{3})\s*(.*?)\n\n',
-        re.DOTALL
-    )
-    for match in cue_pattern.finditer(srt_content + '\n\n'): # Append newlines to catch last cue
+    cue_pattern = re.compile(r'(\d+)\s*(\d{2}:\d{2}:\d{2},\d{3}\s*-->\s*\d{2}:\d{2}:\d{2},\d{3})\s*(.*?)\n\n', re.DOTALL)
+    for match in cue_pattern.finditer(srt_content + '\n\n'):
         sequence, timestamp, dialogue_block = match.groups()
-        # Clean the dialogue: remove HTML-like tags and join lines
         clean_dialogue = re.sub(r'<[^>]+>', '', dialogue_block).replace('\n', ' ').strip()
-        cues.append({
-            'sequence': int(sequence),
-            'timestamp': timestamp.strip(),
-            'dialogue': clean_dialogue
-        })
+        cues.append({'sequence': int(sequence), 'timestamp': timestamp.strip(), 'dialogue': clean_dialogue})
     return cues
 
 def _get_srt_duration(srt_content: str) -> Union[int, None]:
-    """Calculates the total duration in seconds from the last timestamp in an SRT file."""
-    # Find all timestamps, then focus on the last one's end time.
     timestamps = re.findall(r'\d{2}:\d{2}:\d{2},\d{3}\s*-->\s*(\d{2}:\d{2}:\d{2},\d{3})', srt_content)
-    if not timestamps:
-        return None
-    
-    last_timestamp = timestamps[-1]
+    if not timestamps: return None
     try:
-        h, m, s, ms = map(int, re.split('[:,]', last_timestamp))
+        h, m, s, ms = map(int, re.split('[:,]', timestamps[-1]))
         return h * 3600 + m * 60 + s + ms / 1000
     except (ValueError, IndexError):
         return None
@@ -221,24 +175,40 @@ def _extract_text_from_pdf_doc(doc: fitz.Document) -> dict:
     try:
         for page_num, page in enumerate(doc, 1):
             text = page.get_text("text", sort=True)
-            if text:
-                page_content_map[page_num] = text.strip()
+            if text: page_content_map[page_num] = text.strip()
     except Exception as e:
         print(f"Error extracting text from PDF: {e}")
     return page_content_map
 
+def _chunk_text(text: str, size: int, overlap: int) -> List[str]:
+    if not text: return []
+    words = text.split()
+    chunks = []
+    for i in range(0, len(words), size - overlap):
+        chunks.append(" ".join(words[i:i + size]))
+    return chunks
+
+def _generate_embeddings_for_page(page_text: str) -> list[tuple[str, bytes]]:
+    if not page_text.strip(): return []
+    chunks = _chunk_text(page_text, CHUNK_SIZE, CHUNK_OVERLAP)
+    embeddings_to_store = []
+    for chunk in chunks:
+        try:
+            response = ollama.embeddings(model=EMBEDDING_MODEL, prompt=chunk)
+            embedding_vector = response['embedding']
+            embedding_blob = np.array(embedding_vector, dtype=np.float32).tobytes()
+            embeddings_to_store.append((chunk, embedding_blob))
+        except Exception as e:
+            print(f"WORKER WARNING: Could not generate embedding for a chunk. Error: {e}")
+            continue
+    return embeddings_to_store
+
 def _extract_data_from_pages(page_content_map: dict) -> dict:
     nlp = load_spacy_model()
-    data_to_store = {
-        "entities": set(),
-        "appearances": set(),
-        "relationships": [],
-        "content": []
-    }
+    data_to_store = {"entities": set(), "appearances": set(), "relationships": [], "content": []}
     for page_num, page_text in page_content_map.items():
         data_to_store["content"].append((page_num, page_text))
-        if not page_text or len(page_text) > nlp.max_length:
-            continue
+        if not page_text or len(page_text) > nlp.max_length: continue
         doc_nlp = nlp(page_text)
         for ent in doc_nlp.ents:
             entity_tuple = (ent.text.strip(), ent.label_)
@@ -247,22 +217,20 @@ def _extract_data_from_pages(page_content_map: dict) -> dict:
                 data_to_store["appearances"].add((entity_tuple, page_num))
         for sent in doc_nlp.sents:
             unique_ents = list(dict.fromkeys(sent.ents))
-            if len(unique_ents) < 2:
-                continue
+            if len(unique_ents) < 2: continue
             for ent1, ent2 in combinations(unique_ents, 2):
-                start = min(ent1.end_char, ent2.end_char)
-                end = max(ent1.start_char, ent2.start_char)
+                start, end = min(ent1.end_char, ent2.end_char), max(ent1.start_char, ent2.start_char)
                 if end > start and (end - start) < 75:
-                    relationship_phrase = ' '.join(page_text[start:end].strip().split())
-                    if relationship_phrase:
-                        subject_tuple = (ent1.text.strip(), ent1.label_) if ent1.start_char < ent2.start_char else (ent2.text.strip(), ent2.label_)
-                        object_tuple = (ent2.text.strip(), ent2.label_) if ent1.start_char < ent2.start_char else (ent1.text.strip(), ent1.label_)
-                        if subject_tuple[0] and object_tuple[0]:
-                             data_to_store["relationships"].append((subject_tuple, object_tuple, relationship_phrase, page_num))
+                    phrase = ' '.join(page_text[start:end].strip().split())
+                    if phrase:
+                        subj = (ent1.text.strip(), ent1.label_) if ent1.start_char < ent2.start_char else (ent2.text.strip(), ent2.label_)
+                        obj = (ent2.text.strip(), ent2.label_) if ent1.start_char < ent2.start_char else (ent1.text.strip(), ent1.label_)
+                        if subj[0] and obj[0]:
+                             data_to_store["relationships"].append((subj, obj, phrase, page_num))
     return data_to_store
 
 def process_document(doc_id):
-    """Worker function using the 'collect-then-write' pattern."""
+    """Worker function using the original, stable, self-contained transaction model."""
     conn = None
     try:
         conn = get_db_conn()
@@ -279,129 +247,106 @@ def process_document(doc_id):
         full_path = DOCUMENTS_DIR / doc_info['relative_path']
         
         page_content_map, page_count, duration_seconds = {}, 0, None
-        extracted_data = {}
+        extracted_data = {"embeddings": []}
 
         if doc_info['file_type'] == 'SRT':
-            try:
-                content = full_path.read_text(encoding='utf-8', errors='ignore')
-                parsed_cues = _parse_srt_for_db(content)
-                duration_seconds = _get_srt_duration(content)
-                page_count = len(parsed_cues)
-                
-                nlp = load_spacy_model()
-                extracted_data = {"entities": set(), "appearances": set(), "relationships": [], "content": []}
-                full_dialogue_parts = []
+            content = full_path.read_text(encoding='utf-8', errors='ignore')
+            parsed_cues = _parse_srt_for_db(content)
+            duration_seconds = _get_srt_duration(content)
+            page_count = len(parsed_cues)
+            
+            nlp = load_spacy_model()
+            extracted_data.update({"entities": set(), "appearances": set(), "relationships": [], "content": [], "cues": parsed_cues})
+            
+            SRT_CHUNK_SIZE_CUES, SRT_CHUNK_OVERLAP_CUES = 20, 5
+            for i in range(0, len(parsed_cues), SRT_CHUNK_SIZE_CUES - SRT_CHUNK_OVERLAP_CUES):
+                chunk_cues = parsed_cues[i:i + SRT_CHUNK_SIZE_CUES]
+                if not chunk_cues: continue
+                chunk_dialogue = " ".join(c['dialogue'] for c in chunk_cues)
+                try:
+                    response = ollama.embeddings(model=EMBEDDING_MODEL, prompt=chunk_dialogue)
+                    embedding_blob = np.array(response['embedding'], dtype=np.float32).tobytes()
+                    extracted_data["embeddings"].append((doc_id, chunk_cues[0]['sequence'], chunk_dialogue, embedding_blob))
+                except Exception as e:
+                    print(f"WORKER WARNING: Could not generate embedding for an SRT chunk. Error: {e}")
+            
+            full_dialogue_text = " ".join(c['dialogue'] for c in parsed_cues)
+            extracted_data["content"].append((1, full_dialogue_text))
 
+            if full_dialogue_text and len(full_dialogue_text) <= nlp.max_length:
+                # This part is complex, reusing the logic from the previous correct version
+                cue_char_boundaries = []
+                current_pos = 0
                 for cue in parsed_cues:
-                    cue_text = cue['dialogue']
-                    full_dialogue_parts.append(cue_text)
-                    if not cue_text or len(cue_text) > nlp.max_length:
-                        continue
-                    
-                    doc_nlp_cue = nlp(cue_text)
-                    for ent in doc_nlp_cue.ents:
-                        entity_tuple = (ent.text.strip(), ent.label_)
-                        if entity_tuple[0]:
-                            extracted_data["entities"].add(entity_tuple)
-                            extracted_data["appearances"].add((entity_tuple, cue['sequence']))
-                
-                full_dialogue_text = " ".join(full_dialogue_parts)
-                page_content_map = {1: full_dialogue_text}
-                extracted_data["content"].append((1, full_dialogue_text))
-
-                if full_dialogue_text and len(full_dialogue_text) <= nlp.max_length:
-                    print(f"SRT Worker {os.getpid()}: Analyzing full transcript for relationships...")
-
-                    cue_char_boundaries = []
-                    current_pos = 0
-                    for cue in parsed_cues:
-                        dialogue_len = len(cue['dialogue'])
-                        cue_char_boundaries.append((current_pos, current_pos + dialogue_len))
-                        current_pos += dialogue_len + 1
-
-                    doc_nlp_full = nlp(full_dialogue_text)
-                    for sent in doc_nlp_full.sents:
-                        unique_ents = list(dict.fromkeys(sent.ents))
-                        if len(unique_ents) < 2:
-                            continue
-                        for ent1, ent2 in combinations(unique_ents, 2):
-                            start = min(ent1.end_char, ent2.end_char)
-                            end = max(ent1.start_char, ent2.start_char)
-                            if end > start and (end - start) < 75:
-                                relationship_phrase = ' '.join(full_dialogue_text[start:end].strip().split())
-                                if relationship_phrase:
-                                    subject_tuple = (ent1.text.strip(), ent1.label_) if ent1.start_char < ent2.start_char else (ent2.text.strip(), ent2.label_)
-                                    object_tuple = (ent2.text.strip(), ent2.label_) if ent1.start_char < ent2.start_char else (ent1.text.strip(), ent1.label_)
-                                    
-                                    if subject_tuple[0] and object_tuple[0]:
-                                        relationship_start_char = min(ent1.start_char, ent2.start_char)
-                                        relationship_cue_num = 1
-                                        for i, (cue_start, cue_end) in enumerate(cue_char_boundaries):
-                                            if relationship_start_char >= cue_start and relationship_start_char < cue_end:
-                                                relationship_cue_num = parsed_cues[i]['sequence']
-                                                break
-                                        
-                                        extracted_data["relationships"].append((subject_tuple, object_tuple, relationship_phrase, relationship_cue_num))
-
-            except Exception as e:
-                conn.execute("UPDATE documents SET status = ?, status_message = ? WHERE id = ?", ('Error', f"Could not read/parse SRT file: {e}"[:1000], doc_id))
-                conn.commit()
-                return "ERROR_OPENING_FILE"
+                    dialogue_len = len(cue['dialogue'])
+                    cue_char_boundaries.append((current_pos, current_pos + dialogue_len))
+                    current_pos += dialogue_len + 1
+                doc_nlp_full = nlp(full_dialogue_text)
+                for ent in doc_nlp_full.ents:
+                    ent_tuple = (ent.text.strip(), ent.label_)
+                    if ent_tuple[0]: extracted_data["entities"].add(ent_tuple)
+                    for i, (cue_start, cue_end) in enumerate(cue_char_boundaries):
+                        if ent.start_char >= cue_start and ent.start_char < cue_end:
+                            extracted_data["appearances"].add((ent_tuple, parsed_cues[i]['sequence']))
+                            break
+                for sent in doc_nlp_full.sents:
+                    unique_ents = list(dict.fromkeys(sent.ents))
+                    if len(unique_ents) < 2: continue
+                    for ent1, ent2 in combinations(unique_ents, 2):
+                        start, end = min(ent1.end_char, ent2.end_char), max(ent1.start_char, ent2.start_char)
+                        if end > start and (end - start) < 75:
+                            phrase = ' '.join(full_dialogue_text[start:end].strip().split())
+                            if phrase:
+                                subj = (ent1.text.strip(), ent1.label_) if ent1.start_char < ent2.start_char else (ent2.text.strip(), ent2.label_)
+                                obj = (ent2.text.strip(), ent2.label_) if ent1.start_char < ent2.start_char else (ent1.text.strip(), ent1.label_)
+                                if subj[0] and obj[0]:
+                                    rel_start_char = min(ent1.start_char, ent2.start_char)
+                                    for i, (cue_start, cue_end) in enumerate(cue_char_boundaries):
+                                        if rel_start_char >= cue_start and rel_start_char < cue_end:
+                                            extracted_data["relationships"].append((subj, obj, phrase, parsed_cues[i]['sequence']))
+                                            break
         else:
             if doc_info['file_type'] == 'PDF':
-                try:
-                    with fitz.open(full_path) as pdf_doc:
-                        page_count = pdf_doc.page_count
-                        page_content_map = _extract_text_from_pdf_doc(pdf_doc)
-                except Exception as e:
-                    conn.execute("UPDATE documents SET status = ?, status_message = ? WHERE id = ?", ('Error', f"Could not open/read PDF: {e}"[:1000], doc_id))
-                    conn.commit()
-                    return "ERROR_OPENING_FILE"
+                with fitz.open(full_path) as pdf_doc:
+                    page_count = pdf_doc.page_count
+                    page_content_map = _extract_text_from_pdf_doc(pdf_doc)
             elif doc_info['file_type'] == 'TXT':
-                try:
-                    content = full_path.read_text(encoding='utf-8', errors='ignore')
-                    page_content_map = _paginate_text(content.strip())
-                    page_count = len(page_content_map)
-                except Exception as e:
-                    conn.execute("UPDATE documents SET status = ?, status_message = ? WHERE id = ?", ('Error', f"Could not read TXT file: {e}"[:1000], doc_id))
-                    conn.commit()
-                    return "ERROR_OPENING_FILE"
+                content = full_path.read_text(encoding='utf-8', errors='ignore')
+                page_content_map = _paginate_text(content.strip())
+                page_count = len(page_content_map)
             elif doc_info['file_type'] == 'HTML':
-                try:
-                    mode_row = conn.execute("SELECT value FROM app_settings WHERE key = 'html_parsing_mode'").fetchone()
-                    parsing_mode = mode_row[0] if mode_row else 'generic'
-                    content = full_path.read_text(encoding='utf-8', errors='ignore')
-                    
-                    extracted_text = ""
-                    if parsing_mode == 'pipermail': extracted_text = _extract_text_from_pipermail(content)
-                    else: extracted_text = _extract_text_with_block_separation(content)
-                    
-                    if extracted_text.strip(): page_content_map = {1: extracted_text.strip()}; page_count = 1
-                    else: page_content_map = {1: ""}; page_count = 0
-                except Exception as e:
-                    conn.execute("UPDATE documents SET status = ?, status_message = ? WHERE id = ?", ('Error', f"Could not read/parse HTML: {e}"[:1000], doc_id))
-                    conn.commit()
-                    return "ERROR_OPENING_FILE"
-            else:
-                conn.execute("UPDATE documents SET status = ?, status_message = ? WHERE id = ?", ('Error', f"Unsupported file type: {doc_info['file_type']}", doc_id))
-                conn.commit()
-                return "ERROR_UNSUPPORTED_TYPE"
+                mode_row = conn.execute("SELECT value FROM app_settings WHERE key = 'html_parsing_mode'").fetchone()
+                content = full_path.read_text(encoding='utf-8', errors='ignore')
+                extracted_text = _extract_text_from_pipermail(content) if mode_row and mode_row[0] == 'pipermail' else _extract_text_with_block_separation(content)
+                page_content_map = {1: extracted_text.strip()} if extracted_text.strip() else {1: ""}
+                page_count = 1 if extracted_text.strip() else 0
             
-            extracted_data = _extract_data_from_pages(page_content_map)
+            for page_num, page_text in page_content_map.items():
+                for chunk_text, embedding_blob in _generate_embeddings_for_page(page_text):
+                    extracted_data["embeddings"].append((doc_id, page_num, chunk_text, embedding_blob))
 
+            extracted_data.update(_extract_data_from_pages(page_content_map))
+
+        # --- DATABASE WRITE PHASE (ALL IN ONE TRANSACTION) ---
+        cursor.execute("BEGIN TRANSACTION;")
         cursor.execute("DELETE FROM srt_cues WHERE doc_id = ?", (doc_id,))
-        cursor.execute("UPDATE documents SET page_count = ?, duration_seconds = ? WHERE id = ?", (page_count, duration_seconds, doc_id))
         cursor.execute("DELETE FROM content_index WHERE doc_id = ?", (doc_id,))
         cursor.execute("DELETE FROM entity_appearances WHERE doc_id = ?", (doc_id,))
         cursor.execute("DELETE FROM entity_relationships WHERE doc_id = ?", (doc_id,))
+        cursor.execute("DELETE FROM embedding_chunks WHERE doc_id = ?", (doc_id,))
 
-        if doc_info['file_type'] == 'SRT' and 'parsed_cues' in locals() and parsed_cues:
-            cues_to_insert = [(doc_id, cue['sequence'], cue['timestamp'], cue['dialogue']) for cue in parsed_cues]
+        cursor.execute("UPDATE documents SET page_count = ?, duration_seconds = ? WHERE id = ?", (page_count, duration_seconds, doc_id))
+
+        if extracted_data.get("cues"):
+            cues_to_insert = [(doc_id, c['sequence'], c['timestamp'], c['dialogue']) for c in extracted_data["cues"]]
             cursor.executemany("INSERT INTO srt_cues (doc_id, sequence, timestamp, dialogue) VALUES (?, ?, ?, ?)", cues_to_insert)
 
         if extracted_data.get("content"):
             cursor.executemany("INSERT INTO content_index (doc_id, page_number, page_content) VALUES (?, ?, ?)", [(doc_id, pn, pt) for pn, pt in extracted_data["content"]])
         
+        if extracted_data.get("embeddings"):
+             cursor.executemany("INSERT INTO embedding_chunks (doc_id, page_number, chunk_text, embedding) VALUES (?, ?, ?, ?)", extracted_data["embeddings"])
+
         if extracted_data.get("entities"):
             entities_list = list(extracted_data["entities"])
             cursor.executemany("INSERT OR IGNORE INTO entities (text, label) VALUES (?, ?)", entities_list)
@@ -443,7 +388,7 @@ def process_document(doc_id):
 def discover_and_register_documents():
     """Scans the source directory and registers new or modified files."""
     print(f"--- Scanning for documents in {DOCUMENTS_DIR} ---")
-    conn = get_db_conn()
+    conn = get_db_conn() # This function is safe as it's single-threaded
     try:
         db_files = {row['relative_path']: row['file_hash'] for row in conn.execute("SELECT relative_path, file_hash FROM documents").fetchall()}
         
@@ -504,7 +449,7 @@ def discover_and_register_documents():
 def update_browse_cache():
     """Recomputes the aggregated entity data for the Discovery View."""
     print("--- Starting update of Aggregated View Cache ---")
-    conn = get_db_conn()
+    conn = get_db_conn() # This function is safe as it's single-threaded
     try:
         conn.execute("BEGIN")
         print("Executing aggregation query...")

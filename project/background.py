@@ -1,4 +1,4 @@
-# --- File: ./project/background.py (Definitive Final Version) ---
+# --- File: ./project/background.py ---
 import os
 import sys
 import queue
@@ -19,7 +19,6 @@ except ImportError:
 import processing_pipeline
 import spacy 
 
-# --- Manager Thread Architecture ---
 task_queue = queue.Queue()
 active_tasks = {}
 active_tasks_lock = threading.Lock()
@@ -33,6 +32,7 @@ def get_system_settings():
     conn = None
     try:
         conn = sqlite3.connect(current_app.config['DATABASE_FILE'])
+        conn.row_factory = sqlite3.Row
         rows = conn.execute("SELECT key, value FROM app_settings").fetchall()
         db_settings = {row[0]: row[1] for row in rows}
         if db_settings.get('max_workers', '').isdigit():
@@ -86,7 +86,7 @@ def manager_thread_loop():
                     initializer=initializer_func
                 )
                 with active_tasks_lock:
-                    active_tasks.clear() # Ensure active tasks are cleared with the new pool
+                    active_tasks.clear()
 
             with active_tasks_lock:
                 active_process_count = sum(1 for v in active_tasks.values() if v[0] == 'process')
@@ -96,21 +96,12 @@ def manager_thread_loop():
                 if task_type == 'process':
                     if active_process_count < current_settings['max_workers']:
                         print(f"Manager: Queuing Doc ID {item_id} for processing.")
-                        db_conn = None
-                        try:
-                            db_conn = sqlite3.connect(current_app.config['DATABASE_FILE'], timeout=10)
-                            db_conn.execute("UPDATE documents SET status = 'Queued', status_message = 'Waiting for free worker...' WHERE id = ?", (item_id,))
-                            db_conn.commit()
-                        except sqlite3.Error as e:
-                            print(f"!!! MANAGER FAILED to set 'Queued' status for Doc ID {item_id}: {e} !!!")
-                        finally:
-                            if db_conn: db_conn.close()
-                        
+                        # The worker will now set its own 'Queued' and 'Indexing' status
                         future = executor.submit(processing_pipeline.process_document, item_id)
                         with active_tasks_lock:
                             active_tasks[future] = (task_type, item_id)
                     else:
-                        task_queue.put((task_type, item_id))
+                        task_queue.put((task_type, item_id)) # Put it back if no free workers
                 elif task_type in ['discover', 'cache']:
                     target_func = {'discover': processing_pipeline.discover_and_register_documents, 'cache': processing_pipeline.update_browse_cache}.get(task_type)
                     if target_func:
@@ -136,14 +127,12 @@ def manager_thread_loop():
                         finished_tasks_info.append(task_info)
                 if not isinstance(task, threading.Thread):
                     try:
-                        task.result()
+                        task.result() # Worker handles its own DB writes, we just check for errors
                         print(f"Manager: Process task '{task_info[0]}' for item '{task_info[1]}' completed successfully.")
                     except Exception as e:
                         print(f"!!! MANAGER DETECTED A WORKER FAILURE for task '{task_info[0]}' on item '{task_info[1]}': {type(e).__name__} !!!")
-                        # Only print full traceback for non-BrokenProcessPool errors
                         if not isinstance(e, BrokenProcessPool):
                             print(traceback.format_exc())
-                        # Re-raise the exception to be caught by the main handler
                         raise e
                 else:
                     print(f"Manager: Thread task '{task_info[0]}' completed.")
@@ -161,20 +150,14 @@ def manager_thread_loop():
             print(f"!!! MANAGER THREAD ENCOUNTERED AN ERROR: {e} !!!")
 
             with active_tasks_lock:
-                # Find any tasks that were running in the now-broken pool
                 tasks_to_requeue = [info for future, info in active_tasks.items() if isinstance(future, object) and not future.done()]
-                
                 if tasks_to_requeue:
                     print("Manager: Re-queueing tasks that were active during the crash.")
-                    # Re-queue items by inserting them at the front of the main queue
                     for task_type, item_id in reversed(tasks_to_requeue):
                         print(f"Manager: Re-queueing item {item_id} for processing.")
                         task_queue.queue.appendleft((task_type, item_id))
-                
-                # Clear the dictionary of dead future objects
                 active_tasks.clear()
             
-            # Shutdown the broken pool and mark it for recreation
             if executor:
                 executor.shutdown(wait=False, cancel_futures=True)
             executor = None
@@ -184,6 +167,11 @@ def manager_thread_loop():
 
 def start_manager_thread(app):
     """Initializes and starts the background manager thread."""
+    if hasattr(app, 'manager_thread_started') and app.manager_thread_started:
+        return
+        
     manager_target = lambda: app.app_context().push() or manager_thread_loop()
     manager = threading.Thread(target=manager_target, daemon=True)
     manager.start()
+    
+    app.manager_thread_started = True

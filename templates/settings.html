@@ -1,4 +1,4 @@
-<!-- File: ./templates/settings.html (Updated) -->
+<!-- File: ./templates/settings.html (FIXED) -->
 {% extends 'layout.html' %}
 {% block title %}Settings - Redleaf{% endblock %}
 
@@ -15,20 +15,16 @@
         <nav class="tabs-nav">
             <button class="tab-link active" data-tab="access">Users & Access</button>
             
-            {# --- START OF CHANGE: Conditionally hide tabs in precomputed mode --- #}
             {% if not g.is_precomputed %}
             <button class="tab-link" data-tab="system">System & Processing</button>
             {% endif %}
-            {# --- END OF CHANGE --- #}
 
             <button class="tab-link" data-tab="archive">Archived Items</button>
             <button class="tab-link" data-tab="transfer">Import / Export</button>
 
-            {# --- START OF CHANGE: Conditionally hide tabs in precomputed mode --- #}
             {% if not g.is_precomputed %}
             <button class="tab-link" data-tab="danger">Reset</button>
             {% endif %}
-            {# --- END OF CHANGE --- #}
         </nav>
 
         <!-- Tab Content: Users & Access -->
@@ -132,7 +128,6 @@
             </div>
         </div>
 
-        {# --- START OF CHANGE: Wrap content in conditional block --- #}
         {% if not g.is_precomputed %}
         <!-- Tab Content: System & Processing -->
         <div id="tab-system" class="tab-content">
@@ -140,7 +135,12 @@
             <div class="panel">
                 <div class="panel-body">
                     <h5>Worker Configuration</h5>
-                    <p class="text-muted">Adjust the number of parallel processes used for document processing. Each worker consumes significant RAM (approx. 800MB+). Your system has <strong>{{ cpu_count or 'N/A' }}</strong> CPU cores. The change will take effect after any currently running tasks complete.</p>
+                    <!-- ===== START: WORKER MESSAGING FIX ===== -->
+                    <p class="text-muted">
+                        Adjust the number of parallel processes for document processing. While you have <strong>{{ cpu_count or 'N/A' }}</strong> cores, <strong>a value of 2 is recommended for optimal performance.</strong>
+                        <br>Due to SQLite's write limitations, setting this higher often leads to database lock errors and <i>slower</i> overall processing, not faster. Each worker also consumes significant RAM (800MB+).
+                    </p>
+                    <!-- ===== END: WORKER MESSAGING FIX ===== -->
                     <form action="{{ url_for('settings.update_workers') }}" method="POST" class="d-flex align-items-center gap-3">
                         {{ form.hidden_tag() }}
                         <div class="form-group mb-0">
@@ -152,13 +152,15 @@
                     <hr>
                     <h5>GPU Acceleration (via CUDA)</h5>
                     <p class="text-muted">Enable to use a compatible NVIDIA GPU for spaCy's NLP processing. This requires CUDA and CuPy to be correctly installed. The change will take effect after any currently running tasks complete.</p>
-                    <form action="{{ url_for('settings.update_gpu_setting') }}" method="POST" id="gpu-form">
-                        {{ form.hidden_tag() }}
-                        <div class="form-switch">
-                            <input type="checkbox" role="switch" name="use_gpu" id="use-gpu-toggle" {% if use_gpu %}checked{% endif %}>
-                            <label for="use-gpu-toggle">Enable GPU Acceleration</label>
-                        </div>
-                    </form>
+                    
+                    <!-- ===== START: GPU UX FIX (HTML) ===== -->
+                    <div class="form-switch">
+                        <input type="checkbox" role="switch" name="use_gpu" id="use-gpu-toggle" {% if use_gpu %}checked{% endif %}>
+                        <label for="use-gpu-toggle">Enable GPU Acceleration</label>
+                        <span id="gpu-save-status" class="save-status-indicator" style="margin-left: 1rem; opacity: 0;"></span>
+                    </div>
+                    <!-- ===== END: GPU UX FIX (HTML) ===== -->
+
                     <hr>
                     <h5>HTML Parsing Strategy</h5>
                     <p class="text-muted">Choose how Redleaf should extract text from <code>.html</code> files. Affects new or re-processed documents only.</p>
@@ -177,7 +179,6 @@
             </div>
         </div>
         {% endif %}
-        {# --- END OF CHANGE --- #}
 
         <!-- Tab Content: Archived Items -->
         <div id="tab-archive" class="tab-content">
@@ -252,7 +253,6 @@
             </div>
         </div>
 
-        {# --- START OF CHANGE: Wrap content in conditional block --- #}
         {% if not g.is_precomputed %}
         <!-- Tab Content: Reset Zone -->
         <div id="tab-danger" class="tab-content">
@@ -269,7 +269,6 @@
              </div>
         </div>
         {% endif %}
-        {# --- END OF CHANGE --- #}
     </div>
 </div>
 {% endblock %}
@@ -304,12 +303,45 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // ===== START: GPU UX FIX (JAVASCRIPT) =====
     const gpuToggle = document.getElementById('use-gpu-toggle');
     if (gpuToggle) {
-        gpuToggle.addEventListener('change', () => {
-            document.getElementById('gpu-form').submit();
+        gpuToggle.addEventListener('change', async () => {
+            const isChecked = gpuToggle.checked;
+            const statusEl = document.getElementById('gpu-save-status');
+            
+            statusEl.textContent = 'Saving...';
+            statusEl.style.opacity = '1';
+            gpuToggle.disabled = true;
+
+            try {
+                const response = await fetch("{{ url_for('settings.update_gpu_setting') }}", {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrfToken
+                    },
+                    body: JSON.stringify({ use_gpu: isChecked })
+                });
+                const result = await response.json();
+                if (!response.ok) throw new Error(result.message);
+                
+                statusEl.textContent = 'Saved!';
+
+            } catch (error) {
+                console.error('Failed to update GPU setting:', error);
+                statusEl.textContent = 'Error!';
+                // Optionally, revert the toggle if the save failed
+                // gpuToggle.checked = !isChecked; 
+            } finally {
+                setTimeout(() => {
+                    statusEl.style.opacity = '0';
+                    gpuToggle.disabled = false;
+                }, 2500);
+            }
         });
     }
+    // ===== END: GPU UX FIX (JAVASCRIPT) =====
 
     const userTableBody = document.querySelector('.data-table tbody');
     if (userTableBody) {

@@ -1,4 +1,4 @@
-# --- File: ./project/blueprints/settings.py (Updated) ---
+# --- File: ./project/blueprints/settings.py (FIXED) ---
 import os
 import sqlite3
 import secrets
@@ -186,22 +186,30 @@ def update_workers():
         flash("CSRF validation failed.", 'danger')
     return redirect(url_for('settings.settings_page'))
 
+# ===== START: GPU UX FIX (BACKEND) =====
 @settings_bp.route('/gpu', methods=['POST'])
 @admin_required
 def update_gpu_setting():
-    form = SecureForm()
-    if form.validate_on_submit():
-        use_gpu_enabled = request.form.get('use_gpu') == 'on'
-        use_gpu_str = 'true' if use_gpu_enabled else 'false'
+    # We no longer need the form validation for this simple API endpoint
+    data = request.json
+    if 'use_gpu' not in data:
+        return jsonify({'success': False, 'message': 'Invalid request.'}), 400
+
+    use_gpu_enabled = data.get('use_gpu', False)
+    use_gpu_str = 'true' if use_gpu_enabled else 'false'
+    
+    try:
         db = get_db()
         db.execute("UPDATE app_settings SET value = ? WHERE key = 'use_gpu'", (use_gpu_str,))
         db.commit()
         restart_executor_event.set()
         status = "enabled" if use_gpu_enabled else "disabled"
-        flash(f'GPU acceleration has been {status}. The change will apply once current tasks are finished.', 'success')
-    else:
-        flash("CSRF validation failed.", 'danger')
-    return redirect(url_for('settings.settings_page'))
+        message = f'GPU acceleration has been {status}. Change will apply after current tasks finish.'
+        return jsonify({'success': True, 'message': message})
+    except sqlite3.Error as e:
+        db.rollback()
+        return jsonify({'success': False, 'message': f'Database error: {e}'}), 500
+# ===== END: GPU UX FIX (BACKEND) =====
 
 @settings_bp.route('/html', methods=['POST'])
 @admin_required

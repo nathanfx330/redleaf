@@ -23,6 +23,8 @@ DATABASE_FILE = BASE_DIR / "knowledge_base.db"
 # --- Application-Specific Settings ---
 # Labels to be displayed in the "Discovery" view.
 ENTITY_LABELS_TO_DISPLAY = ['PERSON', 'GPE', 'LOC', 'ORG', 'DATE']
+# URL for the assistant to generate links to the web UI.
+REDLEAF_BASE_URL = "http://127.0.0.1:5000"
 
 # --- Security: Secret Key Handling ---
 SECRET_KEY_FILE = INSTANCE_DIR / "secret.key"
@@ -55,3 +57,18 @@ def get_or_create_secret_key():
 
 # Generate or load the secret key to be used by the Flask app.
 SECRET_KEY = get_or_create_secret_key()
+
+# --- AI Assistant & NLP Configuration ---
+#
+# IMPORTANT: The performance of the AI Assistant is highly dependent on the models used.
+# This project has been tested and confirmed to work with the following Ollama models:
+#   - Reasoning Model: 'gemma3:12b'
+#   - Embedding Model: 'embeddinggemma:latest'
+#
+# Using other models may work but is not guaranteed.
+
+# The model for reasoning, tool use, and generating answers in the assistant.
+REASONING_MODEL = "gemma3:12b"
+
+# The model for generating embeddings for semantic search.
+EMBEDDING_MODEL = "embeddinggemma:latest"

@@ -1,4 +1,4 @@
-# --- File: ./project/blueprints/main.py (FINAL CORRECTED VERSION) ---
+# --- File: ./project/blueprints/main.py ---
 import os
 import queue
 import re
@@ -18,7 +18,6 @@ from ..background import task_queue
 from ..utils import _get_dashboard_state, _truncate_long_snippet, _create_entity_snippet
 from ..config import DOCUMENTS_DIR, ENTITY_LABELS_TO_DISPLAY
 from .auth import login_required, admin_required, SecureForm
-# import processing_pipeline # This import is no longer needed here
 
 main_bp = Blueprint('main', __name__)
 
@@ -55,7 +54,6 @@ def dashboard_process_all_new():
         flash("No 'New' documents found to process.", "info")
     else:
         for doc_id in doc_ids:
-            # FIX: Just put the task on the queue. Do not touch the database here.
             task_queue.put(('process', doc_id))
         flash(f"Queued {len(doc_ids)} documents for processing.", "success")
     return redirect(url_for('main.dashboard'))
@@ -63,7 +61,6 @@ def dashboard_process_all_new():
 @main_bp.route('/dashboard/process/<int:doc_id>')
 @login_required
 def dashboard_process_single(doc_id):
-    # FIX: Just put the task on the queue. Do not touch the database here.
     task_queue.put(('process', doc_id))
     flash(f"Queued document ID {doc_id} for re-processing.", "info")
     return redirect(url_for('main.dashboard'))
