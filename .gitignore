@@ -15,6 +15,7 @@ knowledge_base.db-shm
 instance/secret.key
 instance/uploads/
 instance/contributions/
+/chats/
 
 # ===================================================================
 # --- Standard Python & Virtual Environment ---
