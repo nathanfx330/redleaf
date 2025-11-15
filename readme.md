@@ -152,8 +152,8 @@ The next time you start the application, all processing features will be fully e
 ### 2. Installation
 
 ```bash
-git clone <your-repository-url>
-cd <repository-directory>
+git clone https://github.com/nathanfx330/redleaf.git
+cd redleaf
 conda env create -f environment.yml
 conda activate redleaf-env
 python -m spacy download en_core_web_lg
