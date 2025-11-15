@@ -1,4 +1,4 @@
-<!-- File: ./templates/dashboard.html (Updated) -->
+<!-- File: ./templates/dashboard.html (Updated to include sorting by Doc #) -->
 {% extends 'layout.html' %}
 {% block title %}Dashboard - Redleaf{% endblock %}
 
@@ -6,7 +6,6 @@
 <div class="page-heading">
     <h1>Dashboard</h1>
     <div class="toolbar">
-        {# --- START OF CHANGE: Add conditional disabling based on precomputed mode --- #}
         <a href="{{ url_for('main.dashboard_discover') }}"
            class="button workflow-btn {{ 'button-primary' if task_states.discover == 'primary' and not g.is_precomputed }} {{ 'disabled' if task_states.discover == 'disabled' or g.is_precomputed }}"
            id="discover-btn"
@@ -29,7 +28,6 @@
                3. Update Browse Cache
            {% endif %}
         </a>
-        {# --- END OF CHANGE --- #}
     </div>
 </div>
 
@@ -50,22 +48,37 @@
         <p class="text-muted mt-2">
             Document Source: <code>{{ doc_dir }}</code>
             <span class="queue-status ms-3">Tasks in queue: <span id="queue-size-display">{{ queue_size }}</span></span>
-            <span class="queue-status ms-3">Documents in registry: <span id="doc-count-display">{{ documents|length }}</span></span>
+            <span class="queue-status ms-3">Documents in registry: <span id="doc-count-display">...</span></span>
         </p>
     </div>
 </div>
 
 <h2>Document Registry</h2>
 
-<div class="sort-controls" id="registry-sort-controls">
-    <button class="button button-small sort-btn" data-sort-key="relative_path">Path</button>
-    <button class="button button-small sort-btn" data-sort-key="status">Status</button>
-    <button class="button button-small sort-btn" data-sort-key="file_type">Type</button>
-    <button class="button button-small sort-btn" data-sort-key="file_size_bytes">File Size</button>
-    <button class="button button-small sort-btn" data-sort-key="duration_seconds">Duration</button>
-    <button class="button button-small sort-btn" data-sort-key="page_count">Pages</button>
-    <button class="button button-small sort-btn" data-sort-key="comment_count">Comments</button>
-    <button class="button button-small sort-btn" data-sort-key="tag_count">Tags</button>
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div class="sort-controls" id="registry-sort-controls">
+        <!-- START OF MODIFICATION: Added new sort button for 'id' -->
+        <button class="button button-small sort-btn" data-sort-key="id">#</button>
+        <!-- END OF MODIFICATION -->
+        <button class="button button-small sort-btn" data-sort-key="relative_path">Path</button>
+        <button class="button button-small sort-btn" data-sort-key="status">Status</button>
+        <button class="button button-small sort-btn" data-sort-key="file_type">Type</button>
+        <button class="button button-small sort-btn" data-sort-key="file_size_bytes">File Size</button>
+        <button class="button button-small sort-btn" data-sort-key="duration_seconds">Duration</button>
+        <button class="button button-small sort-btn" data-sort-key="page_count">Pages</button>
+        <button class="button button-small sort-btn" data-sort-key="comment_count">Comments</button>
+        <button class="button button-small sort-btn" data-sort-key="tag_count">Tags</button>
+    </div>
+
+    <div class="d-flex align-items-center">
+        <label for="per-page-select" class="form-label me-2 mb-0">Per Page:</label>
+        <select id="per-page-select" class="form-control" style="width: auto;">
+            <option value="25">25</option>
+            <option value="50" selected>50</option>
+            <option value="100">100</option>
+            <option value="250">250</option>
+        </select>
+    </div>
 </div>
 
 <div class="table-container">
@@ -87,9 +100,15 @@
             </tr>
         </thead>
         <tbody id="registry-table-body">
-            {# Body will be rendered by JS #}
+            <tr>
+                <td colspan="12" class="table-empty-message"><em>Loading documents...</em></td>
+            </tr>
         </tbody>
     </table>
+</div>
+
+<div class="d-flex justify-content-between align-items-center mt-3" id="pagination-container">
+    <!-- Pagination controls will be rendered here by JavaScript -->
 </div>
 {% endblock %}
 
@@ -97,135 +116,151 @@
 {{ super() }}
 <script>
 document.addEventListener('DOMContentLoaded', () => {
-    let allDocsData = {{ documents|tojson }};
-    let currentSort;
-    const defaultSort = { key: 'relative_path', direction: 'asc' };
-    const POLLING_INTERVAL = 3000;
-    let pollingTimer;
+    let state = {
+        docs: [],
+        totalDocs: 0,
+        currentPage: 1,
+        perPage: 50,
+        sort: { key: 'relative_path', direction: 'asc' },
+        isLoading: false,
+    };
+    try {
+        const savedSort = JSON.parse(localStorage.getItem('dashboardSortState'));
+        if (savedSort) state.sort = savedSort;
+    } catch (e) { console.error("Could not parse saved sort state."); }
+
     const tableBody = document.getElementById('registry-table-body');
     const sortControls = document.getElementById('registry-sort-controls');
+    const paginationContainer = document.getElementById('pagination-container');
+    const perPageSelect = document.getElementById('per-page-select');
     const queueSizeDisplay = document.getElementById('queue-size-display');
     const docCountDisplay = document.getElementById('doc-count-display');
-    const isPrecomputed = {{ g.is_precomputed|tojson }}; // <-- NEW: Get mode from Flask
+    const isPrecomputed = {{ g.is_precomputed|tojson }};
     const workflowButtons = {
         discover: document.getElementById('discover-btn'),
         process: document.getElementById('process-all-btn'),
         cache: document.getElementById('update-cache-btn')
     };
-    try {
-        currentSort = JSON.parse(localStorage.getItem('dashboardSortState')) || defaultSort;
-    } catch (e) {
-        currentSort = defaultSort;
-    }
+    const POLLING_INTERVAL = 5000;
+    let pollingTimer;
 
-    function sortAndRender() {
-        const sortedDocs = [...allDocsData].sort((a, b) => {
-            const key = currentSort.key;
-            let valA = a[key], valB = b[key];
-            const direction = currentSort.direction === 'asc' ? 1 : -1;
-            if (valA == null && valB == null) return 0;
-            if (valA == null) return 1; if (valB == null) return -1;
-            if (typeof valA === 'string') return valA.toLowerCase().localeCompare(valB.toLowerCase()) * direction;
-            if (valA < valB) return -1 * direction;
-            if (valA > valB) return 1 * direction;
-            return 0;
-        });
-        let rowsHtml = '';
-        if (sortedDocs.length === 0) {
-            rowsHtml = `<tr><td colspan="12" class="table-empty-message">No documents registered. Click "Discover Documents" to begin.</td></tr>`;
-        } else {
-            sortedDocs.forEach(doc => {
-                const colorDot = doc.color ? `<span class="color-dot" style="background-color: ${doc.color};"></span>` : '';
-                const pathLink = (doc.status === 'Indexed') ? `<a href="/document/${doc.id}">${doc.relative_path}</a>` : doc.relative_path;
-                const statusClass = doc.status ? doc.status.replace(' ', '') : 'New';
-                const commentsChip = doc.comment_count > 0 ? `<span class="chip" title="${doc.comment_count} public comment(s)">💬 ${doc.comment_count}</span>` : '<span class="text-muted">—</span>';
-                
-                let attributesHtml = '';
-                if (doc.is_podcast_episode) {
-                    attributesHtml += `<span class="chip" title="Podcast Episode">🎧</span> `;
-                }
-                if (doc.tag_count > 0) {
-                    attributesHtml += `<span class="chip" title="${doc.tag_count} tag(s)">🏷️ ${doc.tag_count}</span>`;
-                }
-                if (attributesHtml === '') {
-                    attributesHtml = '<span class="text-muted">—</span>';
-                }
-
-                // --- START OF CHANGE: Conditionally disable re-process button ---
-                let actionsHtml = '';
-                if (isPrecomputed) {
-                     actionsHtml = `<a href="/document/${doc.id}" class="button button-small">View</a>`;
-                } else {
-                    switch (doc.status) {
-                        case 'New':
-                            actionsHtml = `<a href="/dashboard/process/${doc.id}" class="button button-small">Process</a>`;
-                            break;
-                        case 'Queued':
-                        case 'Indexing':
-                            actionsHtml = `<button class="button button-small disabled">Processing...</button>`;
-                            break;
-                        case 'Indexed':
-                        case 'Error':
-                            actionsHtml = `<a href="/dashboard/process/${doc.id}" class="button button-small">Re-Process</a>`;
-                            break;
-                        default:
-                            actionsHtml = `<span class="text-muted">—</span>`;
-                            break;
-                    }
-                }
-                // --- END OF CHANGE ---
-
-                const fileSize = formatFileSize(doc.file_size_bytes);
-                const duration = formatDuration(doc.duration_seconds);
-                rowsHtml += `
-                    <tr data-doc-id="${doc.id}">
-                        <td>${doc.id}</td><td class="color-cell">${colorDot}</td><td class="path-cell">${pathLink}</td>
-                        <td><span class="status-${statusClass}">${doc.status}</span></td>
-                        <td class="message-cell" title="${doc.status_message || ''}">${doc.status_message || ''}</td>
-                        <td><span class="chip">${doc.file_type || 'N/A'}</span></td><td>${fileSize}</td>
-                        <td>${duration}</td><td>${doc.page_count ?? 'N/A'}</td>
-                        <td>${commentsChip}</td>
-                        <td>${attributesHtml}</td>
-                        <td>${actionsHtml}</td>
-                    </tr>`;
-            });
+    function getRowsHtml(docs) {
+        if (docs.length === 0) {
+            return `<tr><td colspan="12" class="table-empty-message">No documents registered. Click "Discover Docs" to begin.</td></tr>`;
         }
-        tableBody.innerHTML = rowsHtml;
-        updateSortButtonUI();
-        docCountDisplay.textContent = allDocsData.length;
+        return docs.map(doc => {
+            const colorDot = doc.color ? `<span class="color-dot" style="background-color: ${doc.color};"></span>` : '';
+            const pathLink = (doc.status === 'Indexed') ? `<a href="/document/${doc.id}">${doc.relative_path}</a>` : doc.relative_path;
+            const statusClass = doc.status ? doc.status.replace(' ', '') : 'New';
+            const commentsChip = doc.comment_count > 0 ? `<span class="chip" title="${doc.comment_count} public comment(s)">💬 ${doc.comment_count}</span>` : '<span class="text-muted">—</span>';
+            let attributesHtml = doc.is_podcast_episode ? `<span class="chip" title="Podcast Episode">🎧</span> ` : '';
+            if (doc.tag_count > 0) attributesHtml += `<span class="chip" title="${doc.tag_count} tag(s)">🏷️ ${doc.tag_count}</span>`;
+            if (attributesHtml === '') attributesHtml = '<span class="text-muted">—</span>';
+            let actionsHtml = isPrecomputed ? `<a href="/document/${doc.id}" class="button button-small">View</a>` : 
+                (doc.status === 'New' ? `<a href="/dashboard/process/${doc.id}" class="button button-small">Process</a>` : 
+                (doc.status === 'Queued' || doc.status === 'Indexing' ? `<button class="button button-small disabled">Processing...</button>` : 
+                `<a href="/dashboard/process/${doc.id}" class="button button-small">Re-Process</a>`));
+            const fileSize = formatFileSize(doc.file_size_bytes);
+            const duration = formatDuration(doc.duration_seconds);
+            return `
+                <tr data-doc-id="${doc.id}">
+                    <td>${doc.id}</td><td class="color-cell">${colorDot}</td><td class="path-cell">${pathLink}</td>
+                    <td><span class="status-${statusClass}">${doc.status}</span></td>
+                    <td class="message-cell" title="${doc.status_message || ''}">${doc.status_message || ''}</td>
+                    <td><span class="chip">${doc.file_type || 'N/A'}</span></td><td>${fileSize}</td>
+                    <td>${duration}</td><td>${doc.page_count ?? 'N/A'}</td>
+                    <td>${commentsChip}</td><td>${attributesHtml}</td><td>${actionsHtml}</td>
+                </tr>`;
+        }).join('');
+    }
+    
+    function renderPagination() {
+        const totalPages = Math.ceil(state.totalDocs / state.perPage);
+        if (totalPages <= 1) { paginationContainer.innerHTML = `<div class="text-muted">Showing ${state.totalDocs} of ${state.totalDocs} documents</div>`; return; }
+        const startItem = (state.currentPage - 1) * state.perPage + 1;
+        const endItem = Math.min(startItem + state.perPage - 1, state.totalDocs);
+        let html = `<div class="text-muted">Showing ${startItem} - ${endItem} of ${state.totalDocs} documents</div>`;
+        html += `<div class="toolbar">`;
+        html += `<button class="button button-small" data-page="1" ${state.currentPage === 1 ? 'disabled' : ''}>« First</button>`;
+        html += `<button class="button button-small" data-page="${state.currentPage - 1}" ${state.currentPage === 1 ? 'disabled' : ''}>‹ Prev</button>`;
+        html += `<span class="mx-2" style="padding: 0 1rem;">Page ${state.currentPage} of ${totalPages}</span>`;
+        html += `<button class="button button-small" data-page="${state.currentPage + 1}" ${state.currentPage >= totalPages ? 'disabled' : ''}>Next ›</button>`;
+        html += `<button class="button button-small" data-page="${totalPages}" ${state.currentPage >= totalPages ? 'disabled' : ''}>Last »</button>`;
+        html += `</div>`;
+        paginationContainer.innerHTML = html;
     }
 
+    async function fetchDashboardData(options = {}) {
+        const { isPoll = false } = options;
+        if (state.isLoading) return;
+        if (!isPoll) {
+            state.isLoading = true;
+            tableBody.innerHTML = `<tr><td colspan="12" class="table-empty-message"><em>Loading...</em></td></tr>`;
+        }
+        clearTimeout(pollingTimer);
+        const { currentPage, perPage, sort } = state;
+        const url = `/api/dashboard/status?page=${currentPage}&per_page=${perPage}&sort_key=${sort.key}&sort_dir=${sort.direction}`;
+        try {
+            const response = await fetch(url);
+            if (!response.ok) throw new Error('Network error');
+            const data = await response.json();
+            const newHtml = getRowsHtml(data.documents);
+            if (tableBody.innerHTML !== newHtml) {
+                tableBody.innerHTML = newHtml;
+            }
+            state.docs = data.documents;
+            state.totalDocs = data.total_documents;
+            renderPagination();
+            if (queueSizeDisplay) queueSizeDisplay.textContent = data.queue_size;
+            if (docCountDisplay) docCountDisplay.textContent = data.total_documents;
+            updateActionButtons(data.task_states);
+        } catch (error) {
+            console.error("Error fetching dashboard data:", error);
+            tableBody.innerHTML = `<tr><td colspan="12" class="table-empty-message text-danger">Error loading data.</td></tr>`;
+        } finally {
+            if (!isPoll) { state.isLoading = false; }
+            if (!isPrecomputed) { pollingTimer = setTimeout(() => fetchDashboardData({ isPoll: true }), POLLING_INTERVAL); }
+        }
+    }
+
+    sortControls.addEventListener('click', (e) => {
+        const btn = e.target.closest('.sort-btn');
+        if (!btn) return;
+        const key = btn.dataset.sortKey;
+        if (state.sort.key === key) {
+            state.sort.direction = state.sort.direction === 'asc' ? 'desc' : 'asc';
+        } else {
+            state.sort.key = key;
+            // --- START OF MODIFICATION: Added 'id' to the list of keys that default to ascending sort ---
+            state.sort.direction = ['id', 'relative_path', 'status', 'file_type'].includes(key) ? 'asc' : 'desc';
+            // --- END OF MODIFICATION ---
+        }
+        localStorage.setItem('dashboardSortState', JSON.stringify(state.sort));
+        updateSortButtonUI();
+        state.currentPage = 1;
+        fetchDashboardData({ isPoll: false });
+    });
+
+    perPageSelect.addEventListener('change', () => {
+        state.perPage = parseInt(perPageSelect.value, 10);
+        state.currentPage = 1;
+        fetchDashboardData({ isPoll: false });
+    });
+
+    paginationContainer.addEventListener('click', (e) => {
+        const btn = e.target.closest('button[data-page]');
+        if (!btn || btn.disabled) return;
+        state.currentPage = parseInt(btn.dataset.page, 10);
+        fetchDashboardData({ isPoll: false });
+    });
+    
     function updateSortButtonUI() {
         sortControls.querySelectorAll('.sort-btn').forEach(btn => {
             btn.classList.remove('active', 'sort-asc', 'sort-desc');
-            if (btn.dataset.sortKey === currentSort.key) {
-                btn.classList.add('active', `sort-${currentSort.direction}`);
+            if (btn.dataset.sortKey === state.sort.key) {
+                btn.classList.add('active', `sort-${state.sort.direction}`);
             }
         });
-    }
-
-    async function pollStatus() {
-        clearTimeout(pollingTimer);
-        // --- START OF CHANGE: Don't poll in precomputed mode ---
-        if (isPrecomputed) {
-            return;
-        }
-        // --- END OF CHANGE ---
-        try {
-            const response = await fetch('/api/dashboard/status');
-            if (!response.ok) throw new Error(`Status poll failed: ${response.status}`);
-            const data = await response.json();
-            updateActionButtons(data.task_states);
-            if (queueSizeDisplay) queueSizeDisplay.textContent = data.queue_size;
-            if (JSON.stringify(allDocsData) !== JSON.stringify(data.documents)) {
-                allDocsData = data.documents;
-                sortAndRender();
-            }
-        } catch (error) {
-            console.error("Error during status polling:", error);
-        } finally {
-            pollingTimer = setTimeout(pollStatus, POLLING_INTERVAL);
-        }
     }
 
     function updateActionButtons(taskStates) {
@@ -242,25 +277,10 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    sortControls.addEventListener('click', (e) => {
-        const clickedButton = e.target.closest('.sort-btn');
-        if (!clickedButton) return;
-        const clickedKey = clickedButton.dataset.sortKey;
-        if (clickedKey === currentSort.key) {
-            currentSort.direction = currentSort.direction === 'asc' ? 'desc' : 'asc';
-        } else {
-            currentSort.key = clickedKey;
-            currentSort.direction = ['relative_path', 'status', 'file_type'].includes(clickedKey) ? 'asc' : 'desc';
-        }
-        try { localStorage.setItem('dashboardSortState', JSON.stringify(currentSort)); }
-        catch (e) { console.error("Could not save sort state.", e); }
-        sortAndRender();
-    });
-
     window.addEventListener('beforeunload', () => clearTimeout(pollingTimer));
-    
-    sortAndRender();
-    pollStatus();
+
+    updateSortButtonUI();
+    fetchDashboardData({ isPoll: false });
 });
 </script>
 {% endblock %}

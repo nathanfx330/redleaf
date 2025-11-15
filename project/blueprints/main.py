@@ -1,4 +1,4 @@
-# --- File: ./project/blueprints/main.py ---
+# --- File: ./project/blueprints/main.py (FINAL FIX FOR PAGINATION) ---
 import os
 import queue
 import re
@@ -25,18 +25,23 @@ main_bp = Blueprint('main', __name__)
 @main_bp.route('/dashboard')
 @login_required
 def dashboard():
+    # --- START OF MODIFICATION ---
+    # The expensive query that fetched all documents has been removed.
+    # The page will now load instantly, and the JavaScript in the template
+    # will make a separate API call to get the first page of data.
     db = get_db()
-    doc_query = """
-        SELECT d.*, 
-               (SELECT COUNT(*) FROM document_comments WHERE doc_id = d.id) as comment_count, 
-               (SELECT COUNT(*) FROM document_tags WHERE doc_id = d.id) as tag_count,
-               (SELECT 1 FROM document_catalogs dc JOIN catalogs c ON dc.catalog_id = c.id WHERE dc.doc_id = d.id AND c.catalog_type = 'podcast' LIMIT 1) as is_podcast_episode
-        FROM documents d
-    """
-    documents = [dict(row) for row in db.execute(doc_query).fetchall()]
     state_data = _get_dashboard_state(db)
     form = SecureForm()
-    return render_template('dashboard.html', documents=documents, doc_dir=DOCUMENTS_DIR, queue_size=state_data['queue_size'], form=form, task_states=state_data['task_states'])
+    
+    # We now pass an empty list for 'documents' on the initial page load.
+    # The actual data will be populated by the fetchDashboardData() function in dashboard.html.
+    return render_template('dashboard.html', 
+                           documents=[], 
+                           doc_dir=DOCUMENTS_DIR, 
+                           queue_size=state_data['queue_size'], 
+                           form=form, 
+                           task_states=state_data['task_states'])
+    # --- END OF MODIFICATION ---
 
 @main_bp.route('/dashboard/discover')
 @login_required
@@ -155,11 +160,29 @@ def entity_detail(label, text):
     if not entity:
         abort(404, "Entity not found in the database.")
     
+    form = SecureForm()
+    
     return render_template('entity_detail.html', 
                            label=label, 
                            text=entity_text, 
-                           entity_id=entity['id'])
+                           entity_id=entity['id'],
+                           form=form)
 
+@main_bp.route('/profile/<int:entity_id>')
+@login_required
+def entity_profile(entity_id):
+    """Renders the new, dedicated profile page for an entity."""
+    db = get_db()
+    entity = db.execute("SELECT id, text, label FROM entities WHERE id = ?", (entity_id,)).fetchone()
+    if not entity:
+        abort(404, "Entity not found.")
+    
+    form = SecureForm()
+    
+    return render_template('profile.html', 
+                           entity=entity, 
+                           entity_id=entity_id,
+                           form=form)
 
 @main_bp.route('/discover/relationship')
 @login_required
@@ -307,7 +330,7 @@ def document_view(doc_id):
     
     if not doc:
         abort(404)
-        
+
     form = SecureForm()
     timestamp = int(time.time())
     
@@ -385,6 +408,27 @@ def view_html_document(doc_id):
     if not pages:
         return "This HTML document has not been indexed yet or contains no extractable content.", 404
     return render_template('html_viewer.html', pages=pages, doc_title=doc_meta['relative_path'], doc_id=doc_id)
+
+@main_bp.route('/view_eml/<int:doc_id>')
+@login_required
+def view_eml_document(doc_id):
+    db = get_db()
+    doc_meta = db.execute("SELECT relative_path, file_type FROM documents WHERE id = ?", (doc_id,)).fetchone()
+    if not doc_meta or doc_meta['file_type'] != 'EML':
+        abort(404)
+    
+    email_data = db.execute("SELECT * FROM email_metadata WHERE doc_id = ?", (doc_id,)).fetchone()
+    
+    body_content_row = db.execute("SELECT page_content FROM content_index WHERE doc_id = ? AND page_number = 1", (doc_id,)).fetchone()
+    body_content = body_content_row['page_content'] if body_content_row else "No body content found for this email."
+    
+    return render_template(
+        'eml_viewer.html', 
+        doc_title=doc_meta['relative_path'], 
+        doc_id=doc_id,
+        email=email_data,
+        body=body_content
+    )
 
 def _parse_srt_for_viewer(srt_content):
     """Parses SRT content into a list of dicts for the viewer template."""

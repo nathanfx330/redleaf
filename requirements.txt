@@ -4,64 +4,47 @@
 # pip install -r requirements.txt
 #
 # After installing these, you must also download the required spaCy model.
-
-# --- START OF CHANGE ---
-# == System-Level Dependencies ==
 #
-# The following tools are required by the management scripts but are NOT Python packages
-# and cannot be installed by pip. Please ensure they are installed on your system.
+# == System-Level Dependencies ==
 #
 # 1. sqlite3 (Command-Line Tool)
 #    - WHY: Required for the `export-precomputed-state` command.
-#    - HOW TO CHECK: Open a terminal and run `sqlite3 --version`. If you get a version number, you're all set.
-#    - HOW TO INSTALL:
-#      - Windows: Download the "command-line tools" zip from the official SQLite website (sqlite.org)
-#                 and add the folder containing sqlite3.exe to your system's PATH.
-#      - macOS: Usually pre-installed. If not, use Homebrew: `brew install sqlite`
-#      - Linux (Debian/Ubuntu): `sudo apt-get update && sudo apt-get install sqlite3`
-#      - Linux (Fedora/CentOS): `sudo dnf install sqlite`
-# --- END OF CHANGE ---
+#    - HOW TO CHECK: Run `sqlite3 --version`.
+#    - HOW TO INSTALL: Varies by OS (e.g., `sudo apt-get install sqlite3` on Ubuntu).
 
 # == Core Web Framework ==
-Flask==2.3.3         # The web server framework.
-Flask-WTF==1.1.1     # Handles web forms and CSRF protection.
-Werkzeug==2.3.7      # Core WSGI utility library, dependency of Flask.
+Flask==2.3.3
+Flask-WTF==1.1.1
+Werkzeug==2.3.7
 
 # == Document Processing & Data Extraction ==
-beautifulsoup4==4.12.2 # For parsing and extracting text from HTML files.
-lxml==4.9.3          # High-performance parser for XML and HTML, used by BeautifulSoup.
-PyMuPDF==1.23.5      # Used for PDF processing (imported as 'fitz').
+beautifulsoup4==4.12.2
+lxml==4.9.3
+PyMuPDF==1.23.5
 
 # == Natural Language Processing (NLP) ==
-spacy==3.6.1         # The core NLP library for entity and relationship extraction.
+spacy==3.6.1
+ollama
 
 # == Synthesis & Exporting ==
-odfpy==1.4.1         # Creates .odt files for the "Export to ODT" feature.
-citeproc-py==0.6.0   # Handles CSL citation style processing for bibliographies.
+odfpy==1.4.1
+citeproc-py==0.6.0
 
 # == API Requests ==
-requests==2.31.0     # For making HTTP requests to external APIs (e.g., Archive.org)
+requests==2.31.0
+
+# == Curator CLI & Database ==
+duckdb
+pytz
+
+# == CLI & User Experience ==
+tqdm
 
 # --- IMPORTANT: spaCy Model and GPU Support ---
 #
-# The main spacy library is listed above, but the application also requires
-# a specific pre-trained model to function.
-#
-# 1. DOWNLOAD THE REQUIRED MODEL:
-#    After running 'pip install -r requirements.txt', you MUST download the model with:
+# After running 'pip install -r requirements.txt', you MUST download the model with:
 #
 #    python -m spacy download en_core_web_lg
 #
-# 2. (OPTIONAL) FOR GPU ACCELERATION:
-#    If you want to use the GPU acceleration feature, you need to have an
-#    NVIDIA GPU with the correct CUDA drivers installed.
-#
-#    Then, install the version of CuPy that matches your CUDA installation.
-#    For example, for CUDA 11.x:
-#    pip install cupy-cuda11x
-#
-#    For CUDA 12.x:
-#    pip install cupy-cuda12x
-#
-#    You can verify if spaCy can access your GPU by running:
-#    python check_gpu.py
+# (OPTIONAL) FOR GPU ACCELERATION:
+#    pip install cupy-cuda11x  # or cupy-cuda12x depending on your CUDA version

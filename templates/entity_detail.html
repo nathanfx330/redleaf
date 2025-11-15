@@ -9,10 +9,19 @@
 
 <div class="page-heading">
     <h1><mark>{{ text }}</mark> <span class="chip" style="font-size: 0.6em; vertical-align: middle;">{{ label }}</span></h1>
+    
+    <!-- === THIS IS THE ONLY ADDITION === -->
+    <a href="{{ url_for('main.entity_profile', entity_id=entity_id) }}" class="button button-primary">
+        View Full Profile & Boost Relationships
+    </a>
+    <!-- === END OF ADDITION === -->
 </div>
 
 <div class="panel">
     <div class="panel-body">
+        <!-- This hidden form is added to provide a CSRF token for any JS on the page -->
+        <form id="csrf-form-container" style="display: none;">{{ form.hidden_tag() }}</form>
+
         <nav class="tabs-nav">
             <button class="tab-link active" data-tab="mentions">Document Mentions (<span id="mention-count-display">...</span>)</button>
             <button class="tab-link" data-tab="relationships">Inferred Relationships</button>

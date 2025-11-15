@@ -56,23 +56,34 @@ def _internal_semantic_search(db, query: str, limit: int = 20) -> List[Dict]:
     except Exception as e:
         print(f"{Style.RED}[ERROR] Could not generate query embedding: {e}{Style.END}")
         return []
-    all_chunks = db.execute("SELECT doc_id, page_number, embedding FROM embedding_chunks").fetchall()
+
+    normal_chunks = db.execute("SELECT doc_id, page_number, embedding FROM embedding_chunks").fetchall()
+    super_chunks = db.execute("SELECT doc_id, page_number, embedding FROM super_embedding_chunks").fetchall()
+    
+    all_chunks = normal_chunks + super_chunks
     if not all_chunks: return []
+    
     chunk_embeddings = np.array([np.frombuffer(chunk['embedding'], dtype=np.float32) for chunk in all_chunks])
     norm_chunk_embeddings = chunk_embeddings / np.linalg.norm(chunk_embeddings, axis=1, keepdims=True)
     norm_query_vector = query_vector / np.linalg.norm(query_vector)
+    
     similarities = np.dot(norm_chunk_embeddings, norm_query_vector)
+    
     k = min(limit, len(similarities));
     if k <= 0: return []
+        
     top_k_indices = np.argpartition(similarities, -k)[-k:]
     sorted_top_k_indices = top_k_indices[np.argsort(similarities[top_k_indices])][::-1]
+    
     unique_sources, top_results = set(), []
     for index in sorted_top_k_indices:
-        chunk = all_chunks[index]; source_tuple = (chunk['doc_id'], chunk['page_number'])
+        chunk = all_chunks[index]; 
+        source_tuple = (chunk['doc_id'], chunk['page_number'])
         if source_tuple not in unique_sources:
             unique_sources.add(source_tuple)
             top_results.append({'doc_id': chunk['doc_id'], 'page_number': chunk['page_number']})
             if len(top_results) >= limit: break
+            
     return top_results
 
 def read_specific_pages(db, sources: List[Dict[str, int]], MAX_CONTEXT_CHARS=32000) -> str:
@@ -91,8 +102,7 @@ def read_specific_pages(db, sources: List[Dict[str, int]], MAX_CONTEXT_CHARS=320
         context += entry
     return context
 
-def get_page_content(doc_id: int, page_number: int) -> Tuple[str, Dict]:
-    db = get_db()
+def get_page_content(db, doc_id: int, page_number: int) -> Tuple[str, Dict]:
     doc = db.execute("SELECT id, relative_path, file_type, page_count FROM documents WHERE id = ?", (doc_id,)).fetchone()
     if not doc: return f"Error: No document found with ID {doc_id}.", None
     if doc['page_count'] and (page_number < 1 or page_number > doc['page_count']): return f"Error: Invalid page number.", None
@@ -252,6 +262,9 @@ class BaseAssistant:
             print(f"{Style.RED}[FATAL] Agent failed to produce a valid action. Details: {e}{Style.END}\nRaw Response: {response_str}")
             return "Agent failed to generate a valid research plan."
             
+    # ===================================================================
+    # --- MODIFIED FUNCTION: _handle_search_command ---
+    # ===================================================================
     def _handle_search_command(self, user_input: str) -> Tuple[Union[str, None], Union[Tuple[str, str], None]]:
         search_match = re.search(r'^search:\s*(.+)', user_input, re.IGNORECASE)
         if not search_match: return None, None
@@ -284,6 +297,39 @@ class BaseAssistant:
         for rank, source in enumerate(semantic_sources): rrf_scores[(source['doc_id'], source['page_number'])] += 1 / (k + rank + 1)
         
         sorted_sources = sorted(rrf_scores.keys(), key=lambda s: rrf_scores[s], reverse=True)
+
+        # --- START OF NEW RE-RANKING LOGIC ---
+        try:
+            # 1. Check if the user's query contains a known entity
+            main_entity = self.db.execute("SELECT id FROM entities WHERE ? LIKE '%' || text || '%'", (search_query,)).fetchone()
+            
+            if main_entity:
+                # 2. If it does, find its boosted "friends" for the current user
+                boosted_friends = self.db.execute(
+                    "SELECT be.text FROM boosted_relationships br JOIN entities be ON br.target_entity_id = be.id WHERE br.user_id = ? AND br.source_entity_id = ?",
+                    (self.user['id'], main_entity['id'])
+                ).fetchall()
+                
+                if boosted_friends:
+                    boosted_names = {friend['text'] for friend in boosted_friends}
+                    print(f"{Style.MAGENTA}[INFO] Applying boost for relationships: {', '.join(boosted_names)}{Style.END}")
+                    
+                    # 3. For each search result, check if it also contains a "friend"
+                    for source_tuple in sorted_sources:
+                        doc_id, page_num = source_tuple
+                        page_content, _ = get_page_content(self.db, doc_id, page_num)
+                        
+                        if page_content and any(friend_name.lower() in page_content.lower() for friend_name in boosted_names):
+                            # 4. Apply a significant boost to its RRF score!
+                            rrf_scores[source_tuple] *= 1.5  # A 50% score boost
+
+                    # 5. Re-sort the sources based on the newly boosted scores
+                    sorted_sources = sorted(rrf_scores.keys(), key=lambda s: rrf_scores[s], reverse=True)
+
+        except Exception as e:
+            print(f"{Style.RED}[WARN] Could not apply relational boost: {e}{Style.END}")
+        # --- END OF NEW RE-RANKING LOGIC ---
+
         final_sources = [{'doc_id': doc_id, 'page_number': page_num} for doc_id, page_num in sorted_sources]
         
         sources = final_sources[:limit]
@@ -347,6 +393,7 @@ class BaseAssistant:
             final_answer = self.get_assistant_response_stream(messages)
             print(f"{Style.END}", end='')
             return final_answer, (search_query, combined_context)
+    # ===================================================================
 
     def _handle_instruct_command(self, user_input: str) -> Union[str, None]:
         doc_page_match = re.search(r'^id:\s*(\d+)\s*\+\s*page:\s*(\d+(?:-\d+)?)\s*\+\s*(.+)', user_input, re.IGNORECASE)
@@ -412,7 +459,7 @@ class BaseAssistant:
             page_header = f"\n{Style.BOLD}--- Analyzing Page {page_num}/{end_page} ---{Style.END}"
             print(page_header, flush=True)
             full_batch_output.append(page_header)
-            page_text, doc_info = get_page_content(doc_id=doc_id, page_number=page_num)
+            page_text, doc_info = get_page_content(self.db, doc_id=doc_id, page_number=page_num)
             
             if not page_text or not doc_info:
                 no_text_msg = f"{Style.YELLOW}[SKIP] Page {page_num} has no text.{Style.END}"
@@ -447,7 +494,6 @@ class BaseAssistant:
         
         return "\n".join(full_batch_output), full_doc_context
 
-    # === START: THE FULL, CORRECTED `run()` METHOD ===
     def run(self):
         if not self._login(): return
         
@@ -590,4 +636,3 @@ class BaseAssistant:
             except (json.JSONDecodeError, TypeError, ValueError, KeyError) as e:
                 print(f"{Style.RED}[Error] Could not execute AI action. Raw response: {tool_choice_response}{Style.END}\nDetails: {e}")
                 conversation_history.pop()
- 

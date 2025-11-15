@@ -1,3 +1,4 @@
+# --- File: ./project/database.py (FIXED for Timestamp Handling) ---
 import sqlite3
 from flask import g, current_app
 
@@ -8,11 +9,17 @@ def get_db():
     again during the same request.
     """
     if 'db' not in g:
+        # --- START OF FIX ---
+        # We are removing the automatic type detection for declared types.
+        # This will cause timestamp columns to be returned as strings,
+        # preventing the default parser from crashing on DuckDB's format.
+        # The application's Jinja filters will handle the string parsing.
         g.db = sqlite3.connect(
             current_app.config['DATABASE_FILE'],
-            detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
             timeout=15  # Increased timeout for potentially long-running write operations
         )
+        # --- END OF FIX ---
+        
         # Use sqlite3.Row to allow accessing columns by name
         g.db.row_factory = sqlite3.Row
         # Enable foreign key constraint enforcement

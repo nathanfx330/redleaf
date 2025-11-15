@@ -1,10 +1,14 @@
-# --- File: ./processing_pipeline.py ---
+# --- File: ./processing_pipeline.py (CORRECTED FOR EML TRANSACTION) ---
 import sqlite3
 import hashlib
 import traceback
 import os
 import datetime
 import re
+import email
+import json
+from email.header import decode_header
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from itertools import combinations
 from typing import Union, List
@@ -59,7 +63,7 @@ def _paginate_text(text, words_per_page=300):
     return page_content_map
 
 def extract_text_for_copying(doc_path: Path, file_type: str, start_page=None, end_page=None) -> str:
-    if file_type in ['TXT', 'HTML', 'SRT']:
+    if file_type in ['TXT', 'HTML', 'SRT', 'EML']:
         conn = None
         try:
             conn = get_db_conn()
@@ -69,7 +73,7 @@ def extract_text_for_copying(doc_path: Path, file_type: str, start_page=None, en
                 return f"Error: Document not found in database for path {rel_path_str}"
             
             doc_id = doc_id_row['id']
-            if file_type in ['HTML', 'SRT']:
+            if file_type in ['HTML', 'SRT', 'EML']:
                 start_page = None
                 end_page = None
 
@@ -203,18 +207,80 @@ def _generate_embeddings_for_page(page_text: str) -> list[tuple[str, bytes]]:
             continue
     return embeddings_to_store
 
+def _decode_header_text(header_value):
+    """Decodes email headers to handle different charsets."""
+    if not header_value:
+        return ""
+    decoded_parts = []
+    for part, charset in decode_header(header_value):
+        if isinstance(part, bytes):
+            decoded_parts.append(part.decode(charset or 'utf-8', 'ignore'))
+        else:
+            decoded_parts.append(part)
+    return "".join(decoded_parts)
+
+def _parse_eml_content(eml_bytes: bytes) -> dict:
+    """Parses an .eml file's content and returns structured metadata and body text."""
+    msg = email.message_from_bytes(eml_bytes)
+    
+    metadata = {
+        'from_address': _decode_header_text(msg.get('From')),
+        'to_addresses': _decode_header_text(msg.get('To')),
+        'cc_addresses': _decode_header_text(msg.get('Cc')),
+        'subject': _decode_header_text(msg.get('Subject')),
+        'sent_at': None
+    }
+    
+    date_str = msg.get('Date')
+    if date_str:
+        try:
+            metadata['sent_at'] = parsedate_to_datetime(date_str)
+        except (ValueError, TypeError):
+            pass
+
+    body_plain, body_html = "", ""
+    if msg.is_multipart():
+        for part in msg.walk():
+            content_type = part.get_content_type()
+            if content_type == 'text/plain' and not body_plain:
+                try:
+                    body_plain = part.get_payload(decode=True).decode(part.get_content_charset() or 'utf-8', 'ignore')
+                except (LookupError, AttributeError):
+                    pass
+            elif content_type == 'text/html' and not body_html:
+                 try:
+                    body_html = part.get_payload(decode=True).decode(part.get_content_charset() or 'utf-8', 'ignore')
+                 except (LookupError, AttributeError):
+                    pass
+    else:
+        try:
+            body_plain = msg.get_payload(decode=True).decode(msg.get_content_charset() or 'utf-8', 'ignore')
+        except (LookupError, AttributeError):
+            pass
+
+    final_body = body_plain.strip()
+    if not final_body and body_html:
+        soup = BeautifulSoup(body_html, 'lxml')
+        final_body = _extract_text_with_block_separation(str(soup))
+        
+    return {'metadata': metadata, 'body': final_body}
+
 def _extract_data_from_pages(page_content_map: dict) -> dict:
     nlp = load_spacy_model()
-    data_to_store = {"entities": set(), "appearances": set(), "relationships": [], "content": []}
+    data_to_store = {"entities": set(), "appearances": set(), "relationships": [], "content": [], "super_chunks": []}
+    
     for page_num, page_text in page_content_map.items():
         data_to_store["content"].append((page_num, page_text))
         if not page_text or len(page_text) > nlp.max_length: continue
+        
         doc_nlp = nlp(page_text)
+        
         for ent in doc_nlp.ents:
             entity_tuple = (ent.text.strip(), ent.label_)
             if entity_tuple[0]:
                 data_to_store["entities"].add(entity_tuple)
                 data_to_store["appearances"].add((entity_tuple, page_num))
+        
         for sent in doc_nlp.sents:
             unique_ents = list(dict.fromkeys(sent.ents))
             if len(unique_ents) < 2: continue
@@ -227,6 +293,22 @@ def _extract_data_from_pages(page_content_map: dict) -> dict:
                         obj = (ent2.text.strip(), ent2.label_) if ent1.start_char < ent2.start_char else (ent1.text.strip(), ent1.label_)
                         if subj[0] and obj[0]:
                              data_to_store["relationships"].append((subj, obj, phrase, page_num))
+
+        # New "Super Embedding" Chunk Logic
+        for ent in doc_nlp.ents:
+            if not ent.text.strip(): continue
+            verb = ent.root.head
+            if verb.pos_ in ("VERB", "AUX"):
+                action_phrase = " ".join(token.text for token in verb.subtree).strip().replace('\n', ' ').replace('  ', ' ')
+                if action_phrase:
+                    super_chunk_text = f"{ent.text} ({ent.label_}): {action_phrase}"
+                    entity_tuple = (ent.text.strip(), ent.label_)
+                    data_to_store["super_chunks"].append({
+                        "entity": entity_tuple,
+                        "page_number": page_num,
+                        "chunk_text": super_chunk_text
+                    })
+
     return data_to_store
 
 def process_document(doc_id):
@@ -247,7 +329,12 @@ def process_document(doc_id):
         full_path = DOCUMENTS_DIR / doc_info['relative_path']
         
         page_content_map, page_count, duration_seconds = {}, 0, None
-        extracted_data = {"embeddings": []}
+        extracted_data = {"embeddings": [], "super_chunks": []}
+        csl_json_text = None
+
+        # --- START OF MODIFICATION ---
+        eml_meta_to_insert = None # Variable to hold EML metadata for the final transaction
+        # --- END OF MODIFICATION ---
 
         if doc_info['file_type'] == 'SRT':
             content = full_path.read_text(encoding='utf-8', errors='ignore')
@@ -274,7 +361,6 @@ def process_document(doc_id):
             extracted_data["content"].append((1, full_dialogue_text))
 
             if full_dialogue_text and len(full_dialogue_text) <= nlp.max_length:
-                # This part is complex, reusing the logic from the previous correct version
                 cue_char_boundaries = []
                 current_pos = 0
                 for cue in parsed_cues:
@@ -305,6 +391,39 @@ def process_document(doc_id):
                                         if rel_start_char >= cue_start and rel_start_char < cue_end:
                                             extracted_data["relationships"].append((subj, obj, phrase, parsed_cues[i]['sequence']))
                                             break
+        elif doc_info['file_type'] == 'EML':
+            eml_bytes = full_path.read_bytes()
+            parsed_eml = _parse_eml_content(eml_bytes)
+            page_content_map = {1: parsed_eml['body']}
+            page_count = 1
+            
+            for page_num, page_text in page_content_map.items():
+                for chunk_text, embedding_blob in _generate_embeddings_for_page(page_text):
+                    extracted_data["embeddings"].append((doc_id, page_num, chunk_text, embedding_blob))
+            extracted_data.update(_extract_data_from_pages(page_content_map))
+            
+            eml_meta = parsed_eml['metadata']
+
+            csl_data = {
+                "id": f"doc-{doc_id}",
+                "type": "personal_communication",
+                "title": eml_meta.get('subject'),
+                "medium": "Email",
+                "author": [{"literal": eml_meta.get('from_address')}],
+                "recipient": [{"literal": eml_meta.get('to_addresses')}],
+                "issued": None
+            }
+            if eml_meta.get('sent_at'):
+                dt = eml_meta['sent_at']
+                csl_data['issued'] = {'date-parts': [[dt.year, dt.month, dt.day]]}
+            
+            csl_json_text = json.dumps(csl_data, indent=2)
+
+            # --- START OF MODIFICATION ---
+            # Store the data in our variable instead of writing it to the DB
+            eml_meta_to_insert = (doc_id, eml_meta['from_address'], eml_meta['to_addresses'], eml_meta['cc_addresses'], eml_meta['subject'], eml_meta['sent_at'])
+            # --- END OF MODIFICATION ---
+
         else:
             if doc_info['file_type'] == 'PDF':
                 with fitz.open(full_path) as pdf_doc:
@@ -334,8 +453,20 @@ def process_document(doc_id):
         cursor.execute("DELETE FROM entity_appearances WHERE doc_id = ?", (doc_id,))
         cursor.execute("DELETE FROM entity_relationships WHERE doc_id = ?", (doc_id,))
         cursor.execute("DELETE FROM embedding_chunks WHERE doc_id = ?", (doc_id,))
+        cursor.execute("DELETE FROM super_embedding_chunks WHERE doc_id = ?", (doc_id,))
+        cursor.execute("DELETE FROM email_metadata WHERE doc_id = ?", (doc_id,))
+        cursor.execute("DELETE FROM document_metadata WHERE doc_id = ?", (doc_id,))
 
         cursor.execute("UPDATE documents SET page_count = ?, duration_seconds = ? WHERE id = ?", (page_count, duration_seconds, doc_id))
+
+        # --- START OF MODIFICATION ---
+        # If we have EML metadata, insert it now inside the main transaction
+        if eml_meta_to_insert:
+            cursor.execute("""
+                INSERT INTO email_metadata (doc_id, from_address, to_addresses, cc_addresses, subject, sent_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, eml_meta_to_insert)
+        # --- END OF MODIFICATION ---
 
         if extracted_data.get("cues"):
             cues_to_insert = [(doc_id, c['sequence'], c['timestamp'], c['dialogue']) for c in extracted_data["cues"]]
@@ -346,6 +477,11 @@ def process_document(doc_id):
         
         if extracted_data.get("embeddings"):
              cursor.executemany("INSERT INTO embedding_chunks (doc_id, page_number, chunk_text, embedding) VALUES (?, ?, ?, ?)", extracted_data["embeddings"])
+        
+        if csl_json_text:
+            cursor.execute("""
+                INSERT INTO document_metadata (doc_id, csl_json, last_updated) VALUES (?, ?, CURRENT_TIMESTAMP)
+            """, (doc_id, csl_json_text))
 
         if extracted_data.get("entities"):
             entities_list = list(extracted_data["entities"])
@@ -359,11 +495,40 @@ def process_document(doc_id):
             appearances_to_insert = [(doc_id, entity_id_map[ent_tuple], page_num) for ent_tuple, page_num in extracted_data["appearances"] if ent_tuple in entity_id_map]
             if appearances_to_insert:
                 cursor.executemany("INSERT OR IGNORE INTO entity_appearances (doc_id, entity_id, page_number) VALUES (?, ?, ?)", appearances_to_insert)
-
-            relationships_to_insert = [(entity_id_map[subj], entity_id_map[obj], phrase, doc_id, page_num) for subj, obj, phrase, page_num in extracted_data.get("relationships", []) if subj in entity_id_map and obj in entity_id_map]
-            if relationships_to_insert:
-                cursor.executemany("INSERT INTO entity_relationships (subject_entity_id, object_entity_id, relationship_phrase, doc_id, page_number) VALUES (?, ?, ?, ?, ?)", relationships_to_insert)
             
+            relationships_to_insert = [
+                (entity_id_map[subj], entity_id_map[obj], phrase, doc_id, page_num) 
+                for subj, obj, phrase, page_num in extracted_data.get("relationships", []) 
+                if subj in entity_id_map and obj in entity_id_map
+            ]
+            
+            if relationships_to_insert:
+                cursor.executemany(
+                    "INSERT INTO entity_relationships (subject_entity_id, object_entity_id, relationship_phrase, doc_id, page_number) VALUES (?, ?, ?, ?, ?)", 
+                    relationships_to_insert
+                )
+            
+            if extracted_data.get("super_chunks"):
+                super_embeddings_to_store = []
+                for chunk_data in extracted_data["super_chunks"]:
+                    entity_tuple = chunk_data["entity"]
+                    if entity_tuple in entity_id_map:
+                        entity_id = entity_id_map[entity_tuple]
+                        chunk_text = chunk_data["chunk_text"]
+                        try:
+                            response = ollama.embeddings(model=EMBEDDING_MODEL, prompt=chunk_text)
+                            embedding_blob = np.array(response['embedding'], dtype=np.float32).tobytes()
+                            super_embeddings_to_store.append((doc_id, chunk_data["page_number"], entity_id, chunk_text, embedding_blob))
+                        except Exception as e:
+                            print(f"WORKER WARNING: Could not generate super embedding for chunk '{chunk_text[:50]}...'. Error: {e}")
+                            continue
+                
+                if super_embeddings_to_store:
+                    cursor.executemany(
+                        "INSERT INTO super_embedding_chunks (doc_id, page_number, entity_id, chunk_text, embedding) VALUES (?, ?, ?, ?, ?)",
+                        super_embeddings_to_store
+                    )
+
         cursor.execute("UPDATE documents SET status = ?, status_message = ?, processed_at = CURRENT_TIMESTAMP WHERE id = ?", ('Indexed', 'Processing complete.', doc_id))
         conn.commit()
         print(f"--- Worker {os.getpid()} finished Doc ID: {doc_id} ---")
@@ -388,12 +553,12 @@ def process_document(doc_id):
 def discover_and_register_documents():
     """Scans the source directory and registers new or modified files."""
     print(f"--- Scanning for documents in {DOCUMENTS_DIR} ---")
-    conn = get_db_conn() # This function is safe as it's single-threaded
+    conn = get_db_conn() 
     try:
         db_files = {row['relative_path']: row['file_hash'] for row in conn.execute("SELECT relative_path, file_hash FROM documents").fetchall()}
         
         registered_count = 0
-        supported_patterns = ["*.pdf", "*.txt", "*.html", "*.srt"]
+        supported_patterns = ["*.pdf", "*.txt", "*.html", "*.srt", "*.eml"]
         all_files = []
         for pattern in supported_patterns:
             all_files.extend(DOCUMENTS_DIR.rglob(pattern))
@@ -449,7 +614,7 @@ def discover_and_register_documents():
 def update_browse_cache():
     """Recomputes the aggregated entity data for the Discovery View."""
     print("--- Starting update of Aggregated View Cache ---")
-    conn = get_db_conn() # This function is safe as it's single-threaded
+    conn = get_db_conn() 
     try:
         conn.execute("BEGIN")
         print("Executing aggregation query...")

@@ -1,13 +1,5 @@
 # Redleaf Engine Conda Environment
-#
-# To create this environment from the terminal, run:
-# > conda env create -f environment.yml
-#
-# Then, to activate it:
-# > conda activate redleaf-env
-#
-# Finally, you MUST download the required spaCy model:
-# > python -m spacy download en_core_web_lg
+# ... (header comments) ...
 
 name: redleaf-env
 
@@ -29,10 +21,8 @@ dependencies:
   - lxml=4.9.3
   - spacy=3.6.1
   
-  # --- START OF CHANGE ---
-  # Database command-line tool (needed for precomputed export)
+  # Database command-line tool
   - sqlite
-  # --- END OF CHANGE ---
 
   # Pip is included to manage packages not on Conda
   - pip
@@ -42,4 +32,12 @@ dependencies:
     - PyMuPDF==1.23.5
     - odfpy==1.4.1       
     - citeproc-py==0.6.0
-    - requests==2.31.0
+    - requests==2.3.1.0
+    - ollama
+    - duckdb
+    - pytz
+    - tqdm
+    # For GPU support, you must have an NVIDIA GPU, CUDA drivers,
+    # and then manually install the correct cupy version.
+    # For CUDA 11.x: pip install cupy-cuda11x
+    # For CUDA 12.x: pip install cupy-cuda12x

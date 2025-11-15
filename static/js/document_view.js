@@ -296,12 +296,69 @@ document.addEventListener('DOMContentLoaded', () => {
         function populateYearSelect() { const yearSelect = document.getElementById('csl-date-year'); if(!yearSelect) return; const currentYear = new Date().getFullYear(); yearSelect.innerHTML = '<option value="">Year</option>'; for (let y = currentYear + 1; y >= 1600; y--) yearSelect.add(new Option(y, y)); }
         function populateMonthSelect() { const monthSelect = document.getElementById('csl-date-month'); if(!monthSelect) return; const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]; monthSelect.innerHTML = '<option value="">Month</option>'; months.forEach((month, i) => monthSelect.add(new Option(month, i + 1))); }
         function populateDaySelect() { const daySelect = document.getElementById('csl-date-day'); if(!daySelect) return; daySelect.innerHTML = '<option value="">Day</option>'; for (let d = 1; d <= 31; d++) daySelect.add(new Option(d, d)); }
+        
+        // --- START OF MODIFICATION ---
         function populateDocTypeSelect() {
             if(!typeSelect) return;
-            const types = { 'report': 'Report', 'article-journal': 'Journal Article', 'book': 'Book', 'webpage': 'Webpage', 'broadcast': 'TV/Radio Broadcast', 'interview': 'Interview/Podcast', 'motion_picture': 'Movie / Short Film','entry-encyclopedia': 'Encyclopedia Entry', 'chapter': 'Book Chapter', 'manuscript': 'Manuscript', 'bill': 'Bill / Legislation' };
-            typeSelect.innerHTML = ''; for (const [value, text] of Object.entries(types)) typeSelect.add(new Option(text, value)); 
+            const types = { 
+                'report': 'Report', 
+                'article-journal': 'Journal Article', 
+                'book': 'Book', 
+                'webpage': 'Webpage',
+                'personal_communication': 'Email', // <-- ADDED
+                'broadcast': 'TV/Radio Broadcast', 
+                'interview': 'Interview/Podcast', 
+                'motion_picture': 'Movie / Short Film',
+                'entry-encyclopedia': 'Encyclopedia Entry', 
+                'chapter': 'Book Chapter', 
+                'manuscript': 'Manuscript', 
+                'bill': 'Bill / Legislation' 
+            };
+            typeSelect.innerHTML = ''; 
+            for (const [value, text] of Object.entries(types)) typeSelect.add(new Option(text, value)); 
         }
-        function updateFormFields() { const selectedType = typeSelect.value; document.querySelectorAll('.csl-field-specific').forEach(field => { const visibleFor = field.dataset.cslType.split(' '); field.style.display = visibleFor.includes(selectedType) ? 'block' : 'none'; }); const containerTitleLabel = document.querySelector('label[for="csl-container-title"]'); const publisherLabel = document.querySelector('label[for="csl-publisher"]'); if (selectedType === 'article-journal') containerTitleLabel.textContent = 'Journal Title'; else if (selectedType === 'broadcast') { containerTitleLabel.textContent = 'Program / Series Title'; publisherLabel.textContent = 'Network / Station'; } else if (selectedType === 'interview') containerTitleLabel.textContent = 'Podcast / Publication Series'; else if (selectedType === 'motion_picture') publisherLabel.textContent = 'Studio / Distributor'; else publisherLabel.textContent = 'Publisher / Agency'; }
+
+        function updateFormFields() {
+            const selectedType = typeSelect.value;
+            
+            // First, reset all specific fields and labels to a default state
+            const authorLabel = document.querySelector('label[for="csl-author"]');
+            if (authorLabel) authorLabel.textContent = 'Author(s)';
+
+            const containerTitleLabel = document.querySelector('label[for="csl-container-title"]');
+            if (containerTitleLabel) containerTitleLabel.textContent = 'Container Title';
+            
+            const publisherLabel = document.querySelector('label[for="csl-publisher"]');
+            if (publisherLabel) publisherLabel.textContent = 'Publisher / Agency';
+
+            document.querySelectorAll('.csl-field-specific').forEach(field => {
+                const visibleFor = field.dataset.cslType.split(' ');
+                field.style.display = visibleFor.includes(selectedType) ? 'block' : 'none';
+            });
+            
+            // Now, apply specific overrides for the selected type
+            if (selectedType === 'article-journal') {
+                containerTitleLabel.textContent = 'Journal Title';
+            } else if (selectedType === 'broadcast') {
+                containerTitleLabel.textContent = 'Program / Series Title';
+                publisherLabel.textContent = 'Network / Station';
+            } else if (selectedType === 'interview') {
+                containerTitleLabel.textContent = 'Podcast / Publication Series';
+            } else if (selectedType === 'motion_picture') {
+                publisherLabel.textContent = 'Studio / Distributor';
+            } else if (selectedType === 'personal_communication') {
+                if(authorLabel) authorLabel.textContent = 'Sender';
+                // Hide fields that don't apply to email
+                const publisherGroup = document.getElementById('csl-publisher')?.closest('.form-group');
+                const containerGroup = document.getElementById('csl-container-title')?.closest('.form-group');
+                const urlGroup = document.getElementById('csl-url')?.closest('.form-group');
+                if(publisherGroup) publisherGroup.style.display = 'none';
+                if(containerGroup) containerGroup.style.display = 'none';
+                if(urlGroup) urlGroup.style.display = 'none';
+            }
+        }
+        // --- END OF MODIFICATION ---
+
         function populateForm(cslData) { const data = cslData || {}; typeSelect.value = data.type || 'report'; const docTitleElement = document.querySelector('.document-file-name'); document.getElementById('csl-title').value = data.title || (docTitleElement ? docTitleElement.textContent : ''); document.getElementById('csl-author').value = (data.author || []).map(a => a.literal ? a.literal : `${a.family || ''}, ${a.given || ''}`.trim().replace(/^,|,$/g, '')).join('; '); const yearSelect = document.getElementById('csl-date-year'); const monthSelect = document.getElementById('csl-date-month'); const daySelect = document.getElementById('csl-date-day'); if (data.issued && data.issued['date-parts'] && data.issued['date-parts'][0]) { const [year, month, day] = data.issued['date-parts'][0]; yearSelect.value = year || ''; monthSelect.value = month || ''; daySelect.value = day || ''; } else { yearSelect.value = ''; monthSelect.value = ''; daySelect.value = ''; } document.getElementById('csl-publisher').value = data.publisher || ''; document.getElementById('csl-container-title').value = data['container-title'] || ''; document.getElementById('csl-url').value = data.URL || ''; updateFormFields(); }
         function buildCslFromForm() { const csl = { id: `doc-${docId}`, type: typeSelect.value }; const title = document.getElementById('csl-title').value.trim(); if (title) csl.title = title; const authorString = document.getElementById('csl-author').value.trim(); if (authorString) csl.author = authorString.split(';').map(name => ({ 'literal': name.trim() })).filter(a => a.literal); const dateParts = [document.getElementById('csl-date-year').value, document.getElementById('csl-date-month').value, document.getElementById('csl-date-day').value].filter(Boolean).map(p => parseInt(p, 10)); if (dateParts.length > 0) csl.issued = { 'date-parts': [dateParts] }; const publisher = document.getElementById('csl-publisher').value.trim(); if (['report', 'broadcast', 'interview', 'motion_picture'].includes(csl.type) && publisher) csl.publisher = publisher; const containerTitle = document.getElementById('csl-container-title').value.trim(); if (['article-journal', 'broadcast', 'interview'].includes(csl.type) && containerTitle) csl['container-title'] = containerTitle; const url = document.getElementById('csl-url').value.trim(); if (['webpage', 'broadcast', 'interview', 'motion_picture'].includes(csl.type) && url) csl.URL = url; return csl; }
         async function loadMetadata() { try { const response = await fetch(`/api/document/${docId}/metadata`); const data = await response.json(); populateForm(data.csl_json ? JSON.parse(data.csl_json) : null); } catch (error) { saveStatus.textContent = "Error loading data."; saveStatus.style.opacity = '1'; } }

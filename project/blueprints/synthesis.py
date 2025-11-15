@@ -65,15 +65,31 @@ def report_view(report_id):
     doc_to_load = None
     doc_id_to_load = request.args.get('load_doc', type=int)
     if doc_id_to_load:
-        # Fetch the entire document record
         doc_row = db.execute(
             "SELECT * FROM documents WHERE id = ?", (doc_id_to_load,)
         ).fetchone()
         
-        # --- THIS IS THE FIX ---
-        # Convert the sqlite3.Row object to a standard Python dictionary
         if doc_row:
             doc_to_load = dict(doc_row)
+            
+            # This logic correctly determines which viewer URL to use for each file type.
+            file_type = doc_to_load.get('file_type')
+            viewer_url = None
+
+            if file_type == 'PDF':
+                viewer_url = url_for('main.view_pdf_document', doc_id=doc_id_to_load)
+            elif file_type == 'TXT':
+                viewer_url = url_for('main.view_text_document', doc_id=doc_id_to_load)
+            elif file_type == 'HTML':
+                viewer_url = url_for('main.view_html_document', doc_id=doc_id_to_load)
+            elif file_type == 'SRT':
+                viewer_url = url_for('main.view_srt_document', doc_id=doc_id_to_load)
+            elif file_type == 'EML':
+                viewer_url = url_for('main.view_eml_document', doc_id=doc_id_to_load)
+            else:
+                viewer_url = url_for('main.serve_document', relative_path=doc_to_load.get('relative_path'))
+            
+            doc_to_load['viewer_url'] = viewer_url
 
     form = SecureForm()
     return render_template(

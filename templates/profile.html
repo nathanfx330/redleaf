@@ -1,0 +1,404 @@
+<!-- File: ./templates/profile.html -->
+{% extends 'layout.html' %}
+{% block title %}Profile: {{ entity.text }}{% endblock %}
+
+{% block head_extra %}
+<style>
+    .profile-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1.5rem;
+    }
+    .profile-panel h3 {
+        border-bottom: 1px solid var(--border-color);
+        padding-bottom: 0.75rem;
+        margin-bottom: 1rem;
+    }
+    .related-entity-list {
+        list-style: none;
+        padding-left: 0;
+    }
+    .related-entity-list li .form-check {
+        padding: 0.5rem 0;
+        border-bottom: 1px solid var(--border-color);
+    }
+     .related-entity-list li:last-child .form-check {
+        border-bottom: none;
+    }
+    .mention-list-container {
+        max-height: 80vh; /* Make the list scrollable */
+        overflow-y: auto;
+    }
+    /* Styles for the filter pills */
+    .filter-pills {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        padding-bottom: 1rem;
+        margin-bottom: 1rem;
+        border-bottom: 1px solid var(--border-color);
+    }
+    .filter-pill {
+        font-size: 0.8rem;
+        padding: 0.2rem 0.7rem;
+        border-radius: 9999px;
+        background-color: var(--background-light);
+        color: var(--link-color);
+        border: 1px solid var(--border-color);
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+    .filter-pill:hover {
+        border-color: var(--redleaf-red-hover);
+        color: #fff;
+    }
+    .filter-pill.active {
+        background-color: var(--redleaf-red);
+        border-color: var(--redleaf-red-hover);
+        color: #fff;
+        font-weight: 500;
+    }
+    /* Style for the clickable connection chip */
+    .connection-chip {
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+    .connection-chip:hover {
+        background-color: var(--brand-red);
+        color: white;
+        border-color: var(--brand-red);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="breadcrumb">
+    <a href="{{ url_for('main.discover_view') }}">Discovery</a> /
+    <a href="{{ url_for('main.entity_detail', label=entity.label, text=entity.text) }}">{{ entity.text }}</a> /
+    <span>Profile</span>
+</div>
+
+<div class="page-heading">
+    <h1>Profile: <mark>{{ entity.text }}</mark></h1>
+</div>
+
+<div class="profile-grid">
+    <!-- Left Panel: Associated Entities with Boosting Checkboxes -->
+    <div class="panel profile-panel">
+        <div class="panel-body">
+            <h3>Associated Entities</h3>
+            <div id="category-pills-container" class="filter-pills">
+                <!-- JS will add a 'Show Boosted' pill here -->
+            </div>
+            <div id="relationships-container" class="mt-3">
+                <p class="text-muted">Loading...</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Right Panel: Document Mentions -->
+    <div class="panel profile-panel">
+        <div class="panel-body">
+            <h3>Document Mentions</h3>
+            <div id="filter-pills-container-right" class="filter-pills">
+                <!-- JS will populate this -->
+            </div>
+            <div class="mention-list-container">
+                <ul class="result-list" id="entity-mentions-container">
+                    <!-- JS will populate this list -->
+                </ul>
+                <div id="mentions-loader" class="text-muted empty-state mt-3" style="display: none;">
+                    <em>Loading more mentions...</em>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<a href="{{ url_for('main.entity_detail', label=entity.label, text=entity.text) }}" class="button mt-4">← Back to Mentions List</a>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+const ENTITY_ID = {{ entity_id }};
+const CSRF_TOKEN = "{{ form.csrf_token._value() }}";
+
+document.addEventListener('DOMContentLoaded', () => {
+
+    // --- STATE MANAGEMENT ---
+    let mentionsState = { currentPage: 1, hasMore: true, isLoading: false, activeFilter: null };
+    let profileData = {}; 
+    let showBoostedOnly = false; // <-- NEW: State for the boosted filter
+
+    // --- ELEMENT SELECTORS ---
+    const relationshipsContainer = document.getElementById('relationships-container');
+    const categoryPillsContainer = document.getElementById('category-pills-container');
+    const mentionsContainer = document.getElementById('entity-mentions-container');
+    const loader = document.getElementById('mentions-loader');
+    const mentionCountDisplay = document.getElementById('mention-count-display');
+    const filterPillsContainerRight = document.getElementById('filter-pills-container-right');
+
+    // --- LOGIC FOR LEFT PANEL (Associated Entities) ---
+
+    function renderRelationshipList(label) {
+        let entities = profileData[label];
+        if (!entities) {
+            relationshipsContainer.innerHTML = '<p class="text-muted">No entities found for this category.</p>';
+            return;
+        }
+        
+        // --- START OF FIX: Filter by boosted status if the toggle is active ---
+        if (showBoostedOnly) {
+            entities = entities.filter(entity => entity.is_boosted);
+        }
+
+        if (entities.length === 0) {
+            if (showBoostedOnly) {
+                relationshipsContainer.innerHTML = '<p class="text-muted">No boosted relationships found in this category.</p>';
+            } else {
+                relationshipsContainer.innerHTML = '<p class="text-muted">No entities found for this category.</p>';
+            }
+            return;
+        }
+        // --- END OF FIX ---
+        
+        let listItemsHtml = '';
+        entities.forEach(entity => {
+            const checked = entity.is_boosted ? 'checked' : '';
+            listItemsHtml += `
+                <li>
+                    <div class="form-check d-flex justify-content-between align-items-center">
+                        <div>
+                            <input type="checkbox" class="form-check-input boost-checkbox" id="boost-${entity.id}" data-target-id="${entity.id}" ${checked}>
+                            <label for="boost-${entity.id}" class="form-check-label">
+                                <a href="/discover/entity/${encodeURIComponent(label)}/${encodeURIComponent(entity.text)}">${entity.text}</a>
+                            </label>
+                        </div>
+                        <span class="chip connection-chip" data-filter-id="${entity.id}" data-filter-name="${entity.text}" title="Click to filter documents on the right">${entity.count} connection(s)</span>
+                    </div>
+                </li>`;
+        });
+        relationshipsContainer.innerHTML = `<ul class="related-entity-list">${listItemsHtml}</ul>`;
+    }
+
+    async function fetchAndInitializeProfile() {
+        try {
+            const response = await fetch(`/api/entity/${ENTITY_ID}/profile-details`);
+            if (!response.ok) throw new Error('Network error');
+            profileData = await response.json();
+
+            if (Object.keys(profileData).length === 0) {
+                document.querySelector('.profile-grid .panel-body:first-child').innerHTML = '<h3>Associated Entities</h3><p class="text-muted empty-state">No direct relationships found for this entity.</p>';
+                filterPillsContainerRight.style.display = 'none';
+                return;
+            }
+
+            const sortedCategories = Object.keys(profileData).sort();
+
+            // --- START OF FIX: Add the "Show Boosted" pill first ---
+            let categoryPillsHtml = `
+                <button class="filter-pill" id="show-boosted-pill" title="Show only items you have checked">★ Show Boosted</button>
+                <div class="divider" style="border-left: 1px solid var(--border-color); margin: 0 0.5rem;"></div>
+            `;
+            // --- END OF FIX ---
+
+            sortedCategories.forEach(label => {
+                categoryPillsHtml += `<button class="filter-pill" data-label="${label}">${label} (${profileData[label].length})</button>`;
+            });
+            categoryPillsContainer.innerHTML = categoryPillsHtml;
+
+            if (sortedCategories.length > 0) {
+                categoryPillsContainer.querySelector('.filter-pill[data-label]').classList.add('active');
+                renderRelationshipList(sortedCategories[0]);
+            }
+            
+            filterPillsContainerRight.innerHTML = '<button class="filter-pill active" data-label="all">All Mentions</button>';
+
+        } catch (error) {
+            console.error('Error fetching profile:', error);
+            relationshipsContainer.innerHTML = '<p class="text-danger">Could not load profile data.</p>';
+        }
+    }
+    
+    // --- LOGIC FOR RIGHT PANEL (Mentions) ---
+    function resetMentions() {
+        mentionsContainer.innerHTML = '';
+        mentionsState.currentPage = 1;
+        mentionsState.hasMore = true;
+        mentionsState.isLoading = false;
+        loader.style.display = 'none';
+    }
+
+    async function fetchMentions() {
+        if (!mentionsState.hasMore || mentionsState.isLoading) return;
+        mentionsState.isLoading = true;
+        loader.style.display = 'block';
+
+        let url;
+        if (mentionsState.activeFilter && mentionsState.activeFilter.type === 'co-mention') {
+            url = `/api/entity/${ENTITY_ID}/co-mentions?page=${mentionsState.currentPage}&filter_entity_id=${mentionsState.activeFilter.id}`;
+        } else {
+            url = `/api/entity/${ENTITY_ID}/mentions?page=${mentionsState.currentPage}`;
+        }
+
+        try {
+            const response = await fetch(url);
+            if (!response.ok) throw new Error('Network request failed');
+            const data = await response.json();
+            
+            if (mentionsState.currentPage === 1) {
+                if (data.total_count === 0) {
+                    let emptyText = 'No mentions of this entity were found.';
+                    if (mentionsState.activeFilter && mentionsState.activeFilter.type === 'co-mention') {
+                        emptyText = `No documents found where "{{ entity.text }}" and "${mentionsState.activeFilter.name}" are mentioned together.`;
+                    }
+                    mentionsContainer.innerHTML = `<p class="text-muted empty-state">${emptyText}</p>`;
+                }
+            }
+            renderMentions(data.mentions, data.total_count);
+            mentionsState.hasMore = data.has_more;
+            mentionsState.currentPage++;
+        } catch (error) {
+            console.error('Failed to fetch mentions:', error);
+            loader.innerHTML = '<em class="text-danger">Error loading mentions.</em>';
+        } finally {
+            mentionsState.isLoading = false;
+            if (!mentionsState.hasMore) {
+                loader.style.display = 'none';
+            }
+        }
+    }
+
+    function renderMentions(mentions, totalCount) {
+        if(mentionCountDisplay) mentionCountDisplay.textContent = totalCount;
+        if (!mentions || mentions.length === 0) return;
+        const fragment = document.createDocumentFragment();
+        mentions.forEach(res => {
+            const li = document.createElement('li');
+            li.className = 'result-item';
+            const docLink = `/document/${res.doc_id}` + (res.page_number ? `#page=${res.page_number}` : '');
+            li.innerHTML = `
+                <div class="result-item-header">
+                    <div><a class="result-title" href="${docLink}">${res.relative_path}</a></div>
+                    <span class="text-muted">Page ${res.page_number}</span>
+                </div>
+                <p class="result-snippet">...${res.snippet}...</p>`;
+            fragment.appendChild(li);
+        });
+        mentionsContainer.appendChild(fragment);
+    }
+    
+    // --- EVENT LISTENERS ---
+    const mentionsListContainer = document.querySelector('.mention-list-container');
+    mentionsListContainer.addEventListener('scroll', () => {
+        if (mentionsListContainer.scrollTop + mentionsListContainer.clientHeight >= mentionsListContainer.scrollHeight - 100) {
+            fetchMentions();
+        }
+    });
+
+    categoryPillsContainer.addEventListener('click', (event) => {
+        const pill = event.target.closest('.filter-pill');
+        if (!pill) return;
+
+        // --- START OF FIX: Handle both pill types ---
+        if (pill.id === 'show-boosted-pill') {
+            // Handle the "Show Boosted" pill
+            showBoostedOnly = !showBoostedOnly;
+            pill.classList.toggle('active', showBoostedOnly);
+            
+            // If turning on, deactivate other pills. If turning off, reactivate the current category.
+            const activeCategoryPill = categoryPillsContainer.querySelector('.filter-pill[data-label].active');
+            if (showBoostedOnly && activeCategoryPill) {
+                activeCategoryPill.classList.remove('active');
+            } else if (!showBoostedOnly && !activeCategoryPill) {
+                 const firstCategory = categoryPillsContainer.querySelector('.filter-pill[data-label]');
+                 if(firstCategory) firstCategory.classList.add('active');
+            }
+            
+            // Re-render the list for the currently visible category (or the first one)
+            const categoryToRender = activeCategoryPill ? activeCategoryPill.dataset.label : Object.keys(profileData).sort()[0];
+            renderRelationshipList(categoryToRender);
+
+        } else if (pill.dataset.label) {
+            // Handle a regular category pill
+            if (pill.classList.contains('active')) return;
+
+            // Deactivate all pills first
+            categoryPillsContainer.querySelectorAll('.filter-pill').forEach(p => p.classList.remove('active'));
+            
+            // Activate the clicked one and ensure the boosted filter is off
+            pill.classList.add('active');
+            showBoostedOnly = false;
+            
+            renderRelationshipList(pill.dataset.label);
+        }
+        // --- END OF FIX ---
+    });
+
+    relationshipsContainer.addEventListener('click', (event) => {
+        const chip = event.target.closest('.connection-chip');
+        if (chip) {
+            const filterId = chip.dataset.filterId;
+            const filterName = chip.dataset.filterName;
+            
+            mentionsState.activeFilter = { type: 'co-mention', id: filterId, name: filterName };
+            
+            filterPillsContainerRight.innerHTML = `
+                <button class="filter-pill active" data-label="co-mention">
+                    Mentions with: ${filterName} <span class="tag-remove-btn" title="Clear this filter">×</span>
+                </button>`;
+            
+            resetMentions();
+            fetchMentions();
+        }
+    });
+
+    filterPillsContainerRight.addEventListener('click', (event) => {
+        if (event.target.classList.contains('tag-remove-btn')) {
+            event.stopPropagation();
+            mentionsState.activeFilter = null;
+            filterPillsContainerRight.innerHTML = '<button class="filter-pill active" data-label="all">All Mentions</button>';
+            resetMentions();
+            fetchMentions();
+        }
+    });
+
+    relationshipsContainer.addEventListener('change', async (event) => {
+        if (event.target.classList.contains('boost-checkbox')) {
+             const checkbox = event.target;
+            checkbox.disabled = true;
+            try {
+                const response = await fetch('/api/entity/boost', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN },
+                    body: JSON.stringify({
+                        source_entity_id: ENTITY_ID,
+                        target_entity_id: parseInt(checkbox.dataset.targetId),
+                        boost_status: checkbox.checked
+                    })
+                });
+                 if (!response.ok) throw new Error('Failed to save boost status.');
+                const targetId = parseInt(checkbox.dataset.targetId);
+                for (const label in profileData) {
+                    const entity = profileData[label].find(e => e.id === targetId);
+                    if (entity) {
+                        entity.is_boosted = checkbox.checked;
+                        break;
+                    }
+                }
+            } catch (error) {
+                console.error("Failed to save boost status:", error);
+                checkbox.checked = !checkbox.checked;
+            } finally {
+                checkbox.disabled = false;
+            }
+        }
+    });
+    
+    // --- INITIAL DATA LOAD ---
+    fetchAndInitializeProfile();
+    fetchMentions();
+});
+</script>
+{% endblock %}

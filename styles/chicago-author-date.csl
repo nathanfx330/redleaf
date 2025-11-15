@@ -174,7 +174,7 @@
         <text variable="title" quotes="true"/>
       </else-if>
       <!-- === MODIFICATION START === -->
-      <else-if type="bill book graphic legal_case legislation motion_picture song broadcast interview" match="any">
+      <else-if type="bill book graphic legal_case legislation motion_picture song broadcast interview personal_communication" match="any">
       <!-- === MODIFICATION END === -->
         <text variable="title" font-style="italic"/>
       </else-if>

@@ -79,10 +79,79 @@
     const REPORT_ID = {{ report.id }};
     const CSRF_TOKEN = "{{ form.csrf_token._value() }}";
     
-    // --- THIS IS THE FIX ---
     // Pass the document data as a global JS variable.
-    // Use 'null' if the doc doesn't exist, which is valid JSON.
     window.DOC_TO_LOAD = {{ doc_to_load | tojson | safe if doc_to_load else 'null' }};
 </script>
+
+<!-- =================================================================== -->
+<!-- EML Viewer Interception and Override -->
+<!-- =================================================================== -->
+<script>
+    // This script runs BEFORE synthesis.bundle.js to prevent it from acting on EML files.
+    (function() {
+        if (window.DOC_TO_LOAD && window.DOC_TO_LOAD.file_type === 'EML') {
+            // Move the data to a temporary variable so the main script can't see it.
+            window.EML_FIX_DATA = window.DOC_TO_LOAD;
+            // Nullify the original variable so the main script's broken logic is skipped.
+            window.DOC_TO_LOAD = null;
+        }
+    })();
+</script>
+
 <script type="module" src="{{ url_for('static', filename='vendor/synthesis.bundle.js') }}"></script>
+
+<script>
+    // This script runs AFTER synthesis.bundle.js has harmlessly finished.
+    document.addEventListener('DOMContentLoaded', () => {
+        // If our temporary data exists, it means we need to manually load the viewer.
+        if (window.EML_FIX_DATA) {
+            const referenceViewer = document.getElementById('reference-viewer');
+            const correctUrl = window.EML_FIX_DATA.viewer_url;
+
+            if (referenceViewer && correctUrl) {
+                console.log('EML OVERRIDE: Loading correct EML viewer now.');
+                // Set the iframe source to the correct viewer URL. This will not trigger a download.
+                referenceViewer.src = correctUrl;
+            }
+            
+            // --- START OF FIX ---
+            // Manually set up the "Back to Document" button that the main script missed.
+            const backButton = document.getElementById('back-to-doc-view-btn');
+            const docId = window.EML_FIX_DATA.id;
+            if (backButton && docId) {
+                const backUrl = `/document/${docId}`;
+                backButton.href = backUrl;
+                backButton.style.display = 'inline-block';
+            }
+            // --- END OF FIX ---
+            
+            // Clean up the temporary variable.
+            delete window.EML_FIX_DATA;
+        }
+
+        // This listener intercepts clicks on citation pills BEFORE the main script.
+        document.body.addEventListener('click', (event) => {
+            const pill = event.target.closest('.citation-pill');
+            if (!pill) return;
+
+            const docType = pill.getAttribute('data-doc-type');
+            const docId = pill.getAttribute('data-doc-id');
+
+            // If the clicked pill is for an EML file, we take over.
+            if (docType === 'EML' && docId) {
+                // Prevent the main script's broken click handler from running.
+                event.preventDefault();
+                event.stopPropagation();
+                
+                const referenceViewer = document.getElementById('reference-viewer');
+                const correctUrl = `/view_eml/${docId}`;
+                
+                if (referenceViewer && referenceViewer.src !== correctUrl) {
+                    console.log(`EML OVERRIDE (Pill Click): Intercepting and loading Doc ID ${docId}.`);
+                    referenceViewer.src = correctUrl;
+                }
+            }
+        }, true); // The 'true' is critical: it makes our listener run before the main script's.
+    });
+</script>
 {% endblock %}

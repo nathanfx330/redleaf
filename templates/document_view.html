@@ -1,4 +1,4 @@
-<!-- File: ./templates/document_view.html -->
+<!-- File: ./templates/document_view.html (CORRECTED FOR EML VIEW and NEW SCRIPT) -->
 {% extends 'layout.html' %}
 {% set page_layout = 'full_height' %}
 
@@ -112,7 +112,6 @@
                         <div class="input-group">
                             <input type="number" class="form-control form-control-small" id="page-num-single" placeholder="e.g., 1" min="1" max="{{ doc.page_count or 1 }}">
                             <button class="button button-small" id="copy-single-page-btn">Copy</button>
-                            <!-- NEW BUTTON FOR SINGLE PAGE -->
                             <button class="button button-small" id="copy-assistant-single-page-btn" title="Copy an AI assistant command to summarize this page">AI Cmd</button>
                         </div>
                     </div>
@@ -126,7 +125,6 @@
                             <input type="number" class="form-control form-control-small" id="page-num-start" placeholder="Start" min="1" max="{{ doc.page_count or 1 }}">
                             <input type="number" class="form-control form-control-small" id="page-num-end" placeholder="End" min="1" max="{{ doc.page_count or 1 }}">
                             <button class="button button-small" id="copy-range-page-btn">Copy</button>
-                            <!-- NEW BUTTON FOR PAGE RANGE -->
                             <button class="button button-small" id="copy-assistant-range-btn" title="Copy an AI assistant command to summarize this range">AI Cmd</button>
                         </div>
                     </div>
@@ -145,6 +143,8 @@
                 <iframe src="{{ url_for('main.serve_document', relative_path=doc.relative_path) }}" title="Document Viewer" id="doc-viewer"></iframe>
             {% elif doc.file_type == 'SRT' %}
                 <iframe src="{{ url_for('main.view_srt_document', doc_id=doc.id, v=timestamp) }}" title="SRT Document Viewer" id="doc-viewer"></iframe>
+            {% elif doc.file_type == 'EML' %}
+                <iframe src="{{ url_for('main.view_eml_document', doc_id=doc.id) }}" title="Email Document Viewer" id="doc-viewer"></iframe>
             {% else %}
                 <iframe src="{{ url_for('main.serve_document', relative_path=doc.relative_path) }}" title="Document Viewer" id="doc-viewer"></iframe>
             {% endif %}
@@ -330,5 +330,8 @@ document.addEventListener('DOMContentLoaded', () => {
     window.addEventListener('message', messageHandler);
 });
 </script>
+<!-- START OF MODIFICATION -->
 <script src="{{ url_for('static', filename='js/document_view.js') }}" defer></script>
+<script src="{{ url_for('static', filename='js/media_sync.js') }}" defer></script>
+<!-- END OF MODIFICATION -->
 {% endblock %}

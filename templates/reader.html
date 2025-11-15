@@ -1,0 +1,220 @@
+<!-- Save this code in the file named "templates/reader.html" -->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Project Reader</title>
+    <style>
+        :root {
+            --bg-color: #1e1e1e; --text-color: #d4d4d4; --text-muted: #888;
+            --link-color: #4fc1ff; --link-hover: #82d4ff; --border-color: #3a3a3a;
+            --container-bg: #252526; --code-bg: #1a1a1a; --code-text: #ccc;
+            --header-border: #444; --icon-dir: #ffd700; --icon-py: #4ec9b0;
+            --icon-html: #d16969; --icon-css: #569cd6; --icon-other: #888;
+            --button-bg: #333; --button-hover-bg: #444; --button-active-bg: #555;
+            --button-text: #ccc; --error-text: #f48771; --copy-all-bg: #007acc;
+            --copy-all-hover: #005fa3; --copy-all-active: #004c8c; --copy-all-text: #fff;
+        }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol"; line-height: 1.6; margin: 0; padding: 20px; background-color: var(--bg-color); color: var(--text-color); }
+        .container { background-color: var(--container-bg); padding: 25px; border-radius: 8px; border: 1px solid var(--border-color); max-width: 1200px; margin: auto; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2); }
+        h1 { color: var(--text-color); border-bottom: 1px solid var(--header-border); padding-bottom: 10px; margin-top: 0; font-size: 1.8em; font-weight: 500; margin-bottom: 25px; }
+        .directory-filter { background-color: #2a2a2b; padding: 15px 20px; border-radius: 6px; margin-bottom: 25px; border: 1px solid var(--border-color); }
+        .filter-title { margin-top: 0; margin-bottom: 15px; font-size: 1.1em; font-weight: 500; color: var(--text-muted); }
+        .file-list { list-style: none; padding: 0; margin: 0; }
+        .file-item { padding: 15px 0; border-bottom: 1px solid var(--border-color); }
+        .file-item:last-child { border-bottom: none; }
+        .item-header { display: flex; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
+        .icon { display: inline-block; width: 25px; text-align: center; margin-right: 12px; font-size: 1.3em; flex-shrink: 0; }
+        .py-icon { color: var(--icon-py); } .html-icon { color: var(--icon-html); } .css-icon { color: var(--icon-css); }
+        .file-name { font-weight: 600; color: var(--text-color); margin-right: 10px; }
+        .copy-button { background-color: var(--button-bg); color: var(--button-text); border: 1px solid var(--border-color); padding: 3px 8px; border-radius: 4px; cursor: pointer; font-size: 0.8em; margin-left: auto; transition: background-color 0.2s ease, color 0.2s ease; flex-shrink: 0; }
+        .copy-button:hover { background-color: var(--button-hover-bg); } .copy-button:active { background-color: var(--button-active-bg); } .copy-button.copied { background-color: var(--icon-py); color: var(--bg-color); }
+        .code-block-container { margin-top: 5px; border: 1px solid var(--border-color); border-radius: 5px; overflow: hidden; }
+        .code-block-prefix { font-family: monospace; font-size: 0.95em; color: var(--text-muted); background-color: #303031; padding: 8px 12px; border-bottom: 1px solid var(--border-color); word-break: break-all; }
+        pre { background-color: var(--code-bg); color: var(--text-text); padding: 15px; border-radius: 0 0 4px 4px; margin: 0; overflow-x: auto; white-space: pre; font-family: Consolas, "Courier New", monospace; font-size: 0.9em; line-height: 1.45; }
+        pre code { padding: 0; background: none; border: none; font-size: inherit; color: inherit; }
+        pre code.error-content { color: var(--error-text); font-style: italic; }
+        .copy-all-container { margin-bottom: 25px; padding-bottom: 20px; border-bottom: 1px solid var(--header-border); text-align: center; }
+        #copy-all-button { background-color: var(--copy-all-bg); color: var(--copy-all-text); border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-size: 1.1em; font-weight: 500; transition: background-color 0.2s ease; }
+        #copy-all-button:hover { background-color: var(--copy-all-hover); } #copy-all-button:active { background-color: var(--copy-all-active); } #copy-all-button.copied { background-color: var(--icon-py); color: var(--bg-color); }
+        
+        /* New Tree View Styles */
+        .tree { list-style: none; padding-left: 0; }
+        .tree ul { list-style: none; padding-left: 20px; }
+        .tree-node { padding: 4px 0; }
+        .tree-node label { display: flex; align-items: center; cursor: pointer; }
+        .tree-node input[type="checkbox"] { margin-right: 8px; }
+        .tree-toggler { cursor: pointer; margin-right: 5px; width: 15px; display: inline-block; text-align: center; }
+        .tree-toggler.empty { cursor: default; }
+        .tree-node ul { display: block; }
+        .tree-node.collapsed > ul { display: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Project File Contents</h1>
+        <p style="text-align: center; margin-top: -15px; margin-bottom: 20px; color: var(--text-muted);">Base Directory: {{ base_directory }}</p>
+
+        {% if directory_tree %}
+        <div class="directory-filter">
+            <h3 class="filter-title">Include/Exclude Directories:</h3>
+            
+            {% macro render_tree(tree, path_prefix='') %}
+                <ul class="tree">
+                {% for name, subtree in tree.items() %}
+                    {% set current_path = path_prefix + name %}
+                    <li class="tree-node" data-path="{{ current_path }}">
+                        <label>
+                            {% if subtree %}
+                                <span class="tree-toggler">▾</span>
+                            {% else %}
+                                <span class="tree-toggler empty"></span>
+                            {% endif %}
+                            <input type="checkbox" class="dir-checkbox" value="{{ current_path }}" checked>
+                            <span>{{ name }}</span>
+                        </label>
+                        {% if subtree %}
+                            {{ render_tree(subtree, current_path + '/') }}
+                        {% endif %}
+                    </li>
+                {% endfor %}
+                </ul>
+            {% endmacro %}
+            
+            {{ render_tree(directory_tree) }}
+        </div>
+        {% endif %}
+
+        <div class="copy-all-container">
+            <button id="copy-all-button">Copy Selected Files Structure & Content</button>
+        </div>
+
+        {% if files %}
+            <ul class="file-list">
+                {% for file_info in files %}
+                <li class="file-item" data-path="{{ file_info.path }}" data-directory="{{ file_info.directory }}">
+                    <div class="item-header">
+                        {% if file_info.type == 'python' %}<span class="icon py-icon">🐍</span>
+                        {% elif file_info.type == 'html' %}<span class="icon html-icon">📄</span>
+                        {% elif file_info.type == 'css' %}<span class="icon css-icon">🎨</span>
+                        {% endif %}
+                        <span class="file-name">{{ file_info.name }}</span>
+                        {% if not file_info.error and file_info.content is not none %}
+                            <button class="copy-button" data-target-id="code-{{ file_info.id }}">Copy</button>
+                        {% endif %}
+                    </div>
+                    <div class="code-block-container">
+                        <div class="code-block-prefix">{{ file_info.path }}</div>
+                        <pre><code id="code-{{ file_info.id }}" class="{{ 'error-content' if file_info.error else '' }}">{{ file_info.content | escape }}</code></pre>
+                    </div>
+                </li>
+                {% endfor %}
+            </ul>
+        {% else %}
+             <p style="text-align: center; margin-top: 30px;"><em>No viewable files found.</em></p>
+        {% endif %}
+    </div>
+
+    <script>
+        // --- Individual File Copy Button Logic (unchanged) ---
+        document.addEventListener('click', function(event) {
+            if (event.target.classList.contains('copy-button')) {
+                const button = event.target;
+                const targetId = button.getAttribute('data-target-id');
+                const codeElement = document.getElementById(targetId);
+                if (codeElement) {
+                    navigator.clipboard.writeText(codeElement.innerText)
+                        .then(() => {
+                            button.textContent = 'Copied!'; button.classList.add('copied'); button.disabled = true;
+                            setTimeout(() => { button.textContent = 'Copy'; button.classList.remove('copied'); button.disabled = false; }, 1500);
+                        })
+                        .catch(err => { console.error('Failed to copy text: ', err); button.textContent = 'Error'; });
+                }
+            }
+        });
+
+        // --- New Tree View and "Copy All" Logic ---
+        document.addEventListener('DOMContentLoaded', function() {
+            // Tree expand/collapse logic
+            document.querySelectorAll('.tree-toggler').forEach(toggler => {
+                if (toggler.classList.contains('empty')) return;
+                toggler.addEventListener('click', function(e) {
+                    const parentNode = this.closest('.tree-node');
+                    parentNode.classList.toggle('collapsed');
+                    this.textContent = parentNode.classList.contains('collapsed') ? '▸' : '▾';
+                    e.stopPropagation();
+                });
+            });
+
+            // Cascading checkbox logic
+            document.querySelectorAll('.dir-checkbox').forEach(checkbox => {
+                checkbox.addEventListener('change', function() {
+                    const childCheckboxes = this.closest('.tree-node').querySelectorAll('ul .dir-checkbox');
+                    childCheckboxes.forEach(child => {
+                        child.checked = this.checked;
+                    });
+                });
+            });
+
+            // "Copy All" button logic
+            const copyAllButton = document.getElementById('copy-all-button');
+            if (copyAllButton) {
+                copyAllButton.addEventListener('click', function() {
+                    const excludedDirPaths = new Set();
+                    document.querySelectorAll('.dir-checkbox:not(:checked)').forEach(checkbox => {
+                        excludedDirPaths.add(checkbox.value);
+                    });
+
+                    let fullTextOutput = "";
+                    const fileItems = document.querySelectorAll('.file-list .file-item');
+
+                    fileItems.forEach(item => {
+                        const fileDir = item.getAttribute('data-directory');
+                        const filePath = item.getAttribute('data-path');
+                        
+                        let isExcluded = false;
+                        // Check if the file's directory or any of its parent paths are in the exclusion set
+                        for (const excludedPath of excludedDirPaths) {
+                            if (fileDir === excludedPath || fileDir.startsWith(excludedPath + '/')) {
+                                isExcluded = true;
+                                break;
+                            }
+                        }
+                        
+                        // Root files have an empty directory, they should be included if not excluded
+                        if (fileDir === '' && excludedDirPaths.has('')) {
+                            isExcluded = true;
+                        }
+
+                        if (isExcluded) {
+                            return; // Skip this file
+                        }
+
+                        const codeElement = item.querySelector('pre code');
+                        const isError = codeElement ? codeElement.classList.contains('error-content') : true;
+
+                        if (filePath && codeElement && !isError) {
+                            const codeContent = codeElement.innerText;
+                            fullTextOutput += `--- File: ${filePath} ---\n`;
+                            fullTextOutput += `${codeContent}\n\n`;
+                        }
+                    });
+
+                    if (fullTextOutput) {
+                        navigator.clipboard.writeText(fullTextOutput.trim())
+                            .then(() => {
+                                copyAllButton.textContent = 'Copied Selected!'; copyAllButton.classList.add('copied');
+                                setTimeout(() => { copyAllButton.textContent = 'Copy Selected Files Structure & Content'; copyAllButton.classList.remove('copied'); }, 2000);
+                            })
+                            .catch(err => { console.error('Failed to copy all text: ', err); });
+                    } else {
+                        alert("No content to copy. Ensure desired directories are checked.");
+                    }
+                });
+            }
+        });
+    </script>
+</body>
+</html>

@@ -166,10 +166,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (documents.length === 0) { resultsContainer.innerHTML = '<p class="text-muted empty-state">No documents match all selected filters.</p>'; return; }
                 let html = '<ul class="simple-list">';
                 documents.forEach(doc => {
+                    // --- START OF FIX ---
+                    // Changed doc.id to doc.doc_id to match the API response
                     const colorDot = doc.color ? `<span class="color-dot" style="background-color: ${doc.color};"></span>` : '';
                     const noteIcon = doc.has_personal_note ? '<span class="chip" title="You have a private note">📝</span>' : '';
                     const commentIcon = doc.comment_count > 0 ? `<span class="chip" title="${doc.comment_count} public comment(s)">💬 ${doc.comment_count}</span>` : '';
-                    html += `<li>${colorDot}<a href="/document/${doc.id}">${doc.relative_path}</a><span class="ms-2">${noteIcon} ${commentIcon}</span></li>`;
+                    html += `<li>${colorDot}<a href="/document/${doc.doc_id}">${doc.relative_path}</a><span class="ms-2">${noteIcon} ${commentIcon}</span></li>`;
+                    // --- END OF FIX ---
                 });
                 html += '</ul>';
                 resultsContainer.innerHTML = html;

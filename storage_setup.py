@@ -4,7 +4,7 @@ from pathlib import Path
 
 DATABASE_FILE = "knowledge_base.db"
 
-def create_unified_index(db_path):
+def create_unified_index(db_path, is_bake_operation=False): # <-- MODIFIED: Added is_bake_operation parameter
     """
     Creates the complete database schema for the Redleaf Engine.
     This function establishes the "Unified Index" in a single SQLite file.
@@ -134,14 +134,19 @@ def create_unified_index(db_path):
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_catalog_type ON catalogs (catalog_type);")
 
-    try:
-        cursor.execute(
-            "INSERT INTO catalogs (name, description, catalog_type) VALUES (?, ?, ?)",
-            ('⭐ Favorites', 'Documents you have marked as a favorite.', 'favorites')
-        )
-        print("Created default '⭐ Favorites' catalog.")
-    except sqlite3.IntegrityError:
-        print("'⭐ Favorites' catalog already exists.")
+    # --- START OF FIX ---
+    # Only create the default 'Favorites' catalog if this is NOT a bake operation.
+    # The bake operation will copy the real catalog data from DuckDB.
+    if not is_bake_operation:
+        try:
+            cursor.execute(
+                "INSERT INTO catalogs (name, description, catalog_type) VALUES (?, ?, ?)",
+                ('⭐ Favorites', 'Documents you have marked as a favorite.', 'favorites')
+            )
+            print("Created default '⭐ Favorites' catalog.")
+        except sqlite3.IntegrityError:
+            print("'⭐ Favorites' catalog already exists.")
+    # --- END OF FIX ---
 
     print("Creating Document-Catalogs link table...")
     cursor.execute("""
@@ -273,6 +278,21 @@ def create_unified_index(db_path):
         );
     """)
 
+    # --- START OF NEW TABLE DEFINITION ---
+    print("Creating Email Metadata table...")
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS email_metadata (
+            doc_id INTEGER PRIMARY KEY,
+            from_address TEXT,
+            to_addresses TEXT,
+            cc_addresses TEXT,
+            subject TEXT,
+            sent_at TIMESTAMP,
+            FOREIGN KEY (doc_id) REFERENCES documents(id) ON DELETE CASCADE
+        );
+    """)
+    # --- END OF NEW TABLE DEFINITION ---
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS synthesis_reports (
             id INTEGER PRIMARY KEY,
@@ -316,6 +336,37 @@ def create_unified_index(db_path):
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_embedding_doc_id ON embedding_chunks (doc_id);")
 
+    print("Creating Super Vector Search Index...")
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS super_embedding_chunks (
+            id INTEGER PRIMARY KEY,
+            doc_id INTEGER NOT NULL,
+            page_number INTEGER NOT NULL,
+            entity_id INTEGER NOT NULL,
+            chunk_text TEXT NOT NULL,
+            embedding BLOB NOT NULL,
+            FOREIGN KEY (doc_id) REFERENCES documents(id) ON DELETE CASCADE,
+            FOREIGN KEY (entity_id) REFERENCES entities(id) ON DELETE CASCADE
+        );
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_super_embedding_doc_id ON super_embedding_chunks (doc_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_super_embedding_entity_id ON super_embedding_chunks (entity_id);")
+    
+    # === 10. USER-DRIVEN WEIGHTING (NEW) ===
+    print("Creating Boosted Relationships table...")
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS boosted_relationships (
+            id INTEGER PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            source_entity_id INTEGER NOT NULL,
+            target_entity_id INTEGER NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, source_entity_id, target_entity_id),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (source_entity_id) REFERENCES entities(id) ON DELETE CASCADE,
+            FOREIGN KEY (target_entity_id) REFERENCES entities(id) ON DELETE CASCADE
+        );
+    """)
 
     conn.commit()
     conn.close()

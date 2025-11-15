@@ -1,0 +1,105 @@
+<!-- File: ./templates/eml_viewer.html (CORRECTED FOR EMBEDDING) -->
+<style>
+    :root {
+        --bg-color: #1e1e24; --text-color: #E8E8EA; --page-border: #383842;
+        --header-label-color: #828290; --header-value-color: #E8E8EA;
+    }
+    body, html { margin: 0; padding: 0; background-color: var(--bg-color); color: var(--text-color); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    .container { max-width: 900px; margin: 2rem auto; padding: 1rem; }
+    .email-header {
+        border-bottom: 1px solid var(--page-border);
+        padding-bottom: 1rem;
+        margin-bottom: 1.5rem;
+        font-size: 1.1em;
+    }
+    .header-row {
+        display: grid;
+        grid-template-columns: 80px 1fr;
+        gap: 1rem;
+        margin-bottom: 0.5rem;
+        align-items: baseline;
+    }
+    .header-row .label { color: var(--header-label-color); font-weight: 500; text-align: right; }
+    .header-row .value { color: var(--header-value-color); word-break: break-all; }
+    .email-body {
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        line-height: 1.7;
+        font-size: 1.1em;
+        padding-top: 1rem;
+    }
+    .email-body::selection { background: rgba(162, 35, 35, 0.4); }
+</style>
+
+<div class="container" id="email-container">
+    {% if email %}
+        <div class="email-header">
+            <div class="header-row">
+                <span class="label">From:</span>
+                <span class="value">{{ email.from_address }}</span>
+            </div>
+            <div class="header-row">
+                <span class="label">To:</span>
+                <span class="value">{{ email.to_addresses }}</span>
+            </div>
+            {% if email.cc_addresses %}
+            <div class="header-row">
+                <span class="label">Cc:</span>
+                <span class="value">{{ email.cc_addresses }}</span>
+            </div>
+            {% endif %}
+            <div class="header-row">
+                <span class="label">Date:</span>
+                <span class="value">{{ email.sent_at | strftime('%a, %b %d, %Y at %I:%M %p') if email.sent_at else 'N/A' }}</span>
+            </div>
+            <div class="header-row">
+                <span class="label">Subject:</span>
+                <span class="value"><strong>{{ email.subject or '(No Subject)' }}</strong></span>
+            </div>
+        </div>
+    {% endif %}
+
+    <pre class="email-body">{{ body }}</pre>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const docId = {{ doc_id }};
+    const container = document.getElementById('email-container');
+
+    const handleInteraction = (event) => {
+        let selectedText = null;
+        
+        if (event.type === 'mouseup') {
+            const selection = window.getSelection();
+            if (selection.isCollapsed) return;
+            selectedText = selection.toString().trim().replace(/\s+/g, ' ');
+            if (!selectedText) return;
+        }
+
+        if (event.type === 'contextmenu') {
+            event.preventDefault();
+        }
+
+        // An email is treated as a single "page"
+        const pageNum = 1;
+
+        window.parent.postMessage({
+            type: 'textSelected',
+            x: event.clientX,
+            y: event.clientY,
+            payload: {
+                selected_text: selectedText,
+                source_doc_id: docId,
+                page_number: pageNum
+            }
+        }, '*');
+    };
+
+    container.addEventListener('mouseup', handleInteraction);
+    container.addEventListener('contextmenu', handleInteraction);
+
+    // Let the parent know the iframe is ready
+    window.parent.postMessage({ type: 'viewerReady' }, '*');
+});
+</script>
