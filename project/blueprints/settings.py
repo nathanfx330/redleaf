@@ -3,6 +3,7 @@ import os
 import sqlite3
 import secrets
 import json
+import ollama # <--- Added import
 from datetime import datetime
 from pathlib import Path
 
@@ -28,6 +29,14 @@ def settings_page():
     tokens = db.execute(tokens_query).fetchall()
     form = SecureForm()
     system_settings = get_system_settings()
+    
+    # --- NEW: Fetch available Ollama models ---
+    try:
+        # Ollama API returns a dict with a 'models' key which is a list of dicts
+        ollama_models = [m['name'] for m in ollama.list().get('models', [])]
+    except Exception:
+        ollama_models = []
+
     return render_template(
         'settings.html',
         users=users,
@@ -36,8 +45,30 @@ def settings_page():
         max_workers=system_settings['max_workers'],
         use_gpu=system_settings['use_gpu'],
         cpu_count=os.cpu_count(),
-        html_parsing_mode=system_settings['html_parsing_mode']
+        html_parsing_mode=system_settings['html_parsing_mode'],
+        # --- NEW: Pass model info to template ---
+        reasoning_model=system_settings['reasoning_model'],
+        ollama_models=ollama_models
     )
+
+# --- NEW ROUTE: Save the model choice ---
+@settings_bp.route('/model', methods=['POST'])
+@admin_required
+def update_model_settings():
+    form = SecureForm()
+    if form.validate_on_submit():
+        new_model = request.form.get('reasoning_model')
+        if new_model:
+            db = get_db()
+            # Upsert the setting into the database
+            db.execute("INSERT INTO app_settings (key, value) VALUES ('reasoning_model', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (new_model,))
+            db.commit()
+            flash(f'Reasoning model updated to "{new_model}".', 'success')
+        else:
+            flash('Invalid model selected.', 'danger')
+    else:
+        flash("CSRF validation failed.", 'danger')
+    return redirect(url_for('settings.settings_page'))
 
 @settings_bp.route('/export', methods=['POST'])
 @admin_required

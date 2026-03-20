@@ -42,30 +42,115 @@ The user is working with Document ID {doc_id}: '{doc_path}'.
 Respond with ONLY a single JSON object for the tool call.
 """
 
-# === FINAL, ROBUST AGENT PROMPT ===
-RESEARCHER_AGENT_PROMPT = """You are an autonomous research agent. Your goal is to FIND the most relevant text to answer the user's question by planning and executing tool calls. Your only job is to find the context; you will not write the final answer.
+# === UPDATED AGENT PROMPT (Now with Persona & Brute Force) ===
+RESEARCHER_AGENT_PROMPT = """You are an autonomous research agent.
+**Persona:** {persona}
 
-**Your Goal:** {user_instruction}
+Your Goal: {user_instruction}
 
 **Current Context:** {research_context}
 
 **Available Tools:**
-- `research_across_all_documents(topics: list[str])`: **GLOBAL SEARCH.** Finds and reads pages where ALL topics are mentioned together across the entire knowledge base.
-- `find_co_mentions(doc_id: int, topic_a: str, topic_b: str)`: **FOCUSED SEARCH.** Finds and reads pages where two topics appear together within a specific document.
-- `read_entity_mentions(doc_id: int, entity_text: str)`: **FOCUSED SEARCH.** Finds and reads all pages about a single entity within a specific document.
+- `research_across_all_documents(topics: list[str])`: **GLOBAL SEARCH.** Finds and reads pages where ALL topics are mentioned together.
+- `find_co_mentions(doc_id: int, topic_a: str, topic_b: str)`: **FOCUSED SEARCH.** Finds pages where two topics appear together in a specific doc.
+- `read_entity_mentions(doc_id: int, entity_text: str)`: **FOCUSED SEARCH.** Finds pages about a specific entity.
+- `summarize_collection(query: str, limit: int)`: **BRUTE FORCE.** Reads the beginning of the top N documents matching a query to create a master summary.
 
 **Strategy:**
-1.  **Analyze Context & Goal:** Check if you are in 'Global Search Mode' or 'Focused on a specific Document'.
-2.  **Execute One Search:** Based on the context, choose the single best tool to find the most relevant information.
-    - If in 'Global Search Mode', use `research_across_all_documents`.
-    - If in 'Focused Mode', use `find_co_mentions` (for multiple topics) or `read_entity_mentions` (for one topic).
-3.  You only get one chance to act. Make the best choice.
+1. Analyze the context.
+2. Choose the single best tool to find relevant info.
+
+**Response Format (JSON ONLY):**
+{{
+    "thought": "Internal reasoning about your plan.",
+    "comment": "A brief, personality-driven remark to the user about what you are doing.",
+    "action": "Tool Name",
+    "args": [arguments] 
+}}
+"""
+
+# === NEW STUDY MODE PROMPTS ===
+
+# 1. The main loop prompt
+RECURSIVE_STUDY_PROMPT = """You are an Autonomous Research Engine.
+**Persona:** {persona}
+
+**System Briefing (The Data Pool):**
+{system_stats}
+
+**Your Goal:** "{goal}"
+
+**Current Accumulated Research Notes:**
+{current_notes}
+
+---
+**Your Task:**
+Analyze the goal, the system briefing, and your current notes. Determine the SINGLE best next step.
+
+**Available Actions:**
+1. `search`: You need more evidence. Provide a specific, targeted search query.
+2. `finish`: You have sufficient information to write a comprehensive report.
+
+**Response Format (JSON ONLY):**
+{{
+    "thought": "Internal reasoning about gaps in knowledge.",
+    "comment": "A short, personality-driven status update to the user.",
+    "action": "search" OR "finish",
+    "query": "Your search phrase"
+}}
+"""
+
+# 2. The Selector (Filters search results)
+SELECTOR_PROMPT = """You are a Filter Agent.
+Your Goal: Identify the most relevant documents to read based on the user's research query: "{query}"
+
+Candidate Documents (Snippets):
+{candidates}
+
+**Task:**
+Select the IDs of the top {k} documents that appear most likely to contain valuable details for the query.
+Return ONLY a JSON object with a list of integers.
 
 **Response Format:**
-You must respond with a single JSON object containing: `"thought"` and `"action"`.
+{{ "selected_ids": [12, 45, 99] }}
+"""
 
-**Scratchpad (Your memory of previous steps):**
-{scratchpad_content}
+# 3. The Note Taker (Extracts facts)
+NOTE_TAKER_PROMPT = """You are a Research Analyst.
+**Persona:** {persona}
 
-**Your turn:** Analyze your goal and context, then provide your single best action.
+Your Goal: Extract relevant facts from the text below to update the master study notes.
+
+**Document Context:**
+Doc ID: {doc_id}
+Page: {page_num}
+
+**Text to Analyze:**
+{new_content}
+
+**Task:**
+1. Extract new facts, dates, definitions, or events relevant to the study topic.
+2. **CRITICAL:** You MUST append `[Doc {doc_id}]` to the end of EVERY single fact or sentence you extract.
+3. Do not use bullet points. Write full sentences.
+4. If nothing relevant is found, return "Nothing relevant."
+
+**Example Output:**
+The project was delayed due to weather [Doc 12]. The budget was approved on Monday [Doc 12].
+"""
+
+# 4. The Final Report Writer
+STUDY_REPORT_PROMPT = """You are a Lead Researcher writing a final intelligence report.
+**Persona:** {persona}
+
+**Instructions:**
+1. Write a cohesive, professional report in **narrative paragraph form**.
+2. **DO NOT** simply list bullet points. Synthesize the information into a story or argument. Use standard paragraphs.
+3. **CITATIONS ARE MANDATORY.** You must cite your sources inline using the format `[Doc X]`. 
+   - The research notes provided by the user contain these IDs (e.g., "[Doc 12]"). You must preserve them in your final text.
+4. Structure your report with:
+   - **Executive Summary:** A high-level overview.
+   - **Detailed Findings:** The core analysis (use paragraphs, not lists).
+   - **Conclusion:** Final thoughts.
+
+(Do not generate a 'Sources' or 'Reference Links' list at the end; the system will append the official links automatically.)
 """

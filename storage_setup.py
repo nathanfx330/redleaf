@@ -1,10 +1,10 @@
-# --- File: ./storage_setup.py ---
+# --- File: ./storage_setup.py (FUTURE PROOFED) ---
 import sqlite3
 from pathlib import Path
 
 DATABASE_FILE = "knowledge_base.db"
 
-def create_unified_index(db_path, is_bake_operation=False): # <-- MODIFIED: Added is_bake_operation parameter
+def create_unified_index(db_path, is_bake_operation=False):
     """
     Creates the complete database schema for the Redleaf Engine.
     This function establishes the "Unified Index" in a single SQLite file.
@@ -17,7 +17,7 @@ def create_unified_index(db_path, is_bake_operation=False): # <-- MODIFIED: Adde
     cursor.execute("PRAGMA foreign_keys = ON;")
     cursor.execute("PRAGMA journal_mode = WAL;")
 
-    # === NEW: 0. Application Settings Table ===
+    # === 0. Application Settings Table ===
     print("Creating App Settings table...")
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS app_settings (
@@ -28,7 +28,6 @@ def create_unified_index(db_path, is_bake_operation=False): # <-- MODIFIED: Adde
     # Set default values for settings
     cursor.execute("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('max_workers', '2');")
     cursor.execute("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('html_parsing_mode', 'generic');")
-    # --- ADDED: Default setting for GPU usage ---
     cursor.execute("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('use_gpu', 'false');")
 
 
@@ -55,11 +54,18 @@ def create_unified_index(db_path, is_bake_operation=False): # <-- MODIFIED: Adde
             last_audio_position REAL DEFAULT 0.0,
             audio_offset_seconds REAL DEFAULT 0.0,
             last_pdf_zoom REAL,
-            last_pdf_page INTEGER
+            last_pdf_page INTEGER,
+            
+            -- Optimized Read Columns (Denormalization)
+            cached_comment_count INTEGER DEFAULT 0,
+            cached_tag_count INTEGER DEFAULT 0
         );
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_doc_status ON documents (status);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_doc_file_type ON documents (file_type);")
+    # High-performance indexes for sorting/filtering
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_docs_processed_at ON documents(processed_at DESC)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_docs_rel_path ON documents(relative_path COLLATE NOCASE)")
 
 
     # === 2. Content Index (Full-Text Search) ===
@@ -134,9 +140,6 @@ def create_unified_index(db_path, is_bake_operation=False): # <-- MODIFIED: Adde
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_catalog_type ON catalogs (catalog_type);")
 
-    # --- START OF FIX ---
-    # Only create the default 'Favorites' catalog if this is NOT a bake operation.
-    # The bake operation will copy the real catalog data from DuckDB.
     if not is_bake_operation:
         try:
             cursor.execute(
@@ -146,7 +149,6 @@ def create_unified_index(db_path, is_bake_operation=False): # <-- MODIFIED: Adde
             print("Created default '⭐ Favorites' catalog.")
         except sqlite3.IntegrityError:
             print("'⭐ Favorites' catalog already exists.")
-    # --- END OF FIX ---
 
     print("Creating Document-Catalogs link table...")
     cursor.execute("""
@@ -171,6 +173,8 @@ def create_unified_index(db_path, is_bake_operation=False): # <-- MODIFIED: Adde
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         );
     """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_curation_user_doc ON document_curation(doc_id, user_id)")
+
     print("Creating Document Comments table...")
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS document_comments (
@@ -183,6 +187,8 @@ def create_unified_index(db_path, is_bake_operation=False): # <-- MODIFIED: Adde
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         );
     """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_comments_doc_lookup ON document_comments(doc_id)")
+
     print("Creating Tags table...")
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS tags (
@@ -201,6 +207,7 @@ def create_unified_index(db_path, is_bake_operation=False): # <-- MODIFIED: Adde
         );
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_doctags_tag_id ON document_tags (tag_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_tags_doc_lookup ON document_tags(doc_id)")
 
 
     # === 5. Aggregated View Cache ===
@@ -278,7 +285,6 @@ def create_unified_index(db_path, is_bake_operation=False): # <-- MODIFIED: Adde
         );
     """)
 
-    # --- START OF NEW TABLE DEFINITION ---
     print("Creating Email Metadata table...")
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS email_metadata (
@@ -291,7 +297,6 @@ def create_unified_index(db_path, is_bake_operation=False): # <-- MODIFIED: Adde
             FOREIGN KEY (doc_id) REFERENCES documents(id) ON DELETE CASCADE
         );
     """)
-    # --- END OF NEW TABLE DEFINITION ---
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS synthesis_reports (
@@ -352,7 +357,7 @@ def create_unified_index(db_path, is_bake_operation=False): # <-- MODIFIED: Adde
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_super_embedding_doc_id ON super_embedding_chunks (doc_id);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_super_embedding_entity_id ON super_embedding_chunks (entity_id);")
     
-    # === 10. USER-DRIVEN WEIGHTING (NEW) ===
+    # === 10. USER-DRIVEN WEIGHTING ===
     print("Creating Boosted Relationships table...")
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS boosted_relationships (
@@ -368,6 +373,30 @@ def create_unified_index(db_path, is_bake_operation=False): # <-- MODIFIED: Adde
         );
     """)
 
+    # === 11. AUTOMATIC MAINTENANCE TRIGGERS ===
+    # These ensure cached columns in 'documents' stay in sync forever.
+    print("Installing automatic maintenance triggers...")
+    
+    # Comments
+    cursor.execute("""
+        CREATE TRIGGER IF NOT EXISTS trg_comment_added AFTER INSERT ON document_comments
+        BEGIN UPDATE documents SET cached_comment_count = cached_comment_count + 1 WHERE id = NEW.doc_id; END;
+    """)
+    cursor.execute("""
+        CREATE TRIGGER IF NOT EXISTS trg_comment_deleted AFTER DELETE ON document_comments
+        BEGIN UPDATE documents SET cached_comment_count = MAX(0, cached_comment_count - 1) WHERE id = OLD.doc_id; END;
+    """)
+    
+    # Tags
+    cursor.execute("""
+        CREATE TRIGGER IF NOT EXISTS trg_tag_added AFTER INSERT ON document_tags
+        BEGIN UPDATE documents SET cached_tag_count = cached_tag_count + 1 WHERE id = NEW.doc_id; END;
+    """)
+    cursor.execute("""
+        CREATE TRIGGER IF NOT EXISTS trg_tag_deleted AFTER DELETE ON document_tags
+        BEGIN UPDATE documents SET cached_tag_count = MAX(0, cached_tag_count - 1) WHERE id = OLD.doc_id; END;
+    """)
+
     conn.commit()
     conn.close()
     print("--- Unified Index setup is complete. ---")
@@ -376,7 +405,6 @@ def create_unified_index(db_path, is_bake_operation=False): # <-- MODIFIED: Adde
 if __name__ == '__main__':
     db_file = Path(DATABASE_FILE)
     if db_file.exists():
-        # A simple way to get confirmation before deleting a database.
         response = input(f"Are you sure you want to delete the existing database at '{db_file}'? [y/N] ")
         if response.lower() == 'y':
             db_file.unlink()

@@ -1,29 +1,31 @@
-# --- File: ./project/blueprints/api/documents.py (Updated to allow sorting by ID) ---
+# --- File: ./project/blueprints/api/documents.py (REFACTORED FOR SSR) ---
 import re
 from flask import jsonify, request, g, abort
 
 from . import api_bp
 from .helpers import get_document_or_404, escape_like, get_base_document_query_fields
 from ...database import get_db
-from ...utils import _create_entity_snippet
+from ...utils import _create_entity_snippet, _get_dashboard_state
 from ...config import DOCUMENTS_DIR, ENTITY_LABELS_TO_DISPLAY
 from ..auth import login_required
 import processing_pipeline
 
-@api_bp.route('/dashboard/status')
-@login_required
-def dashboard_status():
+# ==============================================================================
+# === SHARED DATA FETCHING LOGIC (Used by API & Main Route) ===
+# ==============================================================================
+
+def fetch_dashboard_data(user_id, page=1, per_page=50, sort_key='relative_path', sort_dir='asc'):
     """
-    Returns the current status for the main dashboard UI, 
-    including a PAGINATED list of documents.
+    Shared function to fetch dashboard documents and status.
+    This allows both the API (for AJAX) and the Main Route (for SSR) to use the same logic.
     """
-    from ...utils import _get_dashboard_state
     db = get_db()
     
-    page = request.args.get('page', 1, type=int)
-    per_page = request.args.get('per_page', 50, type=int)
-    sort_key = request.args.get('sort_key', 'relative_path')
-    sort_dir = request.args.get('sort_dir', 'asc')
+    # Map frontend sort keys to database columns
+    sort_mapping = {
+        'comment_count': 'cached_comment_count',
+        'tag_count': 'cached_tag_count'
+    }
     
     allowed_sort_keys = [
         'id', 'relative_path', 'status', 'file_type', 'file_size_bytes', 
@@ -32,45 +34,76 @@ def dashboard_status():
 
     if sort_key not in allowed_sort_keys:
         sort_key = 'relative_path'
+    
+    # Translate the sort key if it maps to a cached column
+    db_sort_key = sort_mapping.get(sort_key, sort_key)
+
     if sort_dir.lower() not in ['asc', 'desc']:
         sort_dir = 'asc'
 
     offset = (page - 1) * per_page
 
+    # This count is instant (SQLite optimization)
     total_docs_query = db.execute("SELECT COUNT(id) FROM documents").fetchone()
     total_docs = total_docs_query[0] if total_docs_query else 0
 
+    # --- OPTIMIZED QUERY ---
     doc_query = f"""
-        SELECT d.id, d.status, d.status_message, d.processed_at, d.page_count, 
-               d.color, d.relative_path, d.file_size_bytes, d.file_type, d.duration_seconds, 
-               d.linked_audio_path, d.linked_video_path,
-               (SELECT COUNT(*) FROM document_comments WHERE doc_id = d.id) as comment_count, 
-               (SELECT COUNT(*) FROM document_tags WHERE doc_id = d.id) as tag_count,
-               (SELECT 1 FROM document_catalogs dc JOIN catalogs c ON dc.catalog_id = c.id WHERE dc.doc_id = d.id AND c.catalog_type = 'podcast' LIMIT 1) as is_podcast_episode
+        SELECT 
+            d.id, d.status, d.status_message, d.processed_at, d.page_count, 
+            d.color, d.relative_path, d.file_size_bytes, d.file_type, d.duration_seconds, 
+            d.linked_audio_path, d.linked_video_path,
+            
+            -- FAST: Reading pre-calculated integers
+            d.cached_comment_count as comment_count, 
+            d.cached_tag_count as tag_count,
+            
+            -- FAST: Composite index (doc_id, user_id) makes this specific check cheap
+            (SELECT 1 FROM document_curation WHERE doc_id = d.id AND user_id = ?) as has_personal_note,
+
+            -- Podcast check
+            (SELECT 1 FROM document_catalogs dc JOIN catalogs c ON dc.catalog_id = c.id WHERE dc.doc_id = d.id AND c.catalog_type = 'podcast' LIMIT 1) as is_podcast_episode
         FROM documents d
-        ORDER BY {sort_key} {sort_dir.upper()}
+        ORDER BY {db_sort_key} {sort_dir.upper()}
         LIMIT ? OFFSET ?
     """
-    docs_data = db.execute(doc_query, (per_page, offset)).fetchall()
     
+    docs_data = db.execute(doc_query, (user_id, per_page, offset)).fetchall()
     state_data = _get_dashboard_state(db)
     
-    return jsonify({
+    return {
         'documents': [dict(row) for row in docs_data],
         'total_documents': total_docs,
         'page': page,
         'per_page': per_page,
         'queue_size': state_data['queue_size'],
         'task_states': state_data['task_states']
-    })
+    }
 
-# --- START OF CORRECTED FUNCTION ---
+# ==============================================================================
+# === API ENDPOINTS ===
+# ==============================================================================
+
+@api_bp.route('/dashboard/status')
+@login_required
+def dashboard_status():
+    """
+    API Endpoint for AJAX updates (Polling/Pagination/Sorting).
+    Now just a wrapper around the shared fetch function.
+    """
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 50, type=int)
+    sort_key = request.args.get('sort_key', 'relative_path')
+    sort_dir = request.args.get('sort_dir', 'asc')
+    
+    data = fetch_dashboard_data(g.user['id'], page, per_page, sort_key, sort_dir)
+    return jsonify(data)
+
 @api_bp.route('/documents_by_tags')
 @login_required
 def get_documents_by_tags():
     """
     Fetches documents that match a combination of tags, color, and catalog filters.
-    This version fixes the SQL syntax error by building the query in the correct order.
     """
     db = get_db()
     tags = request.args.getlist('tag')
@@ -120,7 +153,6 @@ def get_documents_by_tags():
     
     documents = db.execute(query, params).fetchall()
     return jsonify([dict(row) for row in documents])
-# --- END OF CORRECTED FUNCTION ---
 
 @api_bp.route('/documents/types', methods=['POST'])
 @login_required
@@ -191,7 +223,6 @@ def get_entity_mentions_paginated(entity_id):
     db_results = db.execute(sql_query, (g.user['id'], entity_id, limit, offset)).fetchall()
     results = []
     
-    # --- START OF MODIFICATION ---
     for row in db_results:
         row_dict = dict(row)
         content_for_snippet = ""
@@ -199,8 +230,6 @@ def get_entity_mentions_paginated(entity_id):
         file_type = row_dict.get('file_type')
         page_num_for_query = row_dict['page_number']
 
-        # The DuckDB pipeline stores SRT, HTML, and EML content on page 1 of the content_index.
-        # This logic now correctly handles that case.
         if file_type in ['SRT', 'HTML', 'EML']:
             page_num_for_query = 1
         
@@ -214,6 +243,5 @@ def get_entity_mentions_paginated(entity_id):
 
         row_dict['snippet'] = _create_entity_snippet(content_for_snippet, entity_text)
         results.append(row_dict)
-    # --- END OF MODIFICATION ---
 
     return jsonify({'mentions': results, 'total_count': total_count, 'page': page, 'has_more': (page * limit) < total_count})

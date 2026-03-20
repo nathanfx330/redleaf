@@ -13,6 +13,7 @@ sys.path.append(str(project_dir))
 DUCKDB_FILE = project_dir / "curator_workspace.duckdb"
 DUCKDB_WAL_FILE = project_dir / "curator_workspace.duckdb.wal"
 SQLITE_DB_FILE = project_dir / "knowledge_base.db"
+BATCH_STATE_FILE = project_dir / "curator_batch_state.json"  # <-- ADDED BATCH STATE FILE
 CURATOR_CLI_SCRIPT = project_dir / "curator_cli.py"
 
 def run_command(command):
@@ -49,8 +50,9 @@ def main():
     print("  1. DELETE the DuckDB workspace (curator_workspace.duckdb)")
     print("  2. DELETE any stale lock files (.wal)")
     print("  3. DELETE the final SQLite database (knowledge_base.db)")
-    print("  4. RE-INITIALIZE a new, empty DuckDB workspace.")
-    print("  5. RE-DISCOVER all documents from your ./documents directory.")
+    print("  4. DELETE any leftover batch state files (curator_batch_state.json)") # <-- ADDED
+    print("  5. RE-INITIALIZE a new, empty DuckDB workspace.")
+    print("  6. RE-DISCOVER all documents from your ./documents directory.")
     print("\nThis is useful for starting a fresh build from scratch.")
     
     confirm = input("\nAre you absolutely sure you want to proceed? [y/N]: ")
@@ -60,7 +62,8 @@ def main():
 
     # --- Step 1: Deleting files ---
     print("\n--- Deleting existing database files... ---")
-    files_to_delete = [DUCKDB_FILE, DUCKDB_WAL_FILE, SQLITE_DB_FILE]
+    # ADDED BATCH_STATE_FILE to the deletion list
+    files_to_delete = [DUCKDB_FILE, DUCKDB_WAL_FILE, SQLITE_DB_FILE, BATCH_STATE_FILE] 
     for f in files_to_delete:
         if f.exists():
             try:

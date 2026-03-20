@@ -1,6 +1,17 @@
-<!-- File: ./templates/dashboard.html (Updated to include sorting by Doc #) -->
+<!-- File: ./templates/dashboard.html (FINAL + SMART CACHE) -->
 {% extends 'layout.html' %}
 {% block title %}Dashboard - Redleaf{% endblock %}
+
+{% block head_extra %}
+<style>
+    /* Visual feedback for table loading */
+    .loading-state {
+        opacity: 0.5;
+        pointer-events: none; 
+        transition: opacity 0.2s ease-in-out;
+    }
+</style>
+{% endblock %}
 
 {% block content %}
 <div class="page-heading">
@@ -48,7 +59,7 @@
         <p class="text-muted mt-2">
             Document Source: <code>{{ doc_dir }}</code>
             <span class="queue-status ms-3">Tasks in queue: <span id="queue-size-display">{{ queue_size }}</span></span>
-            <span class="queue-status ms-3">Documents in registry: <span id="doc-count-display">...</span></span>
+            <span class="queue-status ms-3">Documents in registry: <span id="doc-count-display">{{ total_documents }}</span></span>
         </p>
     </div>
 </div>
@@ -57,10 +68,8 @@
 
 <div class="d-flex justify-content-between align-items-center mb-3">
     <div class="sort-controls" id="registry-sort-controls">
-        <!-- START OF MODIFICATION: Added new sort button for 'id' -->
         <button class="button button-small sort-btn" data-sort-key="id">#</button>
-        <!-- END OF MODIFICATION -->
-        <button class="button button-small sort-btn" data-sort-key="relative_path">Path</button>
+        <button class="button button-small sort-btn active sort-asc" data-sort-key="relative_path">Path</button>
         <button class="button button-small sort-btn" data-sort-key="status">Status</button>
         <button class="button button-small sort-btn" data-sort-key="file_type">Type</button>
         <button class="button button-small sort-btn" data-sort-key="file_size_bytes">File Size</button>
@@ -100,34 +109,96 @@
             </tr>
         </thead>
         <tbody id="registry-table-body">
-            <tr>
-                <td colspan="12" class="table-empty-message"><em>Loading documents...</em></td>
-            </tr>
+            {# --- SSR CONTENT --- #}
+            {% if documents %}
+                {% for doc in documents %}
+                <tr data-doc-id="{{ doc.id }}">
+                    <td>{{ doc.id }}</td>
+                    <td class="color-cell">
+                        {% if doc.color %}<span class="color-dot" style="background-color: {{ doc.color }};"></span>{% endif %}
+                    </td>
+                    <td class="path-cell">
+                        {% if doc.status == 'Indexed' %}
+                            <a href="{{ url_for('main.document_view', doc_id=doc.id) }}">{{ doc.relative_path }}</a>
+                        {% else %}
+                            {{ doc.relative_path }}
+                        {% endif %}
+                    </td>
+                    <td><span class="status-{{ doc.status | replace(' ', '') }}">{{ doc.status }}</span></td>
+                    <td class="message-cell" title="{{ doc.status_message or '' }}">{{ doc.status_message or '' }}</td>
+                    <td><span class="chip">{{ doc.file_type or 'N/A' }}</span></td>
+                    <td>{{ doc.file_size_bytes | filesize }}</td>
+                    <td>{{ doc.duration_seconds | format_duration }}</td>
+                    <td>{{ doc.page_count if doc.page_count is not none else 'N/A' }}</td>
+                    <td>
+                        {% if doc.comment_count > 0 %}
+                            <span class="chip" title="{{ doc.comment_count }} public comment(s)">💬 {{ doc.comment_count }}</span>
+                        {% else %}
+                            <span class="text-muted">—</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if doc.is_podcast_episode %}<span class="chip" title="Podcast Episode">🎧</span> {% endif %}
+                        {% if doc.tag_count > 0 %}<span class="chip" title="{{ doc.tag_count }} tag(s)">🏷️ {{ doc.tag_count }}</span>{% endif %}
+                        {% if not doc.is_podcast_episode and doc.tag_count == 0 %}<span class="text-muted">—</span>{% endif %}
+                    </td>
+                    <td>
+                        {% if g.is_precomputed %}
+                            <a href="{{ url_for('main.document_view', doc_id=doc.id) }}" class="button button-small">View</a>
+                        {% elif doc.status == 'New' %}
+                            <a href="{{ url_for('main.dashboard_process_single', doc_id=doc.id) }}" class="button button-small">Process</a>
+                        {% elif doc.status == 'Queued' or doc.status == 'Indexing' %}
+                            <button class="button button-small disabled">Processing...</button>
+                        {% else %}
+                            <a href="{{ url_for('main.dashboard_process_single', doc_id=doc.id) }}" class="button button-small">Re-Process</a>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            {% else %}
+                <tr>
+                    <td colspan="12" class="table-empty-message">No documents registered. Click "Discover Docs" to begin.</td>
+                </tr>
+            {% endif %}
         </tbody>
     </table>
 </div>
 
-<div class="d-flex justify-content-between align-items-center mt-3" id="pagination-container">
-    <!-- Pagination controls will be rendered here by JavaScript -->
-</div>
+<div class="d-flex justify-content-between align-items-center mt-3" id="pagination-container"></div>
 {% endblock %}
 
 {% block scripts %}
 {{ super() }}
 <script>
 document.addEventListener('DOMContentLoaded', () => {
+    // --- INITIAL STATE ---
     let state = {
-        docs: [],
-        totalDocs: 0,
-        currentPage: 1,
-        perPage: 50,
+        docs: {{ initial_data.documents | tojson }},
+        totalDocs: {{ initial_data.total_documents }},
+        currentPage: {{ initial_data.page }},
+        perPage: {{ initial_data.per_page }},
         sort: { key: 'relative_path', direction: 'asc' },
         isLoading: false,
     };
+
+    // --- SMART CLIENT-SIDE CACHE ---
+    // Stores API responses to make switching sort/page instant
+    const dashboardCache = new Map();
+
+    // Load initial sort pref
     try {
         const savedSort = JSON.parse(localStorage.getItem('dashboardSortState'));
         if (savedSort) state.sort = savedSort;
     } catch (e) { console.error("Could not parse saved sort state."); }
+
+    // Pre-seed the cache with the current SSR page so we don't re-fetch it
+    const initialCacheKey = `${state.currentPage}-${state.perPage}-${state.sort.key}-${state.sort.direction}`;
+    dashboardCache.set(initialCacheKey, {
+        documents: state.docs,
+        total_documents: state.totalDocs,
+        queue_size: {{ initial_data.queue_size }},
+        task_states: {{ initial_data.task_states | tojson }}
+    });
 
     const tableBody = document.getElementById('registry-table-body');
     const sortControls = document.getElementById('registry-sort-controls');
@@ -136,6 +207,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const queueSizeDisplay = document.getElementById('queue-size-display');
     const docCountDisplay = document.getElementById('doc-count-display');
     const isPrecomputed = {{ g.is_precomputed|tojson }};
+    
     const workflowButtons = {
         discover: document.getElementById('discover-btn'),
         process: document.getElementById('process-all-btn'),
@@ -144,6 +216,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const POLLING_INTERVAL = 5000;
     let pollingTimer;
 
+    // --- RENDER FUNCTIONS ---
     function getRowsHtml(docs) {
         if (docs.length === 0) {
             return `<tr><td colspan="12" class="table-empty-message">No documents registered. Click "Discover Docs" to begin.</td></tr>`;
@@ -190,39 +263,70 @@ document.addEventListener('DOMContentLoaded', () => {
         paginationContainer.innerHTML = html;
     }
 
+    function updateUI(data) {
+        const newHtml = getRowsHtml(data.documents);
+        if (tableBody.innerHTML !== newHtml) {
+            tableBody.innerHTML = newHtml;
+        }
+        state.docs = data.documents;
+        state.totalDocs = data.total_documents;
+        renderPagination();
+        if (queueSizeDisplay) queueSizeDisplay.textContent = data.queue_size;
+        if (docCountDisplay) docCountDisplay.textContent = data.total_documents;
+        updateActionButtons(data.task_states);
+    }
+
     async function fetchDashboardData(options = {}) {
         const { isPoll = false } = options;
         if (state.isLoading) return;
+
+        const cacheKey = `${state.currentPage}-${state.perPage}-${state.sort.key}-${state.sort.direction}`;
+
+        // 1. Check Cache (Only for user actions, not polling)
+        if (!isPoll && dashboardCache.has(cacheKey)) {
+            console.log("Cache Hit: Instant Render");
+            updateUI(dashboardCache.get(cacheKey));
+            return;
+        }
+
         if (!isPoll) {
             state.isLoading = true;
-            tableBody.innerHTML = `<tr><td colspan="12" class="table-empty-message"><em>Loading...</em></td></tr>`;
+            tableBody.classList.add('loading-state');
         }
+        
         clearTimeout(pollingTimer);
-        const { currentPage, perPage, sort } = state;
-        const url = `/api/dashboard/status?page=${currentPage}&per_page=${perPage}&sort_key=${sort.key}&sort_dir=${sort.direction}`;
+        const url = `/api/dashboard/status?page=${state.currentPage}&per_page=${state.perPage}&sort_key=${state.sort.key}&sort_dir=${state.sort.direction}`;
+        
         try {
             const response = await fetch(url);
             if (!response.ok) throw new Error('Network error');
             const data = await response.json();
-            const newHtml = getRowsHtml(data.documents);
-            if (tableBody.innerHTML !== newHtml) {
-                tableBody.innerHTML = newHtml;
+            
+            // 2. Update UI
+            updateUI(data);
+
+            // 3. Smart Caching
+            // Only cache if the system is stable (no active processing).
+            // If items are processing, the view is changing rapidly, so caching is bad.
+            if (data.queue_size === 0) {
+                dashboardCache.set(cacheKey, data);
+            } else {
+                // If processing is active, invalidate everything to show fresh status
+                dashboardCache.clear();
             }
-            state.docs = data.documents;
-            state.totalDocs = data.total_documents;
-            renderPagination();
-            if (queueSizeDisplay) queueSizeDisplay.textContent = data.queue_size;
-            if (docCountDisplay) docCountDisplay.textContent = data.total_documents;
-            updateActionButtons(data.task_states);
+
         } catch (error) {
             console.error("Error fetching dashboard data:", error);
-            tableBody.innerHTML = `<tr><td colspan="12" class="table-empty-message text-danger">Error loading data.</td></tr>`;
         } finally {
-            if (!isPoll) { state.isLoading = false; }
+            if (!isPoll) { 
+                state.isLoading = false;
+                tableBody.classList.remove('loading-state');
+            }
             if (!isPrecomputed) { pollingTimer = setTimeout(() => fetchDashboardData({ isPoll: true }), POLLING_INTERVAL); }
         }
     }
 
+    // --- Event Listeners ---
     sortControls.addEventListener('click', (e) => {
         const btn = e.target.closest('.sort-btn');
         if (!btn) return;
@@ -231,9 +335,7 @@ document.addEventListener('DOMContentLoaded', () => {
             state.sort.direction = state.sort.direction === 'asc' ? 'desc' : 'asc';
         } else {
             state.sort.key = key;
-            // --- START OF MODIFICATION: Added 'id' to the list of keys that default to ascending sort ---
             state.sort.direction = ['id', 'relative_path', 'status', 'file_type'].includes(key) ? 'asc' : 'desc';
-            // --- END OF MODIFICATION ---
         }
         localStorage.setItem('dashboardSortState', JSON.stringify(state.sort));
         updateSortButtonUI();
@@ -279,8 +381,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     window.addEventListener('beforeunload', () => clearTimeout(pollingTimer));
 
+    renderPagination();
     updateSortButtonUI();
-    fetchDashboardData({ isPoll: false });
+    if (!isPrecomputed) { 
+        pollingTimer = setTimeout(() => fetchDashboardData({ isPoll: true }), POLLING_INTERVAL); 
+    }
 });
 </script>
 {% endblock %}

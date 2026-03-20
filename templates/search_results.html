@@ -1,3 +1,5 @@
+<!-- File: ./templates/search_results.html -->
+
 {% extends 'layout.html' %}
 {% block title %}Search: {{ query }}{% endblock %}
 
@@ -18,12 +20,32 @@
     {# The initial rendering is now handled by JavaScript #}
     </ul>
 
+    <!-- --- PAGINATION CONTROLS ADDED HERE --- -->
+    <div class="d-flex justify-content-between align-items-center mt-4">
+        <a href="{{ url_for('main.discover_view') }}" class="button">← Back to Discovery</a>
+        
+        <div class="toolbar">
+            {% if page > 1 %}
+                <a href="{{ url_for('main.search_results', q=query, page=page-1) }}" class="button button-small">« Previous</a>
+            {% else %}
+                <button class="button button-small disabled" disabled>« Previous</button>
+            {% endif %}
+
+            <span class="mx-2 text-muted" style="line-height: 2;">Page {{ page }}</span>
+
+            {% if has_next %}
+                <a href="{{ url_for('main.search_results', q=query, page=page+1) }}" class="button button-small">Next »</a>
+            {% else %}
+                <button class="button button-small disabled" disabled>Next »</button>
+            {% endif %}
+        </div>
+    </div>
+
 {% else %}
     <p class="text-muted empty-state">No results found for your query.</p>
+    <a href="{{ url_for('main.discover_view') }}" class="button mt-4">← Back to Discovery</a>
 {% endif %}
 
-{# --- THIS IS THE FIX --- #}
-<a href="{{ url_for('main.discover_view') }}" class="button mt-4">Back to Discovery</a>
 {% endblock %}
 
 {% block scripts %}

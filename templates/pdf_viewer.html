@@ -49,7 +49,6 @@
         /* Toolbar styles */
         .pdf-viewer-toolbar { position: relative; z-index: 100; background-color: var(--background-light, #2A2A32); border-bottom: 1px solid var(--border-color); padding: 8px 16px; display: flex; align-items: center; justify-content: center; gap: 12px; box-shadow: 0 2px 5px rgba(0,0,0,0.3); box-sizing: border-box; flex-shrink: 0; }
         
-        /* --- START OF THE FIX --- */
         .pdf-viewer-toolbar button {
             background-color: var(--button-bg, #383842);
             color: var(--text-color, #E8E8EA);
@@ -78,7 +77,6 @@
              background-color: var(--brand-red-cool-hover); 
              border-color: var(--brand-red-cool-hover);
         }
-        /* --- END OF THE FIX --- */
 
         .pdf-viewer-toolbar input { width: 60px; text-align: center; background-color: var(--background-dark); color: var(--text-light); border: 1px solid var(--border-color); border-radius: 4px; padding: 5px; -moz-appearance: textfield; }
         .pdf-viewer-toolbar input::-webkit-outer-spin-button, .pdf-viewer-toolbar input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
@@ -201,79 +199,142 @@
             } catch (error) { console.error(`Failed to render page ${pageNum}:`, error); container.textContent = `Error rendering page ${pageNum}.`; }
         }
 
+        // --- NEW HIGHLIGHTING LOGIC FOR MULTIPLE MATCHES ---
         function highlightResult(result) {
             const pageContainer = document.getElementById(`page-container-${result.pageNum}`);
             if (!pageContainer) return; 
             const originalViewport = pageDimensions[result.pageNum - 1].viewport;
             const scaledViewport = originalViewport.clone({ scale: currentScale });
-            const item = result.item;
-            const combinedTransform = pdfjsLib.Util.transform(scaledViewport.transform, item.transform);
-            const fontHeight = Math.hypot(combinedTransform[2], combinedTransform[3]);
-            tempCanvas.font = `${fontHeight}px ${item.fontName}`;
-            const textBefore = item.str.substring(0, result.matchInItemIndex);
-            const widthOfPrefix = tempCanvas.measureText(textBefore).width;
-            const matchedText = item.str.substring(result.matchInItemIndex, result.matchInItemIndex + result.queryLength);
-            const widthOfMatch = tempCanvas.measureText(matchedText).width;
-            const originX = combinedTransform[4];
-            const originY = combinedTransform[5];
-            const highlight = document.createElement('div');
-            highlight.className = 'search-highlight';
-            highlight.style.left = `${originX + widthOfPrefix}px`;
-            highlight.style.top = `${originY - fontHeight}px`;
-            highlight.style.width = `${widthOfMatch}px`;
-            highlight.style.height = `${fontHeight}px`;
+            
             const highlightLayer = pageContainer.querySelector('.highlight-layer');
-            if (highlightLayer) {
-                highlightLayer.innerHTML = ''; 
-                highlightLayer.appendChild(highlight);
+            if (highlightLayer) highlightLayer.innerHTML = ''; // clear old
+
+            let firstHighlight = null;
+
+            if (result.matches && result.matches.length > 0) {
+                result.matches.forEach(matchData => {
+                    const item = matchData.item;
+                    const combinedTransform = pdfjsLib.Util.transform(scaledViewport.transform, item.transform);
+                    const fontHeight = Math.hypot(combinedTransform[2], combinedTransform[3]);
+                    tempCanvas.font = `${fontHeight}px ${item.fontName}`;
+                    const textBefore = item.str.substring(0, matchData.index);
+                    const widthOfPrefix = tempCanvas.measureText(textBefore).width;
+                    const matchedText = item.str.substring(matchData.index, matchData.index + matchData.length);
+                    const widthOfMatch = tempCanvas.measureText(matchedText).width;
+                    const originX = combinedTransform[4];
+                    const originY = combinedTransform[5];
+                    
+                    const highlight = document.createElement('div');
+                    highlight.className = 'search-highlight';
+                    highlight.style.left = `${originX + widthOfPrefix}px`;
+                    highlight.style.top = `${originY - fontHeight}px`;
+                    highlight.style.width = `${widthOfMatch}px`;
+                    highlight.style.height = `${fontHeight}px`;
+                    
+                    if (highlightLayer) highlightLayer.appendChild(highlight);
+                    if (!firstHighlight) firstHighlight = highlight;
+                    
+                    setTimeout(() => {
+                        highlight.classList.add('fading');
+                        setTimeout(() => highlight.remove(), 1000);
+                    }, 2000);
+                });
+                
+                // Scroll to the first highlight box
+                if (firstHighlight) firstHighlight.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            } else {
+                // Fallback: Just scroll the page into view if no specific boxes could be drawn
+                pageContainer.scrollIntoView({ behavior: 'smooth', block: 'center' });
             }
-            highlight.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            setTimeout(() => {
-                highlight.classList.add('fading');
-                setTimeout(() => highlight.remove(), 1000);
-            }, 2000);
         }
 
-        function createSnippet(text, index, query, context = 40) {
-            const queryLength = query.length;
-            const start = Math.max(0, index - context);
-            const end = Math.min(text.length, index + queryLength + context);
+        // --- NEW MULTI-TERM SNIPPET GENERATOR ---
+        function createMultiTermSnippet(text, terms, context = 40) {
+            if (!terms || terms.length === 0) return text.substring(0, context * 2) + "...";
+            
+            const firstTerm = terms[0];
+            const firstIndex = text.toLowerCase().indexOf(firstTerm.toLowerCase());
+            const start = Math.max(0, firstIndex - context);
+            const end = Math.min(text.length, firstIndex + firstTerm.length + context);
             let snippet = text.substring(start, end);
-            const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            
             snippet = `${start > 0 ? '...' : ''}${snippet}${end < text.length ? '...' : ''}`;
-            return snippet.replace(new RegExp(escapedQuery, 'gi'), `<mark>$&</mark>`);
+            
+            terms.forEach(term => {
+                const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                snippet = snippet.replace(new RegExp(escaped, 'gi'), `<mark>$&</mark>`);
+            });
+            
+            return snippet;
         }
 
+        // --- NEW MULTI-TERM SEARCH LOGIC ---
         async function performSearch() {
-            const query = searchInput.value;
-            if (!query || query.length < 2 || !pdfDoc || allPagesTextContent.length === 0) return;
+            const rawQuery = searchInput.value.trim();
+            if (!rawQuery || rawQuery.length < 2 || !pdfDoc || allPagesTextContent.length === 0) return;
+            
             searchBtn.disabled = true; searchBtn.textContent = '...';
             searchResultsCount.textContent = 'Searching...';
             searchResultsDropdown.style.display = 'none';
             searchResults = []; currentResultIndex = -1;
+            
             await new Promise(resolve => setTimeout(resolve, 0));
+            
             try {
-                const regex = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+                // Process query into individual terms (ignore 'and', punctuation)
+                const safeQuery = rawQuery.replace(/[^\w\s]/g, '').trim();
+                const terms = safeQuery.split(/\s+/).filter(w => w.toLowerCase() !== 'and' && w.length > 0);
+
+                if (terms.length === 0) throw new Error("Invalid terms");
+
+                const termRegexes = terms.map(t => new RegExp(t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'));
+
                 allPagesTextContent.forEach((textContent, pageIndex) => {
                     if (!textContent) return;
                     const pageNum = pageIndex + 1;
+                    // Join items to search the full page text seamlessly
                     const pageText = textContent.items.map(item => item.str).join('');
-                    let textOffset = 0;
-                    for (const item of textContent.items) {
-                        regex.lastIndex = 0;
-                        let match;
-                        while ((match = regex.exec(item.str)) !== null) {
-                            searchResults.push({
-                                pageNum: pageNum, snippet: createSnippet(pageText, textOffset + match.index, query),
-                                item: item, matchInItemIndex: match.index, queryLength: query.length
+                    const pageTextLower = pageText.toLowerCase();
+
+                    // Check if ALL terms are present anywhere on this page
+                    const allTermsExist = terms.every(term => pageTextLower.includes(term.toLowerCase()));
+
+                    if (allTermsExist) {
+                        let pageMatches = [];
+                        
+                        // Find individual highlights inside PDF chunks
+                        textContent.items.forEach(item => {
+                            termRegexes.forEach(regex => {
+                                regex.lastIndex = 0;
+                                let match;
+                                while ((match = regex.exec(item.str)) !== null) {
+                                    pageMatches.push({
+                                        item: item,
+                                        index: match.index,
+                                        length: match[0].length
+                                    });
+                                }
                             });
-                        }
-                        textOffset += item.str.length;
+                        });
+
+                        // Generate snippet using the full page text
+                        const snippet = createMultiTermSnippet(pageText, terms);
+
+                        searchResults.push({
+                            pageNum: pageNum,
+                            snippet: snippet,
+                            matches: pageMatches
+                        });
                     }
                 });
+                
                 renderSearchResults();
-            } catch (error) { console.error("Error during search:", error); searchResultsCount.textContent = 'Error';
-            } finally { searchBtn.disabled = false; searchBtn.textContent = 'Go'; }
+            } catch (error) { 
+                console.error("Error during search:", error); 
+                searchResultsCount.textContent = 'Error';
+            } finally { 
+                searchBtn.disabled = false; searchBtn.textContent = 'Go'; 
+            }
         }
 
         function renderSearchResults() {

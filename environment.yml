@@ -1,5 +1,10 @@
-# Redleaf Engine Conda Environment
-# ... (header comments) ...
+# Redleaf Engine Environment File
+# To create the environment: conda env create -f environment.yml
+#
+# Optional GPU Support:
+# After the environment is created, if you have a compatible NVIDIA GPU,
+# activate the environment and then manually run ONE of the following:
+#   pip install cupy-cuda11x  OR  pip install cupy-cuda12x
 
 name: redleaf-env
 
@@ -8,36 +13,25 @@ channels:
   - defaults
 
 dependencies:
-  # Core Python version
+  # === Core Dependencies from Conda ===
   - python=3.9
-
-  # Web Framework & Dependencies
+  - spacy=3.6.1
   - flask=2.3.3
   - flask-wtf=1.1.1
   - werkzeug=2.3.7
-
-  # Document Processing & NLP
   - beautifulsoup4=4.12.2
   - lxml=4.9.3
-  - spacy=3.6.1
-  
-  # Database command-line tool
   - sqlite
-
-  # Pip is included to manage packages not on Conda
+  - pandas
   - pip
-  
-  # Pip-installed packages
+
+  # === Core Dependencies from Pip ===
   - pip:
     - PyMuPDF==1.23.5
-    - odfpy==1.4.1       
+    - odfpy==1.4.1
     - citeproc-py==0.6.0
-    - requests==2.3.1.0
+    - requests==2.31.0
     - ollama
     - duckdb
-    - pytz
     - tqdm
-    # For GPU support, you must have an NVIDIA GPU, CUDA drivers,
-    # and then manually install the correct cupy version.
-    # For CUDA 11.x: pip install cupy-cuda11x
-    # For CUDA 12.x: pip install cupy-cuda12x
+    - pytz

@@ -1,4 +1,4 @@
-# --- File: ./curator_pipeline_v2.py (FIXED FOR SRT EXTRACTION) ---
+# --- File: ./curator_pipeline_v2.py (FIXED FOR CONSTANT CPU SATURATION) ---
 import duckdb
 import spacy
 import ollama
@@ -16,6 +16,7 @@ import math
 import pickle
 import shutil
 import pandas as pd
+import json
 
 import email
 from email.header import decode_header
@@ -28,6 +29,7 @@ sys.path.append(str(project_dir))
 from project.config import EMBEDDING_MODEL, DOCUMENTS_DIR
 
 DUCKDB_FILE = project_dir / "curator_workspace.duckdb"
+BATCH_STATE_FILE = project_dir / "curator_batch_state.json"
 SPACY_MODEL = "en_core_web_lg"
 NLP_MODEL = None
 TEMP_DIR = project_dir / "temp_nlp_results"
@@ -42,6 +44,7 @@ logging.basicConfig(
 # --- DATABASE AND MODEL LOADING ---
 def get_db_conn():
     return duckdb.connect(database=str(DUCKDB_FILE), read_only=False)
+
 def create_staging_tables(conn):
     print("[INFO] Clearing and resetting all staging tables...")
     conn.execute("DROP TABLE IF EXISTS _staging_raw_text CASCADE;"); conn.execute("DROP TABLE IF EXISTS _staging_chunks_to_embed CASCADE;"); conn.execute("DROP TABLE IF EXISTS _staging_entities CASCADE;"); conn.execute("DROP TABLE IF EXISTS _staging_relationships CASCADE;"); conn.execute("DROP SEQUENCE IF EXISTS seq_staging_chunks_id;")
@@ -50,10 +53,12 @@ def create_staging_tables(conn):
     conn.execute("CREATE TABLE _staging_entities (doc_id BIGINT, page_number INTEGER, entity_text VARCHAR, entity_label VARCHAR);")
     conn.execute("CREATE TABLE _staging_relationships (doc_id BIGINT, page_number INTEGER, subj_text VARCHAR, subj_label VARCHAR, obj_text VARCHAR, obj_label VARCHAR, phrase VARCHAR);")
     conn.execute("CREATE SEQUENCE seq_staging_chunks_id START 1;"); print("[OK]   Staging tables are ready.")
+
 def cleanup_staging_tables():
     print("--- Cleaning up temporary staging tables... ---")
     if TEMP_DIR.exists(): shutil.rmtree(TEMP_DIR)
     print("[OK] Cleanup complete.")
+
 def load_spacy_model(use_gpu=False):
     global NLP_MODEL
     if NLP_MODEL is None:
@@ -95,7 +100,6 @@ def _extract_text_with_block_separation(h):
     s = BeautifulSoup(h, 'lxml'); [e.decompose() for e in s(["script", "style"])]; b = [f"Title: {t.get_text(strip=True)}" for t in [s.find('title')] if t and t.get_text(strip=True)]; b.extend(t.get_text(separator=' ', strip=True) for t in s.find_all(['p', 'h1', 'h2', 'h3', 'h4', 'li', 'blockquote', 'pre', 'div']) if t.get_text(strip=True)); return "\n\n".join(b)
 def _extract_text_from_pdf_doc(d): return {i: t.strip() for i, p in enumerate(d, 1) if (t := p.get_text("text", sort=True))}
 
-# --- START OF MODIFICATION ---
 def _get_srt_duration(srt_content: str):
     timestamps = re.findall(r'\d{2}:\d{2}:\d{2},\d{3}\s*-->\s*(\d{2}:\d{2}:\d{2},\d{3})', srt_content)
     if not timestamps: return None
@@ -107,7 +111,6 @@ def _get_srt_duration(srt_content: str):
 
 def _parse_srt_for_db(srt_content: str) -> list[dict]:
     cues = []
-    # This pattern is more robust for variations in SRT files.
     cue_pattern = re.compile(r'(\d+)\s*\n(\d{2}:\d{2}:\d{2},\d{3}\s*-->\s*\d{2}:\d{2}:\d{2},\d{3})\s*\n(.*?)(?=\n\n|\Z)', re.DOTALL)
     for match in cue_pattern.finditer(srt_content):
         sequence, timestamp, dialogue_block = match.groups()
@@ -117,7 +120,6 @@ def _parse_srt_for_db(srt_content: str) -> list[dict]:
 
 def _extract_text_from_srt(srt_cues: list[dict]) -> str:
     return "\n".join(cue['dialogue'] for cue in srt_cues)
-# --- END OF MODIFICATION ---
 
 # --- PHASE 1: TEXT EXTRACTION ---
 def _extract_worker(d):
@@ -133,45 +135,51 @@ def _extract_worker(d):
             x = _extract_text_with_block_separation(fp.read_text('utf-8', 'ignore')); p = {1: x}; c = 1
         elif t == 'EML':
             y = _parse_eml_content(fp.read_bytes()); p = {1: y['body']}; c = 1; e = y['metadata']
-        # --- START OF MODIFICATION ---
         elif t == 'SRT':
             content = fp.read_text('utf-8', 'ignore')
             dur = _get_srt_duration(content)
             srt_cues = _parse_srt_for_db(content)
-            # The "main content" for NLP is still the full text block.
             body = _extract_text_from_srt(srt_cues)
             p = {1: body} 
-            c = len(srt_cues) # Page count is the number of cues
-        # --- END OF MODIFICATION ---
+            c = len(srt_cues) 
 
         return i, c, list(p.items()), e, dur, None, srt_cues
     except Exception as ex:
         m = f"EXTRACT FAILED:{ex}"; logging.error(m, exc_info=True)
         return i, 0, [], None, None, m, []
 
-def phase_extract_text(workers):
-    print("\n--- PHASE 1: Extracting Text from Documents ---");
+def phase_extract_text(workers, doc_limit=None):
+    print(f"\n--- PHASE 1: Extracting Text from Documents (Limit: {doc_limit or 'All'}) ---");
     if LOG_FILE.exists():
         try: LOG_FILE.unlink()
         except Exception: logging.exception("Failed to delete existing log file.")
     c = get_db_conn(); create_staging_tables(c)
     try: 
         c.execute("DELETE FROM email_metadata;")
-        c.execute("DELETE FROM srt_cues;") # <-- ADDED
+        c.execute("DELETE FROM srt_cues;") 
     except Exception: logging.info("email_metadata or srt_cues table not present yet — skipping delete.")
-    td = c.execute("SELECT COUNT(*) FROM documents WHERE status = 'New'").fetchone()[0]
+    
+    query = "SELECT id, relative_path, file_type FROM documents WHERE status = 'New' ORDER BY id"
+    if doc_limit:
+        query += f" LIMIT {doc_limit}"
+        
+    docs_to_process = c.execute(query).fetchall()
+    td = len(docs_to_process)
+    
     if td == 0: print("[INFO] No new documents to extract."); c.close(); return
-    dbf, dbw, ap, am, ec, ac = 10000, 5000, [], [], 0, [] # <-- ADDED ac for SRT cues
+    
+    srt_id_counter = c.execute("SELECT COALESCE(MAX(id), 0) FROM srt_cues").fetchone()[0] + 1
+    
+    dbf, dbw, ap, am, ec, ac = 10000, 5000, [], [], 0, [] 
     with ThreadPoolExecutor(max_workers=workers) as ex, tqdm(total=td, desc="Extracting Text", mininterval=1.0) as pb:
         for o in range(0, td, dbf):
-            dtp = c.execute(f"SELECT id,relative_path,file_type FROM documents WHERE status='New' LIMIT {dbf} OFFSET {o}").fetchall()
-            if not dtp: break
+            dtp = docs_to_process[o:o+dbf]
             fs = {ex.submit(_extract_worker, d): d for d in dtp}
             for f in as_completed(fs):
-                # --- START OF MODIFICATION: Unpack all 7 items from the worker result ---
                 i, pc, pi, em, dur, er, srt_cues = f.result()
-                # --- END OF MODIFICATION ---
-                if er: ec += 1; tqdm.write(f"[FAIL] Doc {i}:{er[:150]}..."); c.execute("UPDATE documents SET status='Error',status_message=? WHERE id=?", (er[:1000], i))
+                if er: 
+                    ec += 1; tqdm.write(f"[FAIL] Doc {i}:{er[:150]}...")
+                    c.execute("UPDATE documents SET status='Error',status_message=? WHERE id=?", (er[:1000], i))
                 else:
                     if pi: ap.extend([(i, pn, pt) for pn, pt in pi])
                     if dur is not None:
@@ -179,21 +187,23 @@ def phase_extract_text(workers):
                     else:
                         c.execute("UPDATE documents SET page_count=? WHERE id=?", (pc, i))
                     if em: am.append((i, em.get('from_address'), em.get('to_addresses'), em.get('cc_addresses'), em.get('subject'), em.get('sent_at')))
-                    # --- START OF MODIFICATION: Handle SRT cue data ---
                     if srt_cues:
-                        ac.extend([(c.execute("SELECT nextval('seq_srt_cues_id')").fetchone()[0], i, s['sequence'], s['timestamp'], s['dialogue']) for s in srt_cues])
-                    # --- END OF MODIFICATION ---
+                        for s in srt_cues:
+                            ac.append((srt_id_counter, i, s['sequence'], s['timestamp'], s['dialogue']))
+                            srt_id_counter += 1
+                
                 if len(ap) > dbw: pb.set_description("Writing text..."); c.executemany("INSERT INTO _staging_raw_text VALUES(?,?,?)", ap); ap = []
                 if len(am) > dbw: pb.set_description("Writing meta..."); c.executemany("INSERT INTO email_metadata VALUES(?,?,?,?,?,?)", am); am = []
-                if len(ac) > dbw: pb.set_description("Writing cues..."); c.executemany("INSERT INTO srt_cues VALUES (?,?,?,?,?)", ac); ac = [] # <-- ADDED
+                if len(ac) > dbw: pb.set_description("Writing cues..."); c.executemany("INSERT INTO srt_cues VALUES (?,?,?,?,?)", ac); ac = [] 
                 pb.set_description("Extracting Text"); pb.update(1)
+                
     if ap: print(f"[INFO] Staging final {len(ap)} pages..."); c.executemany("INSERT INTO _staging_raw_text VALUES(?,?,?)", ap)
     if am: print(f"[INFO] Staging final {len(am)} records..."); c.executemany("INSERT INTO email_metadata VALUES(?,?,?,?,?,?)", am)
-    if ac: print(f"[INFO] Staging final {len(ac)} SRT cues..."); c.executemany("INSERT INTO srt_cues VALUES (?,?,?,?,?)", ac) # <-- ADDED
+    if ac: print(f"[INFO] Staging final {len(ac)} SRT cues..."); c.executemany("INSERT INTO srt_cues VALUES (?,?,?,?,?)", ac) 
     c.close(); print(f"[OK] Extraction complete. Errors:{ec}.");
     if ec > 0: print(f"[ACTION] Review '{LOG_FILE.name}'.")
 
-# --- PHASE 2: NLP ANALYSIS (REVERTED TO FILE-BASED WORKERS) ---
+# --- PHASE 2: NLP ANALYSIS ---
 def _nlp_worker_process(pages_batch, temp_file_path):
     nlp = load_spacy_model()
     results = {'entities': [], 'chunks': [], 'relationships': []}
@@ -239,7 +249,6 @@ def phase_nlp_analysis(workers):
     
     print("[INFO] Fetching all page data from database...")
     all_pages = conn.execute("SELECT doc_id, page_number, page_content FROM _staging_raw_text").fetchall()
-    conn.close()
     
     chunk_size = math.ceil(total_pages / workers) if workers > 0 else total_pages
     page_batches = [all_pages[i:i + chunk_size] for i in range(0, total_pages, chunk_size)]
@@ -252,130 +261,269 @@ def phase_nlp_analysis(workers):
                 except Exception as e: pbar.write(f"[FATAL] A worker process failed: {e}")
                 pbar.update(1)
 
-    print("\n[INFO] Consolidating results from all workers...")
-    conn = get_db_conn()
-    all_results = {'entities': [], 'chunks': [], 'relationships': []}
+    print("\n[INFO] Streaming NLP results directly to disk (Low-RAM Mode)...")
     temp_files = sorted(list(TEMP_DIR.glob('*.pkl')))
-    for temp_file in tqdm(temp_files, desc="Loading result files"):
+    
+    chunk_id_start = conn.execute("SELECT COALESCE(MAX(id), 0) FROM _staging_chunks_to_embed").fetchone()[0] + 1
+    
+    for temp_file in tqdm(temp_files, desc="Writing Result Files"):
         with open(temp_file, 'rb') as f:
             results = pickle.load(f)
-            all_results['entities'].extend(results['entities'])
-            all_results['chunks'].extend(results['chunks'])
-            all_results['relationships'].extend(results['relationships'])
             
-    DB_WRITE_BATCH_SIZE = 100000
-
-    if all_results['entities']:
-        total_entities = len(all_results['entities'])
-        with tqdm(total=total_entities, desc="Inserting Entities", unit="entity") as pbar:
-            for i in range(0, total_entities, DB_WRITE_BATCH_SIZE):
-                batch = all_results['entities'][i:i + DB_WRITE_BATCH_SIZE]
-                if batch: conn.executemany("INSERT INTO _staging_entities VALUES (?, ?, ?, ?)", batch); pbar.update(len(batch))
-
-    if all_results['relationships']:
-        total_relationships = len(all_results['relationships'])
-        with tqdm(total=total_relationships, desc="Inserting Relationships", unit="rel") as pbar:
-            for i in range(0, total_relationships, DB_WRITE_BATCH_SIZE):
-                batch = all_results['relationships'][i:i + DB_WRITE_BATCH_SIZE]
-                if batch: conn.executemany("INSERT INTO _staging_relationships VALUES (?, ?, ?, ?, ?, ?, ?)", batch); pbar.update(len(batch))
+        if results.get('entities'):
+            conn.executemany("INSERT INTO _staging_entities VALUES (?, ?, ?, ?)", results['entities'])
             
-    if all_results['chunks']:
-        with tqdm(total=len(all_results['chunks']), desc="Inserting Chunks") as pbar:
-            for i in range(0, len(all_results['chunks']), 5000):
-                batch = all_results['chunks'][i:i+5000]
-                chunk_data = [(conn.execute("SELECT nextval('seq_staging_chunks_id')").fetchone()[0], c[0], c[1], c[2], c[3], c[4]) for c in batch]
-                if chunk_data: conn.executemany("INSERT INTO _staging_chunks_to_embed VALUES (?, ?, ?, ?, ?, ?)", chunk_data); pbar.update(len(batch))
+        if results.get('relationships'):
+            conn.executemany("INSERT INTO _staging_relationships VALUES (?, ?, ?, ?, ?, ?, ?)", results['relationships'])
+            
+        if results.get('chunks'):
+            chunks_to_insert = []
+            for c in results['chunks']:
+                chunks_to_insert.append((chunk_id_start, c[0], c[1], c[2], c[3], c[4]))
+                chunk_id_start += 1
+                
+            conn.executemany(
+                "INSERT INTO _staging_chunks_to_embed VALUES (?, ?, ?, ?, ?, ?)", 
+                chunks_to_insert
+            )
+            
+        del results
+        temp_file.unlink()
 
     conn.close()
     print("\n[OK] Phase 2: NLP Analysis Complete.")
 
-# --- PHASE 3: EMBEDDING GENERATION ---
+# --- PHASE 3: FINALIZE DATA ---
+def phase_finalize_data():
+    print("\n--- PHASE 3: Finalizing Graph Data (Incremental Append) ---")
+    with get_db_conn() as conn:
+        print("[INFO] Committing final entities...")
+        conn.execute("""
+            INSERT INTO entities (id, text, label) 
+            SELECT nextval('seq_entities_id'), text, label 
+            FROM (SELECT DISTINCT entity_text as text, entity_label as label FROM _staging_entities) t
+            WHERE NOT EXISTS (
+                SELECT 1 FROM entities e WHERE e.text = t.text AND e.label = t.label
+            );
+        """)
+        
+        print("[INFO] Committing final entity appearances...")
+        conn.execute("""
+            INSERT INTO entity_appearances (doc_id, entity_id, page_number) 
+            SELECT DISTINCT s.doc_id, e.id, s.page_number 
+            FROM _staging_entities s 
+            JOIN entities e ON s.entity_text = e.text AND s.entity_label = e.label;
+        """)
+        
+        print("[INFO] Committing final relationships...")
+        conn.execute("""
+            INSERT INTO entity_relationships (id, doc_id, page_number, subject_entity_id, object_entity_id, relationship_phrase) 
+            SELECT nextval('seq_entity_relationships_id'), s.doc_id, s.page_number, subj.id, obj.id, s.phrase 
+            FROM (SELECT DISTINCT * FROM _staging_relationships) s 
+            JOIN entities subj ON s.subj_text = subj.text AND s.subj_label = subj.label 
+            JOIN entities obj ON s.obj_text = obj.text AND s.obj_label = obj.label;
+        """)
+        
+        print("[INFO] Committing final content index...")
+        conn.execute("""
+            INSERT INTO content_index (doc_id, page_number, page_content) 
+            SELECT doc_id, page_number, page_content FROM _staging_raw_text;
+        """)
+        
+        print("[INFO] Rebuilding browse cache...")
+        conn.execute("DROP TABLE IF EXISTS browse_cache;")
+        conn.execute("""
+            CREATE TABLE browse_cache AS 
+            SELECT e.id as entity_id, e.text as entity_text, e.label as entity_label, 
+                   COUNT(DISTINCT ea.doc_id) as document_count, 
+                   COUNT(ea.doc_id) as appearance_count 
+            FROM entities e 
+            JOIN entity_appearances ea ON e.id = ea.entity_id 
+            GROUP BY e.id, e.text, e.label;
+        """)
+
+    print("[OK] Phase 3: Graph Data Finalization Complete.")
+
+# --- PHASE 4: EMBEDDING GENERATION (CONTINUOUS SATURATION FIX) ---
 def _batch_generator(items, batch_size):
     for i in range(0, len(items), batch_size): yield items[i:i + batch_size]
+
 def _embed_worker(batch):
     results = []
     try:
-        for item_id, prompt_text in batch:
-            response = ollama.embeddings(model=EMBEDDING_MODEL, prompt=prompt_text); embedding_bytes = np.array(response['embedding'], dtype=np.float32).tobytes(); results.append((item_id, embedding_bytes))
+        for row in batch:
+            doc_id, page_num, entity_id, chunk_text = row
+            response = ollama.embeddings(model=EMBEDDING_MODEL, prompt=chunk_text)
+            embedding_bytes = np.array(response['embedding'], dtype=np.float32).tobytes()
+            results.append((doc_id, page_num, entity_id, chunk_text, embedding_bytes))
         return results
     except Exception as e:
-        tqdm.write(f"[WARN] An embedding generation failed: {e}"); return []
+        tqdm.write(f"[WARN] An embedding generation failed: {e}")
+        return []
+
 def phase_generate_embeddings(workers, batch_size, use_gpu):
-    print("\n--- PHASE 3: Generating AI Embeddings ---")
-    if use_gpu: print("[INFO] GPU acceleration is enabled for Ollama (ensure Ollama server is configured for GPU).")
+    print("\n--- PHASE 4: Generating AI Embeddings (Continuous Saturation Mode) ---")
+    if use_gpu: print("[INFO] GPU acceleration is enabled for Ollama.")
     conn = get_db_conn()
-    try: conn.execute("DELETE FROM super_embedding_chunks;")
-    except Exception: logging.info("super_embedding_chunks table may not exist yet; continuing.")
-    chunks_to_process = conn.execute("SELECT id, chunk_text FROM _staging_chunks_to_embed").fetchall()
-    if not chunks_to_process: print("[INFO] No text chunks to embed. Skipping."); conn.close(); return
-    all_embeddings = []
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        batches = list(_batch_generator(chunks_to_process, batch_size)); futures = {executor.submit(_embed_worker, batch): i for i, batch in enumerate(batches)}
-        pbar = tqdm(as_completed(futures), total=len(batches), desc="Generating Embeddings")
-        for future in pbar:
-            try:
-                result = future.result()
-                if result: all_embeddings.extend(result)
-            except Exception as e:
-                tqdm.write(f"[WARN] Embedding worker failed: {e}")
-    if all_embeddings:
-        print(f"[INFO] Writing {len(all_embeddings)} embeddings to the database...")
-        conn.execute("CREATE TEMP TABLE _tmp_embeddings (chunk_id BIGINT, embedding BLOB);")
-        conn.executemany("INSERT INTO _tmp_embeddings VALUES (?, ?)", all_embeddings)
-        conn.execute("""
-            INSERT INTO super_embedding_chunks (id, doc_id, page_number, entity_id, chunk_text, embedding)
-            SELECT s.id, s.doc_id, s.page_number, e.id, s.chunk_text, t.embedding
-            FROM _staging_chunks_to_embed s 
-            JOIN _tmp_embeddings t ON s.id = t.chunk_id
-            JOIN entities e ON s.entity_text = e.text AND s.entity_label = e.label;
-        """)
-        conn.execute("DROP TABLE _tmp_embeddings;")
-    conn.close(); print("[OK] Phase 3: Embedding Generation Complete.")
+    
+    query = """
+        SELECT s.doc_id, s.page_number, e.id as entity_id, s.chunk_text
+        FROM _staging_chunks_to_embed s 
+        JOIN entities e ON s.entity_text = e.text AND s.entity_label = e.label
+    """
+    
+    print("[INFO] Fetching ALL chunk data upfront to prevent worker starvation...")
+    # Fetch all data at once. Because batches are small, this takes virtually 0 RAM.
+    chunks_data = conn.execute(query).fetchall()
+    total_chunks = len(chunks_data)
+    
+    if total_chunks == 0: 
+        print("[INFO] No text chunks to embed. Skipping.")
+        conn.close()
+        return
+    
+    print(f"[INFO] Saturating {workers} workers with {total_chunks} embeddings...")
+    print(f"[TIP]  If CPU usage drops, ensure 'OLLAMA_NUM_PARALLEL={workers}' is set on your Ollama server.")
+    
+    current_db_id = conn.execute("SELECT COALESCE(MAX(id), 0) FROM super_embedding_chunks").fetchone()[0] + 1
+    
+    batches = list(_batch_generator(chunks_data, batch_size))
+    
+    with ProcessPoolExecutor(max_workers=workers) as executor:
+        # Submit every batch immediately. Workers will constantly grab the next one.
+        futures = [executor.submit(_embed_worker, b) for b in batches]
+        
+        with tqdm(total=total_chunks, desc="Generating Embeddings") as pbar:
+            for future in as_completed(futures):
+                try:
+                    result_rows = future.result()
+                    if result_rows:
+                        rows_to_insert = []
+                        for r in result_rows:
+                            rows_to_insert.append((current_db_id, r[0], r[1], r[2], r[3], r[4]))
+                            current_db_id += 1
+                            
+                        conn.executemany("""
+                            INSERT INTO super_embedding_chunks 
+                            (id, doc_id, page_number, entity_id, chunk_text, embedding) 
+                            VALUES (?, ?, ?, ?, ?, ?)
+                        """, rows_to_insert)
+                        pbar.update(len(result_rows))
+                except Exception as e:
+                    tqdm.write(f"[FATAL] Embedding database write failed: {e}")
+                    raise e 
 
-# --- PHASE 4: FINALIZE DATA ---
-def phase_finalize_data():
-    print("\n--- PHASE 4: Finalizing Data ---")
-    with get_db_conn() as conn:
-        print("[INFO] Clearing old data from final tables...")
-        try:
-            conn.execute("DELETE FROM browse_cache;"); conn.execute("DELETE FROM entity_relationships;"); conn.execute("DELETE FROM entity_appearances;"); conn.execute("DELETE FROM entities;"); conn.execute("DELETE FROM content_index;")
-        except Exception: logging.info("Some final tables may not exist yet; continuing.")
-        print("[INFO] Committing final entities..."); conn.execute("INSERT INTO entities (id, text, label) SELECT nextval('seq_entities_id'), text, label FROM (SELECT DISTINCT entity_text as text, entity_label as label FROM _staging_entities) t;")
-        print("[INFO] Committing final entity appearances..."); conn.execute("""INSERT INTO entity_appearances (doc_id, entity_id, page_number) SELECT DISTINCT s.doc_id, e.id, s.page_number FROM _staging_entities s JOIN entities e ON s.entity_text = e.text AND s.entity_label = e.label;""")
-        print("[INFO] Committing final relationships..."); conn.execute("""INSERT INTO entity_relationships (id, doc_id, page_number, subject_entity_id, object_entity_id, relationship_phrase) SELECT nextval('seq_entity_relationships_id'), s.doc_id, s.page_number, subj.id, obj.id, s.phrase FROM (SELECT DISTINCT * FROM _staging_relationships) s JOIN entities subj ON s.subj_text = subj.text AND s.subj_label = subj.label JOIN entities obj ON s.obj_text = obj.text AND s.obj_label = obj.label;""")
-        print("[INFO] Committing final content index..."); conn.execute("INSERT INTO content_index (doc_id, page_number, page_content) SELECT doc_id, page_number, page_content FROM _staging_raw_text;")
-        print("[INFO] Updating document statuses..."); conn.execute("UPDATE documents SET status='Indexed', processed_at=CURRENT_TIMESTAMP WHERE status = 'New';")
-        print("[INFO] Updating browse cache..."); conn.execute("CREATE OR REPLACE TABLE browse_cache AS SELECT e.id as entity_id, e.text as entity_text, e.label as entity_label, COUNT(DISTINCT ea.doc_id) as document_count, COUNT(ea.doc_id) as appearance_count FROM entities e JOIN entity_appearances ea ON e.id = ea.entity_id GROUP BY e.id, e.text, e.label;")
-    print("[OK] Phase 4: Finalization Complete.")
+    conn.close()
+    print("[OK] Phase 4: Embedding Generation Complete.")
 
-# --- FULL PIPELINE RUNNER (CORRECTED SEQUENCE) ---
-def run_full_pipeline(workers, batch_size, use_gpu):
+# --- FULL PIPELINE RUNNER ---
+def run_full_pipeline(workers, batch_size, use_gpu, doc_limit=None):
     conn = get_db_conn()
     new_docs_count = conn.execute("SELECT COUNT(*) FROM documents WHERE status = 'New'").fetchone()[0]
-    if new_docs_count > 0:
-        phase_extract_text(workers)
-    else:
-        print("\n--- PHASE 1: Skipping Text Extraction (No new documents to process) ---")
+    conn.close()
 
+    if new_docs_count == 0:
+        print("\n--- PHASE 1: Skipping Text Extraction (No new documents to process) ---")
+        if BATCH_STATE_FILE.exists():
+            BATCH_STATE_FILE.unlink()
+    else:
+        actual_limit = doc_limit
+        
+        if actual_limit is None:
+            while True:
+                if BATCH_STATE_FILE.exists():
+                    try:
+                        with open(BATCH_STATE_FILE, 'r') as f:
+                            state = json.load(f)
+                        chunk_size = state.get('chunk_size', new_docs_count)
+                        total_chunks = state.get('total_chunks', 1)
+                        chunks_done = state.get('chunks_done', 0)
+                        
+                        print(f"\n========== BATCH MANAGER ==========")
+                        print(f"Resuming batch process: Chunk {chunks_done + 1} of {total_chunks}")
+                        print(f"Target size: ~{chunk_size} docs. Unprocessed remaining: {new_docs_count}")
+                        print(f"===================================")
+                        
+                        ans = input("Process next chunk now? [y / n / reset]: ").strip().lower()
+                        if ans == 'n':
+                            print("Operation cancelled.")
+                            return
+                        elif ans == 'reset':
+                            BATCH_STATE_FILE.unlink()
+                            print("Batch state reset. Starting fresh...")
+                            continue 
+                            
+                        actual_limit = chunk_size
+                        break
+                    except Exception as e:
+                        print(f"[WARN] Could not read batch state ({e}). Proceeding normally.")
+                        BATCH_STATE_FILE.unlink()
+                        continue
+                else:
+                    print(f"\n========== BATCH MANAGER ==========")
+                    print(f"Found {new_docs_count} new documents ready for processing.")
+                    ans = input("Do you want to divide this into smaller chunks to save RAM? [y/N]: ").strip().lower()
+                    if ans == 'y':
+                        try:
+                            div = int(input("Divide into how many chunks? (e.g., 2 for half, 4 for quarters): "))
+                            if div > 1:
+                                actual_limit = math.ceil(new_docs_count / div)
+                                state = {'chunk_size': actual_limit, 'total_chunks': div, 'chunks_done': 0}
+                                with open(BATCH_STATE_FILE, 'w') as f:
+                                    json.dump(state, f)
+                                print(f"\n[OK] Divided into {div} chunks of ~{actual_limit} documents each.")
+                            else:
+                                print("Invalid number. Proceeding with full batch.")
+                                actual_limit = new_docs_count
+                        except ValueError:
+                            print("Invalid input. Proceeding with full batch.")
+                            actual_limit = new_docs_count
+                    else:
+                        actual_limit = new_docs_count
+                    print(f"===================================\n")
+                    break
+
+        phase_extract_text(workers, doc_limit=actual_limit)
+
+    conn = get_db_conn()
     try:
         staged_text_count = conn.execute("SELECT COUNT(*) FROM _staging_raw_text").fetchone()[0]
     except (duckdb.CatalogException, IndexError):
         staged_text_count = 0
-    
     conn.close()
 
     if staged_text_count > 0:
         phase_nlp_analysis(workers)
-        
-        # This is the critical fix: Re-introducing the finalize step in the correct order.
         phase_finalize_data()
-        
         phase_generate_embeddings(workers, batch_size, use_gpu)
+        
+        conn = get_db_conn()
+        print("[INFO] Marking staged documents as 'Indexed'...")
+        conn.execute("UPDATE documents SET status='Indexed', processed_at=CURRENT_TIMESTAMP WHERE id IN (SELECT DISTINCT doc_id FROM _staging_raw_text);")
+        remaining_new = conn.execute("SELECT COUNT(*) FROM documents WHERE status = 'New'").fetchone()[0]
+        conn.close()
+        
+        if BATCH_STATE_FILE.exists():
+            try:
+                with open(BATCH_STATE_FILE, 'r') as f:
+                    state = json.load(f)
+                state['chunks_done'] += 1
+                
+                if remaining_new == 0 or state['chunks_done'] >= state['total_chunks']:
+                    BATCH_STATE_FILE.unlink()
+                    print(f"\n🎉 ALL CHUNKS COMPLETED! Total dataset is processed.")
+                else:
+                    with open(BATCH_STATE_FILE, 'w') as f:
+                        json.dump(state, f)
+                    print(f"\n⏳ CHUNK {state['chunks_done']} COMPLETE. {remaining_new} documents left.")
+                    print(f"Run the exact same command again to process the next chunk.")
+            except Exception:
+                pass
     else:
         print("\n--- SKIPPING PHASES 2, 3 & 4: No text was staged in Phase 1 ---")
         
     cleanup_staging_tables()
-    print("\n--- ✅ All processing phases completed successfully! ---")
+    print("\n--- ✅ Processing sequence ended! ---")
 
 # --- CLI / entrypoint guard for safe multiprocessing ---
 if __name__ == "__main__":

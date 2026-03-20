@@ -18,6 +18,7 @@ except ImportError:
 
 import processing_pipeline
 import spacy 
+from .config import REASONING_MODEL # <--- Added Import
 
 task_queue = queue.Queue()
 active_tasks = {}
@@ -27,7 +28,13 @@ restart_executor_event = threading.Event()
 
 def get_system_settings():
     """Reads all settings from the database and returns them as a dict."""
-    defaults = {'max_workers': 2, 'use_gpu': False, 'html_parsing_mode': 'generic'}
+    # Added reasoning_model to defaults
+    defaults = {
+        'max_workers': 2, 
+        'use_gpu': False, 
+        'html_parsing_mode': 'generic',
+        'reasoning_model': REASONING_MODEL
+    }
     settings = defaults.copy()
     conn = None
     try:
@@ -35,11 +42,19 @@ def get_system_settings():
         conn.row_factory = sqlite3.Row
         rows = conn.execute("SELECT key, value FROM app_settings").fetchall()
         db_settings = {row[0]: row[1] for row in rows}
+        
         if db_settings.get('max_workers', '').isdigit():
             settings['max_workers'] = int(db_settings['max_workers'])
+        
         settings['use_gpu'] = db_settings.get('use_gpu') == 'true'
+        
         if db_settings.get('html_parsing_mode') in ['generic', 'pipermail']:
             settings['html_parsing_mode'] = db_settings['html_parsing_mode']
+            
+        # Check for custom model setting
+        if db_settings.get('reasoning_model'):
+            settings['reasoning_model'] = db_settings.get('reasoning_model')
+            
     except Exception as e:
         print(f"Could not read app_settings from DB, using defaults. Error: {e}")
     finally:

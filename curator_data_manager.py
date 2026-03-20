@@ -1,4 +1,4 @@
-# --- File: ./curator_data_manager.py (FINAL, CORRECTING BAKE SCRIPT) ---
+# --- File: ./curator_data_manager.py (OPTIMIZED BAKE SCRIPT) ---
 import argparse
 import sys
 from pathlib import Path
@@ -23,6 +23,57 @@ def get_db_conn():
         print(f"[FATAL] Could not connect to DuckDB: {e}")
         sys.exit(1)
 
+def apply_sqlite_optimizations(sqlite_conn):
+    """
+    Applies performance indexes and maintenance triggers directly to the SQLite DB.
+    This replaces the need for a separate db_optimize.py script.
+    """
+    print(f"\n--- Applying SQLite Performance Optimizations ---")
+    cursor = sqlite_conn.cursor()
+    
+    print("  [INFO] Installing maintenance triggers (Comments & Tags)...")
+    # Comment Triggers
+    cursor.execute("DROP TRIGGER IF EXISTS trg_comment_added")
+    cursor.execute("""
+        CREATE TRIGGER trg_comment_added AFTER INSERT ON document_comments
+        BEGIN UPDATE documents SET cached_comment_count = cached_comment_count + 1 WHERE id = NEW.doc_id; END;
+    """)
+
+    cursor.execute("DROP TRIGGER IF EXISTS trg_comment_deleted")
+    cursor.execute("""
+        CREATE TRIGGER trg_comment_deleted AFTER DELETE ON document_comments
+        BEGIN UPDATE documents SET cached_comment_count = MAX(0, cached_comment_count - 1) WHERE id = OLD.doc_id; END;
+    """)
+
+    # Tag Triggers
+    cursor.execute("DROP TRIGGER IF EXISTS trg_tag_added")
+    cursor.execute("""
+        CREATE TRIGGER trg_tag_added AFTER INSERT ON document_tags
+        BEGIN UPDATE documents SET cached_tag_count = cached_tag_count + 1 WHERE id = NEW.doc_id; END;
+    """)
+
+    cursor.execute("DROP TRIGGER IF EXISTS trg_tag_deleted")
+    cursor.execute("""
+        CREATE TRIGGER trg_tag_deleted AFTER DELETE ON document_tags
+        BEGIN UPDATE documents SET cached_tag_count = MAX(0, cached_tag_count - 1) WHERE id = OLD.doc_id; END;
+    """)
+
+    print("  [INFO] Building high-performance indexes...")
+    # Dashboard Indexes
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_docs_processed_at ON documents(processed_at DESC)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_docs_rel_path ON documents(relative_path COLLATE NOCASE)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_docs_file_type ON documents(file_type)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_curation_user_doc ON document_curation(doc_id, user_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_comments_doc_lookup ON document_comments(doc_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_tags_doc_lookup ON document_tags(doc_id)")
+
+    # Discovery Indexes
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_cache_label_appearance ON browse_cache (entity_label, appearance_count DESC)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_cache_label_text_search ON browse_cache (entity_label, entity_text COLLATE NOCASE)")
+
+    sqlite_conn.commit()
+    print("  [OK]   Optimizations applied successfully.")
+
 def bake_sqlite_database(output_path_str: str):
     """
     Reads all processed data from the DuckDB workspace and writes it into a
@@ -31,14 +82,12 @@ def bake_sqlite_database(output_path_str: str):
     output_path = Path(output_path_str).resolve()
     print(f"\n--- Starting bake-down to SQLite at '{output_path}' ---")
     
-    # --- START OF MODIFICATION ---
     TABLES_TO_TRANSFER = [
         'documents', 'document_metadata', 'email_metadata', 'catalogs', 
         'document_catalogs', 'content_index', 'entities', 'entity_appearances', 
         'browse_cache', 'entity_relationships', 'super_embedding_chunks',
-        'srt_cues' # Added srt_cues to the list of tables to transfer
+        'srt_cues' 
     ]
-    # --- END OF MODIFICATION ---
     CHUNK_SIZE = 100000
 
     if output_path.exists():
@@ -56,6 +105,10 @@ def bake_sqlite_database(output_path_str: str):
     try:
         duck_conn = get_db_conn()
         sqlite_conn = sqlite3.connect(output_path)
+        
+        # Optimization: PRAGMA settings for bulk inserts
+        sqlite_conn.execute("PRAGMA synchronous = OFF;")
+        sqlite_conn.execute("PRAGMA journal_mode = MEMORY;")
         print("[OK]   Connected to both databases.")
 
         for table in TABLES_TO_TRANSFER:
@@ -85,6 +138,14 @@ def bake_sqlite_database(output_path_str: str):
                 raise
 
         sqlite_conn.commit()
+        
+        # --- NEW: Automatically apply indexes and triggers ---
+        apply_sqlite_optimizations(sqlite_conn)
+        
+        # Restore safe PRAGMA settings after bulk operations
+        sqlite_conn.execute("PRAGMA synchronous = NORMAL;")
+        sqlite_conn.execute("PRAGMA journal_mode = WAL;")
+
         print(f"\n[SUCCESS] Bake-down complete! Database is ready at: {output_path}")
 
     except Exception as e:
@@ -101,7 +162,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Redleaf Curator Data Manager (DuckDB).")
     subparsers = parser.add_subparsers(dest='command', required=True)
     
-    bake_parser = subparsers.add_parser('bake-sqlite', help="Bake data to SQLite.")
+    bake_parser = subparsers.add_parser('bake-sqlite', help="Bake data to SQLite and optimize indexes.")
     bake_parser.add_argument('--output', type=str, default='knowledge_base.db', help="Output SQLite file name.")
     
     args = parser.parse_args()

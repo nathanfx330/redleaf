@@ -1,6 +1,8 @@
-# --- File: ./project/blueprints/api/discovery.py ---
+# --- File: ./project/blueprints/api/discovery.py (OPTIMIZED) ---
 import sqlite3
 import json
+import uuid # <-- ADDED IMPORT
+from collections import defaultdict
 from flask import jsonify, request, g, abort
 
 from . import api_bp
@@ -9,32 +11,247 @@ from ...database import get_db
 from ...config import ENTITY_LABELS_TO_DISPLAY
 from ..auth import login_required
 from ...utils import _create_manual_snippet, _create_entity_snippet
+from ...assistant_core import _internal_fts_search, _internal_semantic_search, read_specific_pages
 
 # ===================================================================
-# --- Entity & Relationship Endpoints ---
+# --- Optimized Entity Discovery Endpoints ---
 # ===================================================================
 
-@api_bp.route('/discover/all-entities')
+@api_bp.route('/discover/stats')
 @login_required
-def get_all_discover_entities():
-    """Fetches pre-aggregated entity data from the browse_cache for the Discovery page."""
+def get_discovery_stats():
+    """
+    Returns only the counts for each entity label.
+    This allows the Discovery page to load instantly without fetching millions of rows.
+    """
     db = get_db()
     
-    cached_entities = db.execute("""
-        SELECT entity_label, entity_text, document_count, appearance_count 
+    # This query uses the new covering indexes to be extremely fast
+    query = """
+        SELECT entity_label, COUNT(*) as unique_count 
         FROM browse_cache 
         WHERE entity_label IN ({})
-        ORDER BY entity_label, appearance_count DESC, entity_text COLLATE NOCASE
-    """.format(','.join('?' for _ in ENTITY_LABELS_TO_DISPLAY)), ENTITY_LABELS_TO_DISPLAY).fetchall()
+        GROUP BY entity_label
+    """.format(','.join('?' for _ in ENTITY_LABELS_TO_DISPLAY))
     
-    entities_by_label = {label: [] for label in ENTITY_LABELS_TO_DISPLAY}
-    for entity_row in cached_entities:
-        entities_by_label[entity_row['entity_label']].append(dict(entity_row))
-            
+    stats = db.execute(query, ENTITY_LABELS_TO_DISPLAY).fetchall()
+    stats_map = {row['entity_label']: row['unique_count'] for row in stats}
+    
+    # Ensure all configured labels are present in the response, even if count is 0
+    final_stats = {label: stats_map.get(label, 0) for label in ENTITY_LABELS_TO_DISPLAY}
+    
     return jsonify({
-        'entities_by_label': entities_by_label,
+        'stats': final_stats,
         'sorted_labels': ENTITY_LABELS_TO_DISPLAY
     })
+
+@api_bp.route('/discover/list/<label>')
+@login_required
+def get_discovery_list(label):
+    """
+    Server-side pagination and filtering for a specific entity label.
+    Lazy-loaded when the user expands an accordion.
+    """
+    db = get_db()
+    
+    # Pagination parameters
+    page = request.args.get('page', 1, type=int)
+    per_page = 100
+    offset = (page - 1) * per_page
+    
+    # Filter and Sort parameters
+    search_query = request.args.get('q', '').strip()
+    sort_by = request.args.get('sort', 'mentions') # mentions, docs, alpha
+
+    # Base query
+    sql = "SELECT entity_text, document_count, appearance_count FROM browse_cache WHERE entity_label = ?"
+    params = [label]
+
+    # Apply Search Filter (if present)
+    if search_query:
+        # Uses the new COLLATE NOCASE index for fast case-insensitive search
+        sql += " AND entity_text LIKE ?"
+        params.append(f"%{search_query}%")
+
+    # Apply Sorting
+    if sort_by == 'alpha':
+        sql += " ORDER BY entity_text COLLATE NOCASE ASC"
+    elif sort_by == 'docs':
+        sql += " ORDER BY document_count DESC, entity_text COLLATE NOCASE"
+    else: # default 'mentions'
+        # Uses the new index on (entity_label, appearance_count DESC)
+        sql += " ORDER BY appearance_count DESC, entity_text COLLATE NOCASE"
+
+    # Apply Pagination
+    sql += " LIMIT ? OFFSET ?"
+    params.extend([per_page, offset])
+
+    results = db.execute(sql, params).fetchall()
+    
+    return jsonify({
+        'items': [dict(row) for row in results],
+        'has_more': len(results) == per_page
+    })
+
+@api_bp.route('/search')
+@login_required
+def api_global_search():
+    """Provides a JSON endpoint for Hybrid Global Search (FTS + Semantic)"""
+    query = request.args.get('q', '').strip()
+    limit = request.args.get('limit', 15, type=int)
+    
+    # --- ADDED: Mode parameter to allow skipping slow AI math ---
+    mode = request.args.get('mode', 'hybrid').strip().lower()
+    
+    if not query:
+        return jsonify([])
+        
+    db = get_db()
+    
+    # 1. Run the fast FTS text search
+    fts_hits = _internal_fts_search(db, query, limit=limit * 2)
+
+    rrf_scores = defaultdict(float)
+    source_data = {}
+    k = 60
+    
+    for rank, source in enumerate(fts_hits): 
+        key = (source['doc_id'], source['page_number'])
+        rrf_scores[key] += 1 / (k + rank + 1)
+        if key not in source_data:
+            # FTS uses <<< and >>> for highlighting
+            source_data[key] = source.get('snippet', '').replace('<<<', '').replace('>>>', '')
+            
+    # 2. ONLY run the heavy semantic search if mode is 'hybrid'
+    if mode == 'hybrid':
+        sem_hits = _internal_semantic_search(db, query, limit=limit * 2)
+        for rank, source in enumerate(sem_hits): 
+            key = (source['doc_id'], source['page_number'])
+            rrf_scores[key] += 1 / (k + rank + 1)
+            if key not in source_data:
+                 source_data[key] = source.get('snippet', '')
+    
+    sorted_keys = sorted(rrf_scores.keys(), key=lambda s: rrf_scores[s], reverse=True)
+    
+    # 3. Format output for Flutter
+    results = []
+    for doc_id, page_num in sorted_keys[:limit]:
+        doc = db.execute("SELECT relative_path FROM documents WHERE id = ?", (doc_id,)).fetchone()
+        title = doc['relative_path'] if doc else f"Document #{doc_id}"
+        snippet = source_data.get((doc_id, page_num), "Snippet unavailable.")
+        
+        results.append({
+            'doc_id': doc_id,
+            'page_number': page_num,
+            'title': f"{title} (Page {page_num})",
+            'snippet': snippet.strip()
+        })
+        
+    return jsonify(results)
+
+# ===================================================================
+# --- NEW: AI Context Endpoints for Node-Leaf ---
+# ===================================================================
+
+def _get_pages_for_topic(db, search_term):
+    """Helper: Finds all pages where a specific term or entity appears."""
+    pages_by_doc = defaultdict(set)
+    
+    # 1. Entity Search
+    entity = db.execute("SELECT id FROM entities WHERE text LIKE ?", (f"%{search_term}%",)).fetchone()
+    if entity:
+        mentions = db.execute("SELECT doc_id, page_number FROM entity_appearances WHERE entity_id = ?", (entity['id'],)).fetchall()
+        for mention in mentions:
+            pages_by_doc[mention['doc_id']].add(mention['page_number'])
+
+    # 2. FTS Search
+    terms = {term for term in search_term.split()}
+    terms.update({term.upper() for term in terms})
+    escaped_terms = [term.replace('"', '""') for term in terms]
+    
+    if escaped_terms:
+        fts_query = " OR ".join([f'"{term}"' for term in escaped_terms])
+        matches = db.execute("SELECT doc_id, page_number FROM content_index WHERE content_index MATCH ?", (fts_query,)).fetchall()
+        for match in matches:
+            pages_by_doc[match['doc_id']].add(match['page_number'])
+        
+    return pages_by_doc
+
+@api_bp.route('/search/intersection')
+@login_required
+def api_search_intersection():
+    """Finds pages where ALL specified topics are mentioned together and returns the raw text."""
+    topics = request.args.getlist('topic')
+    if not topics:
+        return jsonify({"context": "No topics provided."})
+        
+    db = get_db()
+    
+    # Get universe of pages for the first topic
+    master_pages = _get_pages_for_topic(db, topics[0])
+    
+    # Intersect with subsequent topics
+    for topic in topics[1:]:
+        next_pages = _get_pages_for_topic(db, topic)
+        temp_master = defaultdict(set)
+        common_docs = set(master_pages.keys()).intersection(set(next_pages.keys()))
+        
+        for doc_id in common_docs:
+            common_pages = master_pages[doc_id].intersection(next_pages[doc_id])
+            if common_pages:
+                temp_master[doc_id] = common_pages
+        master_pages = temp_master
+
+    if not master_pages:
+        return jsonify({"context": f"No documents found containing all topics together: {', '.join(topics)}"})
+
+    # Limit to top 5 docs, 3 pages each to protect LLM context window
+    sources = []
+    doc_count = 0
+    for doc_id, page_numbers in sorted(master_pages.items()):
+        if doc_count >= 5: break
+        page_count = 0
+        for page_num in sorted(list(page_numbers)):
+            if page_count >= 3: break
+            sources.append({"doc_id": doc_id, "page_number": page_num})
+            page_count += 1
+        doc_count += 1
+        
+    context = read_specific_pages(db, sources)
+    return jsonify({"context": context})
+
+@api_bp.route('/catalogs/all')
+@login_required
+def get_all_catalogs_api():
+    """Returns a simple list of all catalogs for the Node-Leaf UI."""
+    db = get_db()
+    catalogs = db.execute("SELECT id, name, catalog_type FROM catalogs ORDER BY name COLLATE NOCASE").fetchall()
+    return jsonify([dict(c) for c in catalogs])
+
+@api_bp.route('/catalogs/<int:catalog_id>/context')
+@login_required
+def get_catalog_context(catalog_id):
+    """Extracts the beginning pages of documents in a catalog for AI summarization."""
+    db = get_db()
+    limit = request.args.get('limit', 5, type=int) # Max docs to read
+    
+    # Get documents in the catalog
+    docs = db.execute("SELECT doc_id FROM document_catalogs WHERE catalog_id = ? LIMIT ?", (catalog_id, limit)).fetchall()
+    if not docs:
+        return jsonify({"context": "This collection is empty or does not exist."})
+        
+    sources = []
+    for doc in docs:
+        # Grab first 2 pages of each document as context
+        sources.append({"doc_id": doc['doc_id'], "page_number": 1})
+        sources.append({"doc_id": doc['doc_id'], "page_number": 2})
+        
+    context = read_specific_pages(db, sources)
+    return jsonify({"context": context})
+
+# ===================================================================
+# --- Relationship Endpoints ---
+# ===================================================================
 
 @api_bp.route('/relationships/top')
 @login_required
@@ -102,9 +319,6 @@ def get_relationship_details():
     if not subject or not object_entity:
         return jsonify({"error": "One or both entities not found."}), 404
 
-    # --- START OF MODIFICATION ---
-    # The original query was mostly correct, but we no longer need the page_content subquery here,
-    # as we will fetch it inside the loop with the corrected logic.
     query = f"""
         SELECT r.doc_id, r.page_number, d.relative_path, d.color, d.page_count, d.file_type,
                {get_base_document_query_fields()}
@@ -123,8 +337,6 @@ def get_relationship_details():
         file_type = row_dict['file_type']
         page_num_for_query = row_dict['page_number']
 
-        # This is the key fix: If the file type is SRT (or other single-page types from the
-        # DuckDB pipeline), we must query page_number 1 from the content_index.
         if file_type in ['SRT', 'HTML', 'EML']:
             page_num_for_query = 1
 
@@ -136,10 +348,7 @@ def get_relationship_details():
         if page_row:
             content_for_snippet = page_row['page_content']
 
-        # Now, we manually add back the SRT-specific details for the UI if needed
         if file_type == 'SRT':
-            # Note: We still query srt_cues, but ONLY for UI display (timestamp), not for the snippet text.
-            # This part will gracefully fail if srt_cues is empty, which is fine.
             cue = db.execute("SELECT sequence, timestamp FROM srt_cues WHERE doc_id = ? AND sequence = ?", (row_dict['doc_id'], row_dict['page_number'])).fetchone()
             if cue:
                 row_dict['srt_cue_sequence'] = cue['sequence']
@@ -147,7 +356,6 @@ def get_relationship_details():
         
         row_dict['snippet'] = _create_manual_snippet(content_for_snippet, subject['text'], object_entity['text'], phrase)
         final_results.append(row_dict)
-    # --- END OF MODIFICATION ---
         
     return jsonify(final_results)
 
@@ -233,10 +441,6 @@ def get_entity_co_mentions(entity_id):
     total_count_row = db.execute(count_query, (entity_id, filter_entity_id)).fetchone()
     total_count = total_count_row[0] if total_count_row else 0
     
-    # --- START OF FIX ---
-    # This query is now fully explicit, avoiding the helper function to
-    # eliminate any potential column name ambiguity. It guarantees that the
-    # document ID is returned as 'doc_id'.
     results_query = """
         WITH CoMentions AS (
             SELECT ea1.doc_id, ea1.page_number
@@ -262,13 +466,12 @@ def get_entity_co_mentions(entity_id):
         LIMIT ? OFFSET ?;
     """
     db_results = db.execute(results_query, (entity_id, filter_entity_id, g.user['id'], limit, offset)).fetchall()
-    # --- END OF FIX ---
 
     results = []
     for row in db_results:
         row_dict = dict(row)
         content_for_snippet = ""
-        doc_id_for_query = row_dict['doc_id'] # Use the standardized key
+        doc_id_for_query = row_dict['doc_id'] 
         file_type = row_dict.get('file_type')
         page_num_for_query = row_dict['page_number']
 
@@ -297,6 +500,7 @@ def get_podcast_collections():
     db = get_db()
     query = "SELECT c.id as catalog_id, c.name as podcast_title, COUNT(dc.doc_id) as episode_count FROM catalogs c JOIN document_catalogs dc ON c.id = dc.catalog_id WHERE c.catalog_type = 'podcast' GROUP BY c.id, c.name ORDER BY c.name COLLATE NOCASE;"
     return jsonify([dict(row) for row in db.execute(query).fetchall()])
+
 @api_bp.route('/podcasts/<int:catalog_id>/filters')
 @login_required
 def get_podcast_filters(catalog_id):
@@ -304,6 +508,7 @@ def get_podcast_filters(catalog_id):
     years = [row['year'] for row in db.execute("SELECT DISTINCT json_extract(m.csl_json, '$.issued.\"date-parts\"[0][0]') as year FROM document_metadata m JOIN document_catalogs dc ON m.doc_id = dc.doc_id WHERE dc.catalog_id = ? AND year IS NOT NULL ORDER BY year DESC;", (catalog_id,)).fetchall()]
     letters = [row['first_letter'] for row in db.execute("SELECT DISTINCT UPPER(SUBSTR(TRIM(COALESCE(json_extract(m.csl_json, '$.title'), d.relative_path)), 1, 1)) as first_letter FROM documents d JOIN document_catalogs dc ON d.id = dc.doc_id LEFT JOIN document_metadata m ON d.id = m.doc_id WHERE dc.catalog_id = ? ORDER BY first_letter;", (catalog_id,)).fetchall() if row['first_letter']]
     return jsonify({'years': years, 'letters': letters})
+
 @api_bp.route('/podcasts/<int:catalog_id>/episodes')
 @login_required
 def get_podcast_episodes(catalog_id):
@@ -341,3 +546,73 @@ def get_podcast_episodes(catalog_id):
             except (json.JSONDecodeError, IndexError, TypeError): pass
         episodes.append(ep_data)
     return jsonify({'episodes': episodes, 'total_filtered_count': total_count})
+
+# ===================================================================
+# --- SYSTEM IDENTIFICATION & BRIEFING ---
+# ===================================================================
+@api_bp.route('/system/info')
+@login_required
+def system_info():
+    """Public endpoint for the Flutter app to identify this specific database."""
+    db = get_db()
+    
+    # Check if this database already has an instance_id
+    row = db.execute("SELECT value FROM app_settings WHERE key = 'instance_id'").fetchone()
+    
+    if row:
+        instance_id = row['value']
+    else:
+        # Self-healing: If it's an old database without an ID, generate one now.
+        instance_id = str(uuid.uuid4())
+        db.execute("INSERT INTO app_settings (key, value) VALUES ('instance_id', ?)", (instance_id,))
+        db.commit()
+        
+    return jsonify({
+        'project_name': getattr(g, 'project_name', 'Redleaf'),
+        'instance_id': instance_id
+    })
+
+@api_bp.route('/system/briefing')
+@login_required
+def system_briefing():
+    """Generates a high-level briefing of the database contents for AI context."""
+    db = get_db()
+    briefing_parts = []
+
+    try:
+        total_docs = db.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+        
+        date_range = db.execute("""
+            SELECT MIN(json_extract(csl_json, '$.issued."date-parts"[0][0]')) as min_year,
+                   MAX(json_extract(csl_json, '$.issued."date-parts"[0][0]')) as max_year
+            FROM document_metadata
+        """).fetchone()
+        
+        if date_range['min_year'] and date_range['max_year']:
+            date_str = f"Years covered: {date_range['min_year']} to {date_range['max_year']}"
+        else:
+            date_str = "Years covered: Unknown"
+
+        top_tags = db.execute("""
+            SELECT t.name, COUNT(dt.doc_id) as c 
+            FROM tags t JOIN document_tags dt ON t.id = dt.tag_id 
+            GROUP BY t.name ORDER BY c DESC LIMIT 5
+        """).fetchall()
+        tags_str = ", ".join([f"{t['name']} ({t['c']})" for t in top_tags]) if top_tags else "No tags yet"
+
+        top_people = db.execute("SELECT entity_text FROM browse_cache WHERE entity_label = 'PERSON' ORDER BY appearance_count DESC LIMIT 5").fetchall()
+        people_str = ", ".join([r['entity_text'] for r in top_people]) if top_people else "None"
+        
+        top_orgs = db.execute("SELECT entity_text FROM browse_cache WHERE entity_label = 'ORG' ORDER BY appearance_count DESC LIMIT 5").fetchall()
+        orgs_str = ", ".join([r['entity_text'] for r in top_orgs]) if top_orgs else "None"
+
+        briefing = (
+            f"- Total Documents: {total_docs}\n"
+            f"- {date_str}\n"
+            f"- Top Tags: {tags_str}\n"
+            f"- Prominent People: {people_str}\n"
+            f"- Prominent Groups: {orgs_str}"
+        )
+        return jsonify({'briefing': briefing})
+    except Exception as e:
+        return jsonify({'briefing': f"System briefing unavailable (Database error: {e})"})

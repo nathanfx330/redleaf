@@ -1,4 +1,4 @@
-# --- File: ./curator_cli.py ---
+# --- File: ./curator_cli.py (UPDATED WITH PROPER PHASE NUMBERING) ---
 import argparse
 import sys
 import json
@@ -41,7 +41,30 @@ def setup_duckdb_schema():
     # Base tables
     conn.execute("""
         SET TimeZone='UTC';
-        CREATE TABLE IF NOT EXISTS documents (id BIGINT PRIMARY KEY, relative_path VARCHAR NOT NULL UNIQUE, file_hash VARCHAR NOT NULL, file_type VARCHAR NOT NULL, status VARCHAR NOT NULL, status_message VARCHAR, added_at TIMESTAMP WITH TIME ZONE DEFAULT current_timestamp, processed_at TIMESTAMP WITH TIME ZONE, file_modified_at TIMESTAMP WITH TIME ZONE, color VARCHAR, page_count INTEGER, file_size_bytes BIGINT, duration_seconds INTEGER, linked_audio_path VARCHAR, linked_video_path VARCHAR, linked_audio_url VARCHAR, last_audio_position DOUBLE DEFAULT 0.0, audio_offset_seconds DOUBLE DEFAULT 0.0, last_pdf_zoom DOUBLE, last_pdf_page INTEGER);
+        CREATE TABLE IF NOT EXISTS documents (
+            id BIGINT PRIMARY KEY, 
+            relative_path VARCHAR NOT NULL UNIQUE, 
+            file_hash VARCHAR NOT NULL, 
+            file_type VARCHAR NOT NULL, 
+            status VARCHAR NOT NULL, 
+            status_message VARCHAR, 
+            added_at TIMESTAMP WITH TIME ZONE DEFAULT current_timestamp, 
+            processed_at TIMESTAMP WITH TIME ZONE, 
+            file_modified_at TIMESTAMP WITH TIME ZONE, 
+            color VARCHAR, 
+            page_count INTEGER, 
+            file_size_bytes BIGINT, 
+            duration_seconds INTEGER, 
+            linked_audio_path VARCHAR, 
+            linked_video_path VARCHAR, 
+            linked_audio_url VARCHAR, 
+            last_audio_position DOUBLE DEFAULT 0.0, 
+            audio_offset_seconds DOUBLE DEFAULT 0.0, 
+            last_pdf_zoom DOUBLE, 
+            last_pdf_page INTEGER,
+            cached_comment_count INTEGER DEFAULT 0,
+            cached_tag_count INTEGER DEFAULT 0
+        );
         CREATE TABLE IF NOT EXISTS document_metadata (doc_id BIGINT PRIMARY KEY, csl_json VARCHAR, last_updated TIMESTAMP WITH TIME ZONE DEFAULT current_timestamp, updated_by_user_id BIGINT, FOREIGN KEY (doc_id) REFERENCES documents(id));
         CREATE TABLE IF NOT EXISTS email_metadata ( doc_id BIGINT PRIMARY KEY, from_address VARCHAR, to_addresses VARCHAR, cc_addresses VARCHAR, subject VARCHAR, sent_at TIMESTAMP WITH TIME ZONE, FOREIGN KEY (doc_id) REFERENCES documents(id) );
         CREATE TABLE IF NOT EXISTS catalogs (id BIGINT PRIMARY KEY, name VARCHAR NOT NULL UNIQUE, description VARCHAR, catalog_type VARCHAR NOT NULL DEFAULT 'user', created_at TIMESTAMP WITH TIME ZONE DEFAULT current_timestamp);
@@ -52,9 +75,7 @@ def setup_duckdb_schema():
         CREATE TABLE IF NOT EXISTS browse_cache (entity_id BIGINT PRIMARY KEY, entity_text VARCHAR NOT NULL, entity_label VARCHAR NOT NULL, document_count BIGINT NOT NULL, appearance_count BIGINT NOT NULL, FOREIGN KEY (entity_id) REFERENCES entities(id));
         CREATE TABLE IF NOT EXISTS super_embedding_chunks ( id BIGINT PRIMARY KEY, doc_id BIGINT NOT NULL, page_number INTEGER NOT NULL, entity_id BIGINT NOT NULL, chunk_text VARCHAR NOT NULL, embedding BLOB NOT NULL, FOREIGN KEY (doc_id) REFERENCES documents(id), FOREIGN KEY (entity_id) REFERENCES entities(id) );
         
-        -- START OF MODIFICATION --
         CREATE TABLE IF NOT EXISTS srt_cues (id BIGINT PRIMARY KEY, doc_id BIGINT NOT NULL, sequence INTEGER NOT NULL, timestamp VARCHAR NOT NULL, dialogue VARCHAR NOT NULL, UNIQUE(doc_id, sequence));
-        -- END OF MODIFICATION --
     """)
     
     # Staging tables for the new pipeline
@@ -70,7 +91,7 @@ def setup_duckdb_schema():
     conn.execute("CREATE SEQUENCE IF NOT EXISTS seq_entities_id START 1;");
     conn.execute("CREATE SEQUENCE IF NOT EXISTS seq_entity_relationships_id START 1;");
     conn.execute("CREATE SEQUENCE IF NOT EXISTS seq_super_embedding_chunks_id START 1;")
-    conn.execute("CREATE SEQUENCE IF NOT EXISTS seq_srt_cues_id START 1;") # <-- ADDED
+    conn.execute("CREATE SEQUENCE IF NOT EXISTS seq_srt_cues_id START 1;")
 
     print("--- Schema setup complete. ---")
     conn.close()
@@ -341,19 +362,28 @@ if __name__ == "__main__":
     
     proc_parser = subparsers.add_parser('process-docs', help="[Step 2] Runs the high-throughput processing pipeline.")
     proc_subparsers = proc_parser.add_subparsers(dest='phase', required=True, help='Pipeline phase to run')
-    run_all_parser = proc_subparsers.add_parser('run-all', help='Runs all processing phases in sequence (extract, nlp, embed, finalize).')
-    run_all_parser.add_argument('-w', '--workers', type=int, default=os.cpu_count() or 2, help="Number of parallel workers for each phase.")
-    run_all_parser.add_argument('--batch-size', type=int, default=128, help="Number of items to send to the embedding model at once.")
-    run_all_parser.add_argument('--gpu', action='store_true', help="Enable GPU acceleration for embedding phase.")
+    
+    run_all_parser = proc_subparsers.add_parser('run-all', help='Runs all processing phases in sequence.')
+    run_all_parser.add_argument('-w', '--workers', type=int, default=os.cpu_count() or 2, help="Number of parallel workers.")
+    run_all_parser.add_argument('--batch-size', type=int, default=128, help="Embedding batch size.")
+    run_all_parser.add_argument('--gpu', action='store_true', help="Enable GPU acceleration.")
+    run_all_parser.add_argument('--doc-limit', type=int, default=None, help="Process only N documents at a time to save RAM.")
+    
     extract_parser = proc_subparsers.add_parser('extract', help='Phase 1: Extracts clean text from all new documents.')
     extract_parser.add_argument('-w', '--workers', type=int, default=os.cpu_count() or 2, help="Number of parallel workers.")
+    extract_parser.add_argument('--doc-limit', type=int, default=None, help="Process only N documents at a time to save RAM.")
+    
     nlp_parser = proc_subparsers.add_parser('nlp', help='Phase 2: Performs spaCy NLP analysis on extracted text.')
     nlp_parser.add_argument('-w', '--workers', type=int, default=os.cpu_count() or 2, help="Number of parallel workers.")
-    embed_parser = proc_subparsers.add_parser('embed', help='Phase 3: Generates AI embeddings for all chunks in batches.')
+    
+    # --- SWAPPED HELP TEXT AND DEFINITIONS ---
+    proc_subparsers.add_parser('finalize', help='Phase 3: Commits all staged data to the final tables (Graph Data).')
+    
+    embed_parser = proc_subparsers.add_parser('embed', help='Phase 4: Generates AI embeddings for all chunks in batches.')
     embed_parser.add_argument('-w', '--workers', type=int, default=os.cpu_count() or 2, help="Number of parallel workers.")
     embed_parser.add_argument('--batch-size', type=int, default=128, help="Number of items to send to the embedding model at once.")
     embed_parser.add_argument('--gpu', action='store_true', help="Enable GPU acceleration for embedding.")
-    proc_subparsers.add_parser('finalize', help='Phase 4: Commits all staged data to the final tables.')
+    
     proc_subparsers.add_parser('cleanup', help='Utility: Removes all temporary staging tables.')
     
     reset_parser = subparsers.add_parser('reset-docs', help="[Utility] Resets document statuses to 'New'.")
@@ -381,15 +411,16 @@ if __name__ == "__main__":
         discover_documents()
     elif args.command == 'process-docs':
         if args.phase == 'run-all':
-            pipeline.run_full_pipeline(workers=args.workers, batch_size=args.batch_size, use_gpu=args.gpu)
+            pipeline.run_full_pipeline(workers=args.workers, batch_size=args.batch_size, use_gpu=args.gpu, doc_limit=args.doc_limit)
         elif args.phase == 'extract':
-            pipeline.phase_extract_text(workers=args.workers)
+            pipeline.phase_extract_text(workers=args.workers, doc_limit=args.doc_limit)
         elif args.phase == 'nlp':
             pipeline.phase_nlp_analysis(workers=args.workers)
-        elif args.phase == 'embed':
-            pipeline.phase_generate_embeddings(workers=args.workers, batch_size=args.batch_size, use_gpu=args.gpu)
+        # Note: No logic change needed here, just the UI text changed
         elif args.phase == 'finalize':
             pipeline.phase_finalize_data()
+        elif args.phase == 'embed':
+            pipeline.phase_generate_embeddings(workers=args.workers, batch_size=args.batch_size, use_gpu=args.gpu)
         elif args.phase == 'cleanup':
             pipeline.cleanup_staging_tables()
     elif args.command == 'reset-docs':

@@ -2,6 +2,15 @@
 # --- Redleaf Project Artifacts ---
 # ===================================================================
 
+# The user's private document source folder
+/documents/
+
+# User's Node Leaf project saves
+/nodeleaf_projects/
+
+# Downloaded AI/NLP models (Too large for Git)
+/models/
+
 # The live, private SQLite database file and its temporary files.
 # The public, pre-computed version is initial_state.sql.zip, which is NOT ignored.
 /knowledge_base.db

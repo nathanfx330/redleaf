@@ -68,6 +68,7 @@ SECRET_KEY = get_or_create_secret_key()
 # Using other models may work but is not guaranteed.
 
 # The model for reasoning, tool use, and generating answers in the assistant.
+#gemma3:4b or gemma3:12b"
 REASONING_MODEL = "gemma3:12b"
 
 # The model for generating embeddings for semantic search.

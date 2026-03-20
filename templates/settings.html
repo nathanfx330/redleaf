@@ -1,4 +1,4 @@
-<!-- File: ./templates/settings.html (FIXED) -->
+<!-- File: ./templates/settings.html (FINAL VERSION) -->
 {% extends 'layout.html' %}
 {% block title %}Settings - Redleaf{% endblock %}
 
@@ -135,12 +135,10 @@
             <div class="panel">
                 <div class="panel-body">
                     <h5>Worker Configuration</h5>
-                    <!-- ===== START: WORKER MESSAGING FIX ===== -->
                     <p class="text-muted">
                         Adjust the number of parallel processes for document processing. While you have <strong>{{ cpu_count or 'N/A' }}</strong> cores, <strong>a value of 2 is recommended for optimal performance.</strong>
                         <br>Due to SQLite's write limitations, setting this higher often leads to database lock errors and <i>slower</i> overall processing, not faster. Each worker also consumes significant RAM (800MB+).
                     </p>
-                    <!-- ===== END: WORKER MESSAGING FIX ===== -->
                     <form action="{{ url_for('settings.update_workers') }}" method="POST" class="d-flex align-items-center gap-3">
                         {{ form.hidden_tag() }}
                         <div class="form-group mb-0">
@@ -149,17 +147,39 @@
                         </div>
                         <button type="submit" class="button button-primary align-self-end">Update Workers</button>
                     </form>
+
+                    <!-- === MODEL SELECTION UI === -->
+                    <hr>
+                    <h5>AI Reasoning Model</h5>
+                    <p class="text-muted">Select the Ollama model used for the Semantic Assistant and chat features. (The embedding model remains fixed).</p>
+
+                    <form action="{{ url_for('settings.update_model_settings') }}" method="POST" class="d-flex align-items-center gap-3">
+                        {{ form.hidden_tag() }}
+                        <div class="form-group mb-0">
+                            <label for="reasoning_model" class="form-label">
+                                Current Model: 
+                                <button type="button" onclick="window.location.reload()" title="Refresh Page" style="background:none; border:none; cursor:pointer; font-size: 1.2em; color: var(--link-color);">⟳</button>
+                            </label>
+                            <select name="reasoning_model" id="reasoning_model" class="form-control" style="width: 250px;">
+                                {% for model in ollama_models %}
+                                    <option value="{{ model }}" {% if model == reasoning_model %}selected{% endif %}>{{ model }}</option>
+                                {% else %}
+                                    <option value="{{ reasoning_model }}" selected>{{ reasoning_model }} (Ollama unreachable)</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <button type="submit" class="button button-primary align-self-end">Update Model</button>
+                    </form>
+
                     <hr>
                     <h5>GPU Acceleration (via CUDA)</h5>
                     <p class="text-muted">Enable to use a compatible NVIDIA GPU for spaCy's NLP processing. This requires CUDA and CuPy to be correctly installed. The change will take effect after any currently running tasks complete.</p>
                     
-                    <!-- ===== START: GPU UX FIX (HTML) ===== -->
                     <div class="form-switch">
                         <input type="checkbox" role="switch" name="use_gpu" id="use-gpu-toggle" {% if use_gpu %}checked{% endif %}>
                         <label for="use-gpu-toggle">Enable GPU Acceleration</label>
                         <span id="gpu-save-status" class="save-status-indicator" style="margin-left: 1rem; opacity: 0;"></span>
                     </div>
-                    <!-- ===== END: GPU UX FIX (HTML) ===== -->
 
                     <hr>
                     <h5>HTML Parsing Strategy</h5>
@@ -283,12 +303,37 @@ document.addEventListener('DOMContentLoaded', () => {
     const tabContents = document.querySelectorAll('.tab-content');
     let archiveTabLoaded = false;
 
+    // === FIXED TAB PERSISTENCE LOGIC ===
+    // 1. Check localStorage for a saved tab ID
+    const savedTab = localStorage.getItem('activeSettingsTab');
+    
+    if (savedTab) {
+        const targetLink = document.querySelector(`.tab-link[data-tab="${savedTab}"]`);
+        const targetContent = document.getElementById(`tab-${savedTab}`);
+        
+        if (targetLink && targetContent) {
+            // Remove 'active' from all links and contents
+            tabContainer.querySelectorAll('.tab-link').forEach(l => l.classList.remove('active'));
+            tabContents.forEach(content => content.classList.remove('active'));
+            
+            // Add 'active' to the saved tab and content
+            targetLink.classList.add('active');
+            targetContent.classList.add('active');
+            
+            // Load lazy data if needed
+            if (savedTab === 'archive') loadArchivedRelationships();
+        }
+    }
+
     if (tabContainer) {
         tabContainer.addEventListener('click', (event) => {
             const link = event.target.closest('.tab-link');
             if (!link) return;
 
             const tabId = link.dataset.tab;
+            
+            // Save the clicked tab ID to localStorage
+            localStorage.setItem('activeSettingsTab', tabId);
             
             tabContainer.querySelectorAll('.tab-link').forEach(l => l.classList.remove('active'));
             link.classList.add('active');
@@ -303,6 +348,8 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // ... (Rest of JS: GPU toggle, Password change, etc.)
+    
     // ===== START: GPU UX FIX (JAVASCRIPT) =====
     const gpuToggle = document.getElementById('use-gpu-toggle');
     if (gpuToggle) {

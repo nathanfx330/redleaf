@@ -1,4 +1,4 @@
-# --- File: ./project/blueprints/main.py (FINAL FIX FOR PAGINATION) ---
+# --- File: ./project/blueprints/main.py (OPTIMIZED FOR SSR & FTS5) ---
 import os
 import queue
 import re
@@ -19,29 +19,38 @@ from ..utils import _get_dashboard_state, _truncate_long_snippet, _create_entity
 from ..config import DOCUMENTS_DIR, ENTITY_LABELS_TO_DISPLAY
 from .auth import login_required, admin_required, SecureForm
 
+# --- IMPORT OPTIMIZED DATA FETCHING LOGIC ---
+from .api.documents import fetch_dashboard_data
+
 main_bp = Blueprint('main', __name__)
 
 @main_bp.route('/')
 @main_bp.route('/dashboard')
 @login_required
 def dashboard():
-    # --- START OF MODIFICATION ---
-    # The expensive query that fetched all documents has been removed.
-    # The page will now load instantly, and the JavaScript in the template
-    # will make a separate API call to get the first page of data.
-    db = get_db()
-    state_data = _get_dashboard_state(db)
+    # --- OPTIMIZATION: Server-Side Rendering (SSR) ---
+    # Instead of sending an empty page that makes an AJAX call, we fetch the 
+    # first page of data immediately and render it into the HTML.
+    # This makes the dashboard feel instant.
+    
+    initial_data = fetch_dashboard_data(
+        user_id=g.user['id'],
+        page=1, 
+        per_page=50, 
+        sort_key='relative_path', 
+        sort_dir='asc'
+    )
+    
     form = SecureForm()
     
-    # We now pass an empty list for 'documents' on the initial page load.
-    # The actual data will be populated by the fetchDashboardData() function in dashboard.html.
     return render_template('dashboard.html', 
-                           documents=[], 
-                           doc_dir=DOCUMENTS_DIR, 
-                           queue_size=state_data['queue_size'], 
+                           documents=initial_data['documents'], 
+                           total_documents=initial_data['total_documents'],
+                           queue_size=initial_data['queue_size'], 
                            form=form, 
-                           task_states=state_data['task_states'])
-    # --- END OF MODIFICATION ---
+                           task_states=initial_data['task_states'],
+                           doc_dir=DOCUMENTS_DIR,
+                           initial_data=initial_data) # Pass full object for JS hydration
 
 @main_bp.route('/dashboard/discover')
 @login_required
@@ -110,25 +119,57 @@ def discover_view():
 @login_required
 def search_results():
     query = request.args.get('q', '').strip()
+    page = request.args.get('page', 1, type=int)
+    per_page = 50
+    offset = (page - 1) * per_page
+    
     if not query:
         return redirect(url_for('main.discover_view'))
-    sanitized_query = query.replace('"', '""')
-    fts_query = f'"{sanitized_query}"'
+    
     db = get_db()
+    
+    # --- SMART MULTI-TERM SEARCH LOGIC ---
+    # Strip dangerous punctuation, ignore the literal word "and"
+    safe_query = re.sub(r'[^\w\s]', '', query).strip()
+    words = [w for w in safe_query.split() if w.lower() != 'and']
+    
+    # Join with AND so FTS5 looks for pages containing ALL the words (e.g. "Sam" AND "Cats")
+    fts_query = " AND ".join([f'"{w}"' for w in words])
+    
+    if not fts_query:
+        return render_template('search_results.html', query=query, results=[], page=page, has_next=False)
+    
+    # Fetch per_page + 1 to easily determine if there is a "Next" page
+    fetch_limit = per_page + 1
+
     sql_query = """
         SELECT d.id as doc_id, d.relative_path, d.color, d.page_count, d.file_type, 
-               ci.page_number, snippet(content_index, 2, '<strong>', '</strong>', '...', 20) as snippet,
-               (SELECT COUNT(*) FROM document_comments WHERE doc_id = d.id) as comment_count,
+               tm.page_number, tm.snippet,
+               d.cached_comment_count as comment_count,
+               (d.cached_tag_count > 0) as has_tags,
                (SELECT 1 FROM document_curation WHERE doc_id = d.id AND user_id = ?) as has_personal_note,
-               (SELECT 1 FROM document_tags WHERE doc_id = d.id LIMIT 1) as has_tags,
                (SELECT GROUP_CONCAT(c.name, ', ') FROM catalogs c JOIN document_catalogs dc ON c.id = dc.catalog_id WHERE dc.doc_id = d.id) as catalog_names
-        FROM content_index ci
-        JOIN documents d ON ci.doc_id = d.id
-        WHERE content_index MATCH ? ORDER BY rank;
+        FROM (
+            SELECT doc_id, page_number, snippet(content_index, 2, '<strong>', '</strong>', '...', 20) as snippet, rank
+            FROM content_index 
+            WHERE content_index MATCH ? 
+            ORDER BY rank 
+            LIMIT ? OFFSET ?
+        ) tm
+        JOIN documents d ON tm.doc_id = d.id
+        ORDER BY tm.rank;
     """
-    db_results = db.execute(sql_query, (g.user['id'], fts_query)).fetchall()
+    
+    db_results = db.execute(sql_query, (g.user['id'], fts_query, fetch_limit, offset)).fetchall()
+    
+    # Check if we have more results than the per_page limit
+    has_next = len(db_results) > per_page
+    if has_next:
+        db_results = db_results[:per_page] # Trim off the extra lookahead row
+    
     results = []
     highlight_re = re.compile('<strong>(.*?)</strong>', re.DOTALL)
+    
     for row in db_results:
         row_dict = dict(row)
         if row_dict.get('file_type') == 'SRT':
@@ -144,7 +185,8 @@ def search_results():
                     row_dict['page_number'] = cue_row['sequence']
             row_dict['snippet'] = _truncate_long_snippet(snippet_html)
         results.append(row_dict)
-    return render_template('search_results.html', query=query, results=results)
+        
+    return render_template('search_results.html', query=query, results=results, page=page, has_next=has_next)
 
 @main_bp.route('/discover/entity/<label>/<path:text>')
 @login_required
