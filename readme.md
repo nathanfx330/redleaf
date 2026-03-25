@@ -49,6 +49,7 @@ Modern researchers often face hundreds of scattered PDFs, transcripts, and notes
 * ☁️ **Cloud Media Linking** – Seamlessly connect transcripts to media on Archive.org.
 * 🔍 **Hybrid Search** – FTS5 + semantic search + embedding vectors.
 * 🕸️ **Knowledge Graph** – Automatic entity + relationship extraction using spaCy.
+* 📈 **Entity Profiling & Boosting** – View full entity profiles and manually boost relationships to curate the graph.
 * ⚡ **GPU Acceleration Optional** – CUDA for embeddings & NLP.
 * 👥 **Multi-User Support** – Admin/User roles + invitation flow.
 
