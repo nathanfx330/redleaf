@@ -1,4 +1,3 @@
-# --- File: ./DUCKDB_PIPELINE_GUIDE.md ---
 # Guide: The DuckDB Data Processing Pipeline V2
 
 This document explains how to use the high-throughput, CLI-only data processing pipeline. This pipeline is specifically designed for performing fast, local, large-scale builds of the Redleaf knowledge base from raw document files (handling folders with 10k–100k+ files safely).
@@ -71,8 +70,11 @@ python curator_reset.py
 # 2. Run the processing pipeline (Press UP and ENTER to run the next chunk!)
 python curator_cli.py process-docs run-all --workers 6
 
-# 3. Link XML metadata to SRT transcripts (Optional)
+# 3a. Link XML metadata to SRT transcripts (Optional)
 python curator_cli.py link-media podcast-meta
+
+# 3b. Relink audio to an Archive.org web source (Optional)
+python curator_cli.py link-media archive-org <your_archive_id>
 
 # 4. Transfer the processed data and optimize the live database
 python curator_cli.py bake-sqlite
