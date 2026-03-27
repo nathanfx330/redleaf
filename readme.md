@@ -6,7 +6,7 @@ It transforms a directory of documents (PDFs, text, emails, HTML, and transcript
 Built for researchers, archivists, and knowledge workers, Redleaf makes it easy to find meaningful connections, synthesize findings, and chat with your documents while protecting your privacy.
 
 **Redleaf Engine 2.0 Blog Post:**
-[https://nathanfx330.github.io/blog/posts/redleaf-engine-update/](https://nathanfx330.github.io/blog/posts/redleaf-engine-update/)
+[https://nathanielwestveer.com/posts/redleaf-engine-update/](https://nathanielwestveer.com/posts/redleaf-engine-update/)
 
 ![Dashboard Screenshot](https://nathanfx330.github.io/blog/posts/redleaf-engine-update/dashboard.jpg)
 
