@@ -1,11 +1,11 @@
-# --- File: ./curator_pipeline_v2.py (FIXED FOR CONSTANT CPU SATURATION) ---
+# --- File: ./curator_pipeline_v2.py (FIXED FOR CONSTANT CPU SATURATION & MAC/LINUX SEGFAULTS) ---
 import duckdb
 import spacy
 import ollama
 import numpy as np
 import fitz
 from bs4 import BeautifulSoup
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from tqdm import tqdm
 import os
 import sys
@@ -17,6 +17,7 @@ import pickle
 import shutil
 import pandas as pd
 import json
+import multiprocessing
 
 import email
 from email.header import decode_header
@@ -171,7 +172,10 @@ def phase_extract_text(workers, doc_limit=None):
     srt_id_counter = c.execute("SELECT COALESCE(MAX(id), 0) FROM srt_cues").fetchone()[0] + 1
     
     dbf, dbw, ap, am, ec, ac = 10000, 5000, [], [], 0, [] 
-    with ThreadPoolExecutor(max_workers=workers) as ex, tqdm(total=td, desc="Extracting Text", mininterval=1.0) as pb:
+    
+    # --- FIX: Moved Phase 1 to isolated ProcessPoolExecutor to prevent C-extension segfaults ---
+    ctx = multiprocessing.get_context('spawn')
+    with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as ex, tqdm(total=td, desc="Extracting Text", mininterval=1.0) as pb:
         for o in range(0, td, dbf):
             dtp = docs_to_process[o:o+dbf]
             fs = {ex.submit(_extract_worker, d): d for d in dtp}
@@ -253,7 +257,9 @@ def phase_nlp_analysis(workers):
     chunk_size = math.ceil(total_pages / workers) if workers > 0 else total_pages
     page_batches = [all_pages[i:i + chunk_size] for i in range(0, total_pages, chunk_size)]
 
-    with ProcessPoolExecutor(max_workers=workers) as executor:
+    # --- FIX: Using 'spawn' context to prevent Segmentation Faults with DuckDB ---
+    ctx = multiprocessing.get_context('spawn')
+    with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as executor:
         futures = [executor.submit(_nlp_worker_process, batch, TEMP_DIR / f"worker_{i}.pkl") for i, batch in enumerate(page_batches)]
         with tqdm(total=len(futures), desc="Processing Batches") as pbar:
             for future in as_completed(futures):
@@ -389,7 +395,9 @@ def phase_generate_embeddings(workers, batch_size, use_gpu):
     
     batches = list(_batch_generator(chunks_data, batch_size))
     
-    with ProcessPoolExecutor(max_workers=workers) as executor:
+    # --- FIX: Using 'spawn' context to prevent Segmentation Faults with DuckDB ---
+    ctx = multiprocessing.get_context('spawn')
+    with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as executor:
         # Submit every batch immediately. Workers will constantly grab the next one.
         futures = [executor.submit(_embed_worker, b) for b in batches]
         
@@ -527,6 +535,7 @@ def run_full_pipeline(workers, batch_size, use_gpu, doc_limit=None):
 
 # --- CLI / entrypoint guard for safe multiprocessing ---
 if __name__ == "__main__":
+    # In case a user imports multiprocessing before calling freeze_support (often not needed on Linux/Mac but essential on Windows)
     import multiprocessing
     multiprocessing.freeze_support()
     import argparse
