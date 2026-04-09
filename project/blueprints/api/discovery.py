@@ -8,7 +8,7 @@ from flask import jsonify, request, g, abort
 from . import api_bp
 from .helpers import get_base_document_query_fields
 from ...database import get_db
-from ...config import ENTITY_LABELS_TO_DISPLAY
+from ...config import ENTITY_LABELS_TO_DISPLAY, BASE_DIR
 from ..auth import login_required
 from ...utils import _create_manual_snippet, _create_entity_snippet
 from ...assistant_core import _internal_fts_search, _internal_semantic_search, read_specific_pages
@@ -569,7 +569,8 @@ def system_info():
         
     return jsonify({
         'project_name': getattr(g, 'project_name', 'Redleaf'),
-        'instance_id': instance_id
+        'instance_id': instance_id,
+        'base_dir': str(BASE_DIR)
     })
 
 @api_bp.route('/system/briefing')

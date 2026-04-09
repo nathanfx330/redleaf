@@ -5,8 +5,9 @@
 # The user's private document source folder
 /documents/
 
-# User's Node Leaf project saves
-/nodeleaf_projects/
+# User's Node Leaf project saves and Agentic Wiki files
+# (Tip: To version control your Wiki, run 'git init' inside the Wiki folder itself!)
+/Node-leaf-saves/
 
 # Downloaded AI/NLP models (Too large for Git)
 /models/
@@ -17,9 +18,10 @@
 /knowledge_base.db-shm
 /knowledge_base.db-wal
 
-# The DuckDB workspace is a temporary environment for the curator pipeline.
+# The DuckDB workspace and batch state for the curator pipeline.
 # The wildcard (*) covers .duckdb, .duckdb.wal, and .duckdb.tmp files.
 /curator_workspace.duckdb*
+/curator_batch_state.json
 
 # The instance folder contains the secret key and temporary user uploads.
 # We ignore specific private files within it, NOT the whole folder.
