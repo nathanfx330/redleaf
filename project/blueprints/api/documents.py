@@ -1,4 +1,4 @@
-# --- File: ./project/blueprints/api/documents.py (REFACTORED FOR SSR) ---
+# --- File: ./project/blueprints/api/documents.py ---
 import re
 from flask import jsonify, request, g, abort
 
@@ -44,7 +44,7 @@ def fetch_dashboard_data(user_id, page=1, per_page=50, sort_key='relative_path',
     offset = (page - 1) * per_page
 
     # This count is instant (SQLite optimization)
-    total_docs_query = db.execute("SELECT COUNT(id) FROM documents").fetchone()
+    total_docs_query = db.execute("SELECT COUNT(id) FROM documents WHERE status != 'Missing'").fetchone()
     total_docs = total_docs_query[0] if total_docs_query else 0
 
     # --- OPTIMIZED QUERY ---
@@ -64,6 +64,7 @@ def fetch_dashboard_data(user_id, page=1, per_page=50, sort_key='relative_path',
             -- Podcast check
             (SELECT 1 FROM document_catalogs dc JOIN catalogs c ON dc.catalog_id = c.id WHERE dc.doc_id = d.id AND c.catalog_type = 'podcast' LIMIT 1) as is_podcast_episode
         FROM documents d
+        WHERE d.status != 'Missing'
         ORDER BY {db_sort_key} {sort_dir.upper()}
         LIMIT ? OFFSET ?
     """
@@ -117,7 +118,7 @@ def get_documents_by_tags():
     select_clause = f"SELECT DISTINCT {get_base_document_query_fields()}"
     from_clause = "FROM documents d"
     join_clauses = []
-    where_clauses = []
+    where_clauses = ["d.status != 'Missing'"]
     params = [g.user['id']]
 
     # Add joins and conditions for each tag
@@ -162,7 +163,7 @@ def get_document_types():
     db = get_db()
     safe_doc_ids = [int(id) for id in doc_ids]
     placeholders = ','.join('?' for _ in safe_doc_ids)
-    query = f"SELECT id, file_type FROM documents WHERE id IN ({placeholders})"
+    query = f"SELECT id, file_type FROM documents WHERE id IN ({placeholders}) AND status != 'Missing'"
     results = db.execute(query, safe_doc_ids).fetchall()
     return jsonify({str(row['id']): row['file_type'] for row in results})
 
@@ -217,9 +218,18 @@ def get_entity_mentions_paginated(entity_id):
     entity = db.execute("SELECT text FROM entities WHERE id = ?", (entity_id,)).fetchone()
     if not entity: abort(404, "Entity not found.")
     entity_text = entity['text']
-    total_count = db.execute("SELECT COUNT(*) FROM entity_appearances WHERE entity_id = ?", (entity_id,)).fetchone()[0]
+    
+    total_count = db.execute("SELECT COUNT(*) FROM entity_appearances ea JOIN documents d ON ea.doc_id = d.id WHERE ea.entity_id = ? AND d.status != 'Missing'", (entity_id,)).fetchone()[0]
+    
     from .helpers import get_base_document_query_fields
-    sql_query = f"SELECT {get_base_document_query_fields()}, ea.page_number FROM entity_appearances ea JOIN documents d ON ea.doc_id = d.id WHERE ea.entity_id = ? ORDER BY d.relative_path COLLATE NOCASE, ea.page_number LIMIT ? OFFSET ?;"
+    sql_query = f"""
+        SELECT {get_base_document_query_fields()}, ea.page_number 
+        FROM entity_appearances ea 
+        JOIN documents d ON ea.doc_id = d.id 
+        WHERE ea.entity_id = ? AND d.status != 'Missing' 
+        ORDER BY d.relative_path COLLATE NOCASE, ea.page_number 
+        LIMIT ? OFFSET ?;
+    """
     db_results = db.execute(sql_query, (g.user['id'], entity_id, limit, offset)).fetchall()
     results = []
     

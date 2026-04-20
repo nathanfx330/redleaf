@@ -1,4 +1,4 @@
-# --- File: ./project/blueprints/main.py (OPTIMIZED FOR SSR & FTS5) ---
+# --- File: ./project/blueprints/main.py ---
 import os
 import queue
 import re
@@ -152,7 +152,7 @@ def search_results():
         FROM (
             SELECT doc_id, page_number, snippet(content_index, 2, '<strong>', '</strong>', '...', 20) as snippet, rank
             FROM content_index 
-            WHERE content_index MATCH ? 
+            WHERE doc_id IN (SELECT id FROM documents WHERE status != 'Missing') AND content_index MATCH ? 
             ORDER BY rank 
             LIMIT ? OFFSET ?
         ) tm

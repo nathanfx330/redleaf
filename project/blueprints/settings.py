@@ -1,4 +1,4 @@
-# --- File: ./project/blueprints/settings.py (FIXED) ---
+# --- File: ./project/blueprints/settings.py ---
 import os
 import sqlite3
 import secrets
@@ -30,6 +30,9 @@ def settings_page():
     form = SecureForm()
     system_settings = get_system_settings()
     
+    # --- NEW: Fetch Trashed Docs ---
+    missing_docs = db.execute("SELECT id, relative_path, file_size_bytes, status_message FROM documents WHERE status = 'Missing' ORDER BY relative_path COLLATE NOCASE").fetchall()
+    
     # --- NEW: Fetch available Ollama models ---
     try:
         # Ollama API returns a dict with a 'models' key which is a list of dicts
@@ -41,12 +44,12 @@ def settings_page():
         'settings.html',
         users=users,
         tokens=tokens,
+        missing_docs=missing_docs, # --- Passed to template ---
         form=form,
         max_workers=system_settings['max_workers'],
         use_gpu=system_settings['use_gpu'],
         cpu_count=os.cpu_count(),
         html_parsing_mode=system_settings['html_parsing_mode'],
-        # --- NEW: Pass model info to template ---
         reasoning_model=system_settings['reasoning_model'],
         ollama_models=ollama_models
     )
@@ -329,3 +332,53 @@ def change_user_password(user_id):
     except sqlite3.Error as e:
         db.rollback()
         return jsonify({'success': False, 'message': f'Database error: {e}'}), 500
+
+# ===================================================================
+# --- NEW: HARD DELETE ROUTES ---
+# ===================================================================
+
+@settings_bp.route('/hard-delete-document/<int:doc_id>', methods=['POST'])
+@admin_required
+def hard_delete_document(doc_id):
+    form = SecureForm()
+    if form.validate_on_submit():
+        db = get_db()
+        try:
+            db.execute("BEGIN TRANSACTION;")
+            # Delete FTS index manually (no cascade)
+            db.execute("DELETE FROM content_index WHERE doc_id = ?", (doc_id,))
+            # Delete document (cascades to tags, notes, comments, embeddings)
+            db.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
+            
+            # Clean up orphaned global items
+            db.execute("DELETE FROM entities WHERE id NOT IN (SELECT DISTINCT entity_id FROM entity_appearances)")
+            db.execute("DELETE FROM tags WHERE id NOT IN (SELECT DISTINCT tag_id FROM document_tags)")
+            
+            db.commit()
+            flash("Document permanently deleted.", "success")
+        except Exception as e:
+            db.rollback()
+            flash(f"Error deleting document: {e}", "danger")
+    return redirect(url_for('settings.settings_page'))
+
+@settings_bp.route('/empty-recycle-bin', methods=['POST'])
+@admin_required
+def empty_recycle_bin():
+    form = SecureForm()
+    if form.validate_on_submit():
+        db = get_db()
+        try:
+            db.execute("BEGIN TRANSACTION;")
+            missing_ids = [row['id'] for row in db.execute("SELECT id FROM documents WHERE status = 'Missing'").fetchall()]
+            if missing_ids:
+                placeholders = ','.join('?' for _ in missing_ids)
+                db.execute(f"DELETE FROM content_index WHERE doc_id IN ({placeholders})", missing_ids)
+                db.execute("DELETE FROM documents WHERE status = 'Missing'")
+                db.execute("DELETE FROM entities WHERE id NOT IN (SELECT DISTINCT entity_id FROM entity_appearances)")
+                db.execute("DELETE FROM tags WHERE id NOT IN (SELECT DISTINCT tag_id FROM document_tags)")
+            db.commit()
+            flash(f"Emptied {len(missing_ids)} documents from the Recycle Bin.", "success")
+        except Exception as e:
+            db.rollback()
+            flash(f"Error emptying recycle bin: {e}", "danger")
+    return redirect(url_for('settings.settings_page'))

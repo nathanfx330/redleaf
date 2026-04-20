@@ -59,7 +59,8 @@ def _internal_fts_search(db, query: str, limit: int = 50) -> List[Dict]:
     sql = """
         SELECT ci.doc_id, ci.page_number, snippet(content_index, 2, '<<<', '>>>', '...', 20) as snippet 
         FROM content_index ci 
-        WHERE ci.content_index MATCH ? 
+        JOIN documents d ON ci.doc_id = d.id
+        WHERE ci.content_index MATCH ? AND d.status != 'Missing'
         ORDER BY rank LIMIT ?
     """
     return [dict(r) for r in db.execute(sql, [fts_query, limit]).fetchall()]
@@ -100,7 +101,12 @@ def _internal_semantic_search(db, query: str, limit: int = 50) -> List[Dict]:
     # Stream from both embedding tables without exhausting memory
     for table in ["embedding_chunks", "super_embedding_chunks"]:
         try:
-            cursor = db.execute(f"SELECT doc_id, page_number, chunk_text, embedding FROM {table}")
+            cursor = db.execute(f"""
+                SELECT e.doc_id, e.page_number, e.chunk_text, e.embedding 
+                FROM {table} e
+                JOIN documents d ON e.doc_id = d.id
+                WHERE d.status != 'Missing'
+            """)
             while True:
                 batch = cursor.fetchmany(batch_size)
                 if not batch: 

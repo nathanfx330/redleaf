@@ -1,4 +1,4 @@
-# --- File: ./processing_pipeline.py (CORRECTED FOR EML TRANSACTION, FILE DELETION, AND ORPHANS) ---
+# --- File: ./processing_pipeline.py ---
 import sqlite3
 import hashlib
 import traceback
@@ -545,16 +545,18 @@ def process_document(doc_id):
             conn.close()
 
 def discover_and_register_documents():
-    """Scans the source directory, registers new files, and removes deleted ones."""
+    """Scans the source directory, registers new files, and moves missing ones to the Recycle Bin."""
     print(f"--- Scanning for documents in {DOCUMENTS_DIR} ---")
     conn = get_db_conn() 
     try:
         # 1. Fetch current DB state
-        db_docs = conn.execute("SELECT id, relative_path, file_hash FROM documents").fetchall()
+        db_docs = conn.execute("SELECT id, relative_path, file_hash, status FROM documents").fetchall()
         db_files = {row['relative_path']: row['file_hash'] for row in db_docs}
+        db_statuses = {row['relative_path']: row['status'] for row in db_docs}
         db_path_to_id = {row['relative_path']: row['id'] for row in db_docs}
         
         registered_count = 0
+        restored_count = 0
         supported_patterns = ["*.pdf", "*.txt", "*.html", "*.srt", "*.eml"]
         all_files = []
         for pattern in supported_patterns:
@@ -583,7 +585,6 @@ def discover_and_register_documents():
 
             if rel_path_str not in db_files or db_files.get(rel_path_str) != current_hash_str:
                 print(f"Registering new/modified file: {rel_path_str} (Type: {file_type})")
-                
                 conn.execute(
                     """
                     INSERT INTO documents (relative_path, file_hash, file_type, status, status_message, file_size_bytes, file_modified_at, processed_at) 
@@ -600,53 +601,29 @@ def discover_and_register_documents():
                     (rel_path_str, current_hash_str, file_type, current_size, current_mtime)
                 )
                 registered_count += 1
+            else:
+                # The file exists and the hash matches perfectly. Was it in the recycle bin?
+                if db_statuses.get(rel_path_str) == 'Missing':
+                    print(f"Restoring previously missing file: {rel_path_str}")
+                    conn.execute("UPDATE documents SET status = 'Indexed', status_message = 'Restored from Recycle Bin' WHERE relative_path = ?", (rel_path_str,))
+                    restored_count += 1
 
-        # 2. IDENTIFY AND REMOVE DELETED FILES
+        # 2. IDENTIFY MISSING FILES (Soft Delete to Recycle Bin)
         missing_paths = set(db_files.keys()) - found_paths
-        deleted_count = len(missing_paths)
+        missing_count = 0
 
-        if deleted_count > 0:
-            print(f"Detected {deleted_count} deleted file(s). Cleaning up database...")
-            
+        if missing_paths:
             conn.execute("BEGIN TRANSACTION;")
-            
             for path in missing_paths:
-                doc_id = db_path_to_id[path]
-                print(f"  Removing orphaned document: {path}")
-                
-                # Manual delete for FTS5 (FTS5 doesn't support SQLite foreign key cascades)
-                conn.execute("DELETE FROM content_index WHERE doc_id = ?", (doc_id,))
-                
-                # Delete main document (Foreign keys CASCADE will handle vectors, tags, relationships, etc.)
-                conn.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
-
-            # --- RETROACTIVE CLEANUP FOR ORPHANED DATA ---
-            # Just in case foreign keys were off previously, clean up orphaned relational tables
-            tables_with_doc_id = [
-                'document_tags', 'document_catalogs', 'document_curation', 
-                'document_comments', 'entity_appearances', 'entity_relationships', 
-                'embedding_chunks', 'super_embedding_chunks', 'srt_cues', 
-                'document_metadata', 'email_metadata'
-            ]
-            for table in tables_with_doc_id:
-                conn.execute(f"DELETE FROM {table} WHERE doc_id NOT IN (SELECT id FROM documents)")
-
-            # Clean up orphaned entities (Entities that no longer appear in ANY document)
-            conn.execute("""
-                DELETE FROM entities 
-                WHERE id NOT IN (SELECT DISTINCT entity_id FROM entity_appearances)
-            """)
-            
-            # Clean up orphaned tags
-            conn.execute("""
-                DELETE FROM tags 
-                WHERE id NOT IN (SELECT DISTINCT tag_id FROM document_tags)
-            """)
-            
+                if db_statuses.get(path) != 'Missing':
+                    doc_id = db_path_to_id[path]
+                    print(f"  Moving document to Recycle Bin: {path}")
+                    conn.execute("UPDATE documents SET status = 'Missing', status_message = 'File removed from directory. View in Settings > Recycle Bin.' WHERE id = ?", (doc_id,))
+                    missing_count += 1
             conn.execute("COMMIT;")
 
         conn.commit()
-        print(f"--- Discovery complete. Registered {registered_count}. Removed {deleted_count}. ---")
+        print(f"--- Discovery complete. Registered {registered_count}. Restored {restored_count}. Trashed {missing_count}. ---")
         return "SUCCESS"
         
     except Exception as e:
@@ -658,7 +635,7 @@ def discover_and_register_documents():
         if conn: conn.close()
 
 def update_browse_cache():
-    """Recomputes the aggregated entity data for the Discovery View."""
+    """Recomputes the aggregated entity data, IGNORING files in the recycle bin."""
     print("--- Starting update of Aggregated View Cache ---")
     conn = get_db_conn() 
     try:
@@ -673,6 +650,8 @@ def update_browse_cache():
                 COUNT(ea.doc_id) as appearance_count
             FROM entities e 
             JOIN entity_appearances ea ON e.id = ea.entity_id 
+            JOIN documents d ON ea.doc_id = d.id
+            WHERE d.status != 'Missing'
             GROUP BY e.id, e.text, e.label
         """
         aggregated_data = conn.execute(query).fetchall()

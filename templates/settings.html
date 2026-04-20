@@ -1,4 +1,4 @@
-<!-- File: ./templates/settings.html (FINAL VERSION) -->
+<!-- File: ./templates/settings.html -->
 {% extends 'layout.html' %}
 {% block title %}Settings - Redleaf{% endblock %}
 
@@ -14,6 +14,7 @@
         <!-- Tab Navigation -->
         <nav class="tabs-nav">
             <button class="tab-link active" data-tab="access">Users & Access</button>
+            <button class="tab-link" data-tab="recycle">Recycle Bin</button>
             
             {% if not g.is_precomputed %}
             <button class="tab-link" data-tab="system">System & Processing</button>
@@ -120,6 +121,57 @@
                                 </tr>
                             {% else %}
                                  <tr><td colspan="5" class="table-empty-message">No invitation tokens created yet.</td></tr>
+                            {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab Content: Recycle Bin -->
+        <div id="tab-recycle" class="tab-content">
+            <h3 class="mt-4">Recycle Bin</h3>
+            <p class="text-muted">
+                Documents removed from your <code>documents/</code> directory are automatically moved here to prevent accidental data loss. 
+                Their tags, comments, and AI graph data are safely preserved in the database (but hidden from the main app). 
+                <br><br><strong>To Restore:</strong> Place the file back in the directory and click "1. Discover Docs" on the dashboard.
+            </p>
+            
+            <div class="panel">
+                <div class="panel-header d-flex justify-content-between align-items-center">
+                    <span>Trashed Documents ({{ missing_docs|length }})</span>
+                    <form action="{{ url_for('settings.empty_recycle_bin') }}" method="post" style="margin:0;"
+                          onsubmit="return confirm('Are you sure you want to permanently delete ALL files in the Recycle Bin? This will destroy all associated metadata and cannot be undone.');">
+                        {{ form.hidden_tag() }}
+                        <button type="submit" class="button button-danger button-small" {% if missing_docs|length == 0 %}disabled{% endif %}>Empty Recycle Bin</button>
+                    </form>
+                </div>
+                <div class="panel-body">
+                    <div class="table-container">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Path</th>
+                                    <th>Status Note</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                            {% for doc in missing_docs %}
+                                <tr>
+                                    <td class="path-cell" title="{{ doc.relative_path }}">{{ doc.relative_path }}</td>
+                                    <td class="text-muted" style="font-size: 0.9em;">{{ doc.status_message }}</td>
+                                    <td class="action-cell">
+                                        <form action="{{ url_for('settings.hard_delete_document', doc_id=doc.id) }}" method="post" style="margin:0;"
+                                              onsubmit="return confirm('Permanently delete {{ doc.relative_path }} and all its metadata?');">
+                                            {{ form.hidden_tag() }}
+                                            <button type="submit" class="button button-danger button-small">Delete Forever</button>
+                                        </form>
+                                    </td>
+                                </tr>
+                            {% else %}
+                                <tr><td colspan="3" class="table-empty-message">The recycle bin is empty.</td></tr>
                             {% endfor %}
                             </tbody>
                         </table>
@@ -348,8 +400,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // ... (Rest of JS: GPU toggle, Password change, etc.)
-    
     // ===== START: GPU UX FIX (JAVASCRIPT) =====
     const gpuToggle = document.getElementById('use-gpu-toggle');
     if (gpuToggle) {
