@@ -1,4 +1,4 @@
-# --- File: ./processing_pipeline.py (CORRECTED FOR EML TRANSACTION) ---
+# --- File: ./processing_pipeline.py (CORRECTED FOR EML TRANSACTION, FILE DELETION, AND ORPHANS) ---
 import sqlite3
 import hashlib
 import traceback
@@ -48,6 +48,8 @@ def get_db_conn():
     """Gets a fresh, process-safe database connection."""
     conn = sqlite3.connect(DATABASE_FILE, timeout=30)
     conn.row_factory = sqlite3.Row
+    # --- THIS IS THE FIX: Enforce cascading deletes on background threads ---
+    conn.execute("PRAGMA foreign_keys = ON;")
     conn.execute("PRAGMA journal_mode = WAL;")
     return conn
 
@@ -332,9 +334,7 @@ def process_document(doc_id):
         extracted_data = {"embeddings": [], "super_chunks": []}
         csl_json_text = None
 
-        # --- START OF MODIFICATION ---
-        eml_meta_to_insert = None # Variable to hold EML metadata for the final transaction
-        # --- END OF MODIFICATION ---
+        eml_meta_to_insert = None 
 
         if doc_info['file_type'] == 'SRT':
             content = full_path.read_text(encoding='utf-8', errors='ignore')
@@ -419,10 +419,7 @@ def process_document(doc_id):
             
             csl_json_text = json.dumps(csl_data, indent=2)
 
-            # --- START OF MODIFICATION ---
-            # Store the data in our variable instead of writing it to the DB
             eml_meta_to_insert = (doc_id, eml_meta['from_address'], eml_meta['to_addresses'], eml_meta['cc_addresses'], eml_meta['subject'], eml_meta['sent_at'])
-            # --- END OF MODIFICATION ---
 
         else:
             if doc_info['file_type'] == 'PDF':
@@ -459,14 +456,11 @@ def process_document(doc_id):
 
         cursor.execute("UPDATE documents SET page_count = ?, duration_seconds = ? WHERE id = ?", (page_count, duration_seconds, doc_id))
 
-        # --- START OF MODIFICATION ---
-        # If we have EML metadata, insert it now inside the main transaction
         if eml_meta_to_insert:
             cursor.execute("""
                 INSERT INTO email_metadata (doc_id, from_address, to_addresses, cc_addresses, subject, sent_at)
                 VALUES (?, ?, ?, ?, ?, ?)
             """, eml_meta_to_insert)
-        # --- END OF MODIFICATION ---
 
         if extracted_data.get("cues"):
             cues_to_insert = [(doc_id, c['sequence'], c['timestamp'], c['dialogue']) for c in extracted_data["cues"]]
@@ -551,11 +545,14 @@ def process_document(doc_id):
             conn.close()
 
 def discover_and_register_documents():
-    """Scans the source directory and registers new or modified files."""
+    """Scans the source directory, registers new files, and removes deleted ones."""
     print(f"--- Scanning for documents in {DOCUMENTS_DIR} ---")
     conn = get_db_conn() 
     try:
-        db_files = {row['relative_path']: row['file_hash'] for row in conn.execute("SELECT relative_path, file_hash FROM documents").fetchall()}
+        # 1. Fetch current DB state
+        db_docs = conn.execute("SELECT id, relative_path, file_hash FROM documents").fetchall()
+        db_files = {row['relative_path']: row['file_hash'] for row in db_docs}
+        db_path_to_id = {row['relative_path']: row['id'] for row in db_docs}
         
         registered_count = 0
         supported_patterns = ["*.pdf", "*.txt", "*.html", "*.srt", "*.eml"]
@@ -563,10 +560,14 @@ def discover_and_register_documents():
         for pattern in supported_patterns:
             all_files.extend(DOCUMENTS_DIR.rglob(pattern))
             
+        found_paths = set() 
+
         for file_path in all_files:
             if not file_path.is_file(): continue
             
             rel_path_str = str(file_path.relative_to(DOCUMENTS_DIR).as_posix())
+            found_paths.add(rel_path_str) 
+            
             stats = file_path.stat()
             current_size = stats.st_size
             current_mtime = datetime.datetime.fromtimestamp(stats.st_mtime)
@@ -598,11 +599,56 @@ def discover_and_register_documents():
                     """, 
                     (rel_path_str, current_hash_str, file_type, current_size, current_mtime)
                 )
-                conn.commit()
                 registered_count += 1
 
-        print(f"--- Discovery complete. Registered {registered_count} new/modified documents. ---")
+        # 2. IDENTIFY AND REMOVE DELETED FILES
+        missing_paths = set(db_files.keys()) - found_paths
+        deleted_count = len(missing_paths)
+
+        if deleted_count > 0:
+            print(f"Detected {deleted_count} deleted file(s). Cleaning up database...")
+            
+            conn.execute("BEGIN TRANSACTION;")
+            
+            for path in missing_paths:
+                doc_id = db_path_to_id[path]
+                print(f"  Removing orphaned document: {path}")
+                
+                # Manual delete for FTS5 (FTS5 doesn't support SQLite foreign key cascades)
+                conn.execute("DELETE FROM content_index WHERE doc_id = ?", (doc_id,))
+                
+                # Delete main document (Foreign keys CASCADE will handle vectors, tags, relationships, etc.)
+                conn.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
+
+            # --- RETROACTIVE CLEANUP FOR ORPHANED DATA ---
+            # Just in case foreign keys were off previously, clean up orphaned relational tables
+            tables_with_doc_id = [
+                'document_tags', 'document_catalogs', 'document_curation', 
+                'document_comments', 'entity_appearances', 'entity_relationships', 
+                'embedding_chunks', 'super_embedding_chunks', 'srt_cues', 
+                'document_metadata', 'email_metadata'
+            ]
+            for table in tables_with_doc_id:
+                conn.execute(f"DELETE FROM {table} WHERE doc_id NOT IN (SELECT id FROM documents)")
+
+            # Clean up orphaned entities (Entities that no longer appear in ANY document)
+            conn.execute("""
+                DELETE FROM entities 
+                WHERE id NOT IN (SELECT DISTINCT entity_id FROM entity_appearances)
+            """)
+            
+            # Clean up orphaned tags
+            conn.execute("""
+                DELETE FROM tags 
+                WHERE id NOT IN (SELECT DISTINCT tag_id FROM document_tags)
+            """)
+            
+            conn.execute("COMMIT;")
+
+        conn.commit()
+        print(f"--- Discovery complete. Registered {registered_count}. Removed {deleted_count}. ---")
         return "SUCCESS"
+        
     except Exception as e:
         print(f"!!! ERROR during document discovery: {e} !!!")
         print(traceback.format_exc())
