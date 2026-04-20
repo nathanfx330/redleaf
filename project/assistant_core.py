@@ -20,7 +20,8 @@ sys.path.append(str(project_dir))
 from project.database import get_db
 from werkzeug.security import check_password_hash
 from processing_pipeline import extract_text_for_copying
-from project.config import DOCUMENTS_DIR, REDLEAF_BASE_URL, EMBEDDING_MODEL
+# FIXED: Importing resolve_document_path directly from config
+from project.config import DOCUMENTS_DIR, REDLEAF_BASE_URL, EMBEDDING_MODEL, resolve_document_path
 
 # --- Import prompts ---
 from project.prompts import (
@@ -150,7 +151,9 @@ def read_specific_pages(db, sources: List[Dict[str, int]], MAX_CONTEXT_CHARS=320
         info = doc_map.get(src['doc_id'])
         if not info: continue
         
-        text = extract_text_for_copying(DOCUMENTS_DIR/info['relative_path'], info['file_type'], start_page=src['page_number'], end_page=src['page_number'])
+        # --- FIX: Resolve the path ---
+        resolved_path = resolve_document_path(info['relative_path'])
+        text = extract_text_for_copying(resolved_path, info['file_type'], start_page=src['page_number'], end_page=src['page_number'])
         doc_url = f"{REDLEAF_BASE_URL}/document/{src['doc_id']}"
         
         # --- INJECT HINT (The "Sticky Note" concept) ---
@@ -168,7 +171,11 @@ def get_page_content(db, doc_id: int, page_number: int) -> Tuple[str, Dict]:
     doc = db.execute("SELECT id, relative_path, file_type, page_count FROM documents WHERE id = ?", (doc_id,)).fetchone()
     if not doc: return f"Error: No document found with ID {doc_id}.", None
     if doc['page_count'] and (page_number < 1 or page_number > doc['page_count']): return f"Error: Invalid page number.", None
-    page_text = extract_text_for_copying(DOCUMENTS_DIR / doc['relative_path'], doc['file_type'], start_page=page_number, end_page=page_number)
+    
+    # --- FIX: Resolve the path ---
+    resolved_path = resolve_document_path(doc['relative_path'])
+    page_text = extract_text_for_copying(resolved_path, doc['file_type'], start_page=page_number, end_page=page_number)
+    
     if not page_text.strip(): return f"Page {page_number} was found but contains no text.", None
     return page_text, dict(doc)
 
@@ -590,7 +597,9 @@ class BaseAssistant:
         doc = self.db.execute("SELECT relative_path, file_type FROM documents WHERE id = ?", (d_id,)).fetchone()
         if not doc: return f"{Style.RED}Doc not found.{Style.END}"
         
-        text = extract_text_for_copying(DOCUMENTS_DIR / doc['relative_path'], doc['file_type'], start_page=start, end_page=end)
+        # --- FIX: Resolve the path ---
+        resolved_path = resolve_document_path(doc['relative_path'])
+        text = extract_text_for_copying(resolved_path, doc['file_type'], start_page=start, end_page=end)
         
         # --- FIX: Inject Metadata Header for Instruct Command ---
         doc_url = f"{REDLEAF_BASE_URL}/document/{d_id}"

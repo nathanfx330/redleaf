@@ -1,4 +1,4 @@
-# --- File: ./curator_cli.py (UPDATED WITH PROPER PHASE NUMBERING) ---
+# --- File: ./curator_cli.py ---
 import argparse
 import sys
 import json
@@ -96,32 +96,102 @@ def setup_duckdb_schema():
     print("--- Schema setup complete. ---")
     conn.close()
 
+def _gather_files_recursively(base_dir: Path, target_dir: Path, supported_patterns: list, virtual_prefix: str = "") -> list:
+    """Helper to gather files, mapping them to a virtual prefix if using an .rlink alias."""
+    files = []
+    try:
+        for pattern in supported_patterns:
+            for file_path in target_dir.rglob(pattern):
+                if not file_path.is_file(): continue
+                if virtual_prefix:
+                    rel_path_str = f"{virtual_prefix}/{file_path.relative_to(target_dir).as_posix()}"
+                else:
+                    rel_path_str = file_path.relative_to(base_dir).as_posix()
+                files.append((file_path, rel_path_str))
+    except Exception as e:
+        print(f"[WARN] Error scanning directory {target_dir}: {e}")
+    return files
+
 def discover_documents():
     print(f"--- Scanning for documents in {DOCUMENTS_DIR} ---")
     db = get_db_conn()
     try:
-        db_files = {row[0]: row[1] for row in db.execute("SELECT relative_path, file_hash FROM documents").fetchall()}
+        # DuckDB returns a list of tuples
+        db_docs = db.execute("SELECT id, relative_path, file_hash, status FROM documents").fetchall()
+        db_files = {row[1]: row[2] for row in db_docs}
+        db_statuses = {row[1]: row[3] for row in db_docs}
+        db_path_to_id = {row[1]: row[0] for row in db_docs}
     except duckdb.CatalogException:
         db_files = {}
+        db_statuses = {}
+        db_path_to_id = {}
+        
     registered_count = 0
-    for pattern in ["*.pdf", "*.txt", "*.html", "*.srt", "*.eml"]:
-        for file_path in DOCUMENTS_DIR.rglob(pattern):
-            if not file_path.is_file(): continue
-            rel_path_str = file_path.relative_to(DOCUMENTS_DIR).as_posix()
-            stats = file_path.stat()
-            hasher = hashlib.md5()
-            with open(file_path, 'rb') as f:
-                while chunk := f.read(65536): hasher.update(chunk)
-            current_hash_str = hasher.hexdigest()
-            if rel_path_str not in db_files or db_files.get(rel_path_str) != current_hash_str:
-                print(f"Registering: {rel_path_str}")
-                db.execute(
-                    "INSERT INTO documents (id, relative_path, file_hash, file_type, status, file_size_bytes, file_modified_at) VALUES (nextval('seq_documents_id'), ?, ?, ?, 'New', ?, ?) ON CONFLICT(relative_path) DO UPDATE SET file_hash=excluded.file_hash, status='New', file_size_bytes=excluded.file_size_bytes, file_modified_at=excluded.file_modified_at", 
-                    (rel_path_str, current_hash_str, file_path.suffix[1:].upper(), stats.st_size, datetime.datetime.fromtimestamp(stats.st_mtime))
-                )
-                registered_count += 1
+    restored_count = 0
+    supported_patterns = ["*.pdf", "*.txt", "*.html", "*.srt", "*.eml"]
+    
+    # Scan main directory
+    all_files_with_virtual_paths = _gather_files_recursively(DOCUMENTS_DIR, DOCUMENTS_DIR, supported_patterns)
+    
+    # Scan .rlink external directories
+    for rlink_file in DOCUMENTS_DIR.glob('*.rlink'):
+        if rlink_file.is_file():
+            try:
+                target_path_str = rlink_file.read_text(encoding='utf-8').strip()
+                target_dir = Path(target_path_str)
+                if target_dir.exists() and target_dir.is_dir():
+                    print(f"  [INFO] Following alias '{rlink_file.name}' to: {target_dir}")
+                    all_files_with_virtual_paths.extend(
+                        _gather_files_recursively(DOCUMENTS_DIR, target_dir, supported_patterns, virtual_prefix=rlink_file.name)
+                    )
+                else:
+                    print(f"  [WARN] Alias target does not exist or is not a directory: {target_dir}")
+            except Exception as e:
+                print(f"  [WARN] Failed to read alias file {rlink_file}: {e}")
+
+    found_paths = set()
+
+    for file_path, rel_path_str in all_files_with_virtual_paths:
+        found_paths.add(rel_path_str)
+        stats = file_path.stat()
+        file_type = file_path.suffix[1:].upper()
+
+        hasher = hashlib.md5()
+        with open(file_path, 'rb') as f:
+            while chunk := f.read(65536): hasher.update(chunk)
+        current_hash_str = hasher.hexdigest()
+        
+        if rel_path_str not in db_files or db_files.get(rel_path_str) != current_hash_str:
+            print(f"Registering new/modified file: {rel_path_str}")
+            db.execute(
+                "INSERT INTO documents (id, relative_path, file_hash, file_type, status, status_message, file_size_bytes, file_modified_at) "
+                "VALUES (nextval('seq_documents_id'), ?, ?, ?, 'New', 'Ready for processing', ?, ?) "
+                "ON CONFLICT(relative_path) DO UPDATE SET file_hash=excluded.file_hash, status='New', status_message='File modified, ready for re-processing', file_size_bytes=excluded.file_size_bytes, file_modified_at=excluded.file_modified_at", 
+                (rel_path_str, current_hash_str, file_type, stats.st_size, datetime.datetime.fromtimestamp(stats.st_mtime))
+            )
+            registered_count += 1
+        else:
+            if db_statuses.get(rel_path_str) == 'Missing':
+                print(f"Restoring previously missing file: {rel_path_str}")
+                db.execute("UPDATE documents SET status = 'Indexed', status_message = 'Restored from Recycle Bin' WHERE relative_path = ?", (rel_path_str,))
+                restored_count += 1
+
+    # Soft delete missing files to the Recycle Bin
+    missing_paths = set(db_files.keys()) - found_paths
+    missing_count = 0
+
+    if missing_paths:
+        db.execute("BEGIN TRANSACTION;")
+        for path in missing_paths:
+            if db_statuses.get(path) != 'Missing':
+                doc_id = db_path_to_id[path]
+                print(f"  Moving document to Recycle Bin: {path}")
+                db.execute("UPDATE documents SET status = 'Missing', status_message = 'File removed from directory or alias disconnected. View in Settings > Recycle Bin.' WHERE id = ?", (doc_id,))
+                missing_count += 1
+        db.execute("COMMIT;")
+
     db.close()
-    print(f"\n--- Discovery complete. Registered {registered_count} new/modified documents. ---")
+    print(f"\n--- Discovery complete. Registered {registered_count}. Restored {restored_count}. Trashed {missing_count}. ---")
 
 def reset_document_status(status_filter: str = None, file_type_filter: str = None):
     print("\n--- Resetting Document Status to 'New' ---")
@@ -194,9 +264,19 @@ def _parse_podcast_xml_to_csl(item_element: ET.Element, channel_title_text: str 
 def find_xml_matches_for_doc(doc_relative_path: str):
     target_srt_basename = Path(doc_relative_path).stem
     matches = []
-    all_xml_files = list(DOCUMENTS_DIR.rglob('*.xml'))
+    
+    all_xmls = _gather_files_recursively(DOCUMENTS_DIR, DOCUMENTS_DIR, ['*.xml'])
+    for rlink_file in DOCUMENTS_DIR.glob('*.rlink'):
+        if rlink_file.is_file():
+            try:
+                target_dir = Path(rlink_file.read_text(encoding='utf-8').strip())
+                if target_dir.exists() and target_dir.is_dir():
+                    all_xmls.extend(_gather_files_recursively(DOCUMENTS_DIR, target_dir, ['*.xml'], virtual_prefix=rlink_file.name))
+            except Exception:
+                pass
+                
     parser = ET.XMLParser(recover=True)
-    for xml_path in all_xml_files:
+    for xml_path, xml_virtual_path in all_xmls:
         try:
             tree = ET.parse(str(xml_path), parser=parser)
             channel_title = tree.findtext('channel/title', "")
@@ -218,7 +298,7 @@ def find_xml_matches_for_doc(doc_relative_path: str):
                     guid_element = item.find('guid')
                     hash_content = (guid_element.text if guid_element is not None and guid_element.text else preview_data.get('title', ''))
                     item_hash = hashlib.md5(hash_content.encode()).hexdigest()
-                    matches.append({'xml_path': str(xml_path.relative_to(DOCUMENTS_DIR).as_posix()),'item_hash': item_hash,'csl_data': preview_data, 'enclosure_url': enclosure_url,'confidence': 'high' if is_match and enclosure_url and Path(enclosure_url.split('/')[-1].split('?')[0]).stem == target_srt_basename else 'low'})
+                    matches.append({'xml_path': xml_virtual_path,'item_hash': item_hash,'csl_data': preview_data, 'enclosure_url': enclosure_url,'confidence': 'high' if is_match and enclosure_url and Path(enclosure_url.split('/')[-1].split('?')[0]).stem == target_srt_basename else 'low'})
         except ET.XMLSyntaxError: continue
     return matches
 
@@ -243,7 +323,9 @@ def link_podcast_metadata():
         print(f"\n--- Found {len(docs_to_process)} SRTs to process for podcast metadata linking. ---")
         counts = {'success': 0, 'no_match': 0, 'ambiguous': 0, 'no_enclosure': 0}
 
-        for doc_id, relative_path in docs_to_process:
+        for row in docs_to_process:
+            doc_id = row[0]
+            relative_path = row[1]
             print(f"\n[INFO] Processing: {relative_path} (Doc ID: {doc_id})")
             matches = find_xml_matches_for_doc(relative_path)
 
@@ -309,7 +391,9 @@ def link_archive_org(archive_id: str):
         if input(f"This will attempt to link them to '{archive_id}' and OVERWRITE existing media links.\nAre you sure? [y/N]: ").lower() != 'y': print("Operation cancelled."); return
 
         counts = {'success': 0, 'no_xml_match': 0, 'no_enclosure': 0, 'not_in_archive': 0, 'skipped': 0}
-        for doc_id, relative_path in docs_to_process:
+        for row in docs_to_process:
+            doc_id = row[0]
+            relative_path = row[1]
             print(f"\n[INFO] Processing: {relative_path} (Doc ID: {doc_id})")
             matches = find_xml_matches_for_doc(relative_path)
             if not matches: counts['no_xml_match'] += 1; print("  [SKIP] No XML match found."); continue

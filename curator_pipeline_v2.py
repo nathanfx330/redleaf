@@ -1,4 +1,4 @@
-# --- File: ./curator_pipeline_v2.py (FIXED FOR CONSTANT CPU SATURATION & MAC/LINUX SEGFAULTS) ---
+# --- File: ./curator_pipeline_v2.py ---
 import duckdb
 import spacy
 import ollama
@@ -27,7 +27,9 @@ from itertools import combinations
 # Add project directory to allow imports from project config
 project_dir = Path(__file__).resolve().parent
 sys.path.append(str(project_dir))
-from project.config import EMBEDDING_MODEL, DOCUMENTS_DIR
+
+# --- FIXED IMPORT: Now pulling resolve_document_path from config ---
+from project.config import EMBEDDING_MODEL, DOCUMENTS_DIR, resolve_document_path
 
 DUCKDB_FILE = project_dir / "curator_workspace.duckdb"
 BATCH_STATE_FILE = project_dir / "curator_batch_state.json"
@@ -126,7 +128,9 @@ def _extract_text_from_srt(srt_cues: list[dict]) -> str:
 def _extract_worker(d):
     i, r, t = d; p, c, e, m, dur, srt_cues = {}, 0, None, None, None, []
     try:
-        fp = DOCUMENTS_DIR / r
+        # --- FIX: Resolve path via .rlink if necessary ---
+        fp = resolve_document_path(r)
+        
         if t == 'PDF':
             with fitz.open(fp) as f: p = _extract_text_from_pdf_doc(f); c = f.page_count
         elif t == 'TXT':

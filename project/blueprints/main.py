@@ -16,7 +16,7 @@ from flask import (
 from ..database import get_db
 from ..background import task_queue
 from ..utils import _get_dashboard_state, _truncate_long_snippet, _create_entity_snippet
-from ..config import DOCUMENTS_DIR, ENTITY_LABELS_TO_DISPLAY
+from ..config import DOCUMENTS_DIR, ENTITY_LABELS_TO_DISPLAY, resolve_document_path # <--- FIXED IMPORT
 from .auth import login_required, admin_required, SecureForm
 
 # --- IMPORT OPTIMIZED DATA FETCHING LOGIC ---
@@ -400,13 +400,31 @@ def document_view(doc_id):
                            timestamp=timestamp,
                            pills_data=pills_data)
 
+# --- FIXED: Serve Document securely handles .rlink virtual paths ---
 @main_bp.route('/serve_doc/<path:relative_path>')
 @login_required
 def serve_document(relative_path):
-    safe_path = DOCUMENTS_DIR.joinpath(relative_path).resolve()
-    if not str(safe_path).startswith(str(DOCUMENTS_DIR.resolve())):
-        abort(403)
-    return send_from_directory(DOCUMENTS_DIR, relative_path)
+    resolved_path = resolve_document_path(relative_path).resolve()
+    
+    parts = Path(relative_path).parts
+    if parts and parts[0].endswith('.rlink'):
+        # It's an alias. Verify the alias file actually exists to prevent arbitrary path loading
+        rlink_file = DOCUMENTS_DIR / parts[0]
+        if not rlink_file.is_file():
+            abort(403)
+        # Prevent escaping the intended target directory using ../
+        target_base = Path(rlink_file.read_text(encoding='utf-8').strip()).resolve()
+        if not str(resolved_path).startswith(str(target_base)):
+            abort(403)
+    else:
+        # Standard file, verify it stays inside the documents directory
+        if not str(resolved_path).startswith(str(DOCUMENTS_DIR.resolve())):
+            abort(403)
+            
+    if not resolved_path.exists() or not resolved_path.is_file():
+        abort(404)
+        
+    return send_from_directory(resolved_path.parent, resolved_path.name)
 
 @main_bp.route('/view_pdf/<int:doc_id>')
 @login_required
@@ -484,6 +502,7 @@ def _parse_srt_for_viewer(srt_content):
         })
     return cues
 
+# --- FIXED: SRT Viewer uses resolve_document_path ---
 @main_bp.route('/view_srt/<int:doc_id>')
 @login_required
 def view_srt_document(doc_id):
@@ -492,7 +511,7 @@ def view_srt_document(doc_id):
     if not doc or doc['file_type'] != 'SRT':
         abort(404)
         
-    srt_path = DOCUMENTS_DIR / doc['relative_path']
+    srt_path = resolve_document_path(doc['relative_path'])
     if not srt_path.exists():
         abort(404, "SRT file is missing from the filesystem.")
         

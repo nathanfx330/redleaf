@@ -17,6 +17,7 @@ from ..database import get_db
 from ..background import restart_executor_event, get_system_settings
 from .auth import admin_required, login_required, SecureForm
 from ..export_import import export_knowledge_package, import_knowledge_package
+from ..config import DOCUMENTS_DIR # <--- Added import for .rlink management
 
 settings_bp = Blueprint('settings', __name__, url_prefix='/settings')
 
@@ -30,21 +31,34 @@ def settings_page():
     form = SecureForm()
     system_settings = get_system_settings()
     
-    # --- NEW: Fetch Trashed Docs ---
     missing_docs = db.execute("SELECT id, relative_path, file_size_bytes, status_message FROM documents WHERE status = 'Missing' ORDER BY relative_path COLLATE NOCASE").fetchall()
     
-    # --- NEW: Fetch available Ollama models ---
     try:
-        # Ollama API returns a dict with a 'models' key which is a list of dicts
         ollama_models = [m['name'] for m in ollama.list().get('models', [])]
     except Exception:
         ollama_models = []
+
+    # --- NEW: Fetch .rlink alias files ---
+    rlink_files = []
+    if DOCUMENTS_DIR.exists():
+        for rlink_path in DOCUMENTS_DIR.glob('*.rlink'):
+            if rlink_path.is_file():
+                try:
+                    target = rlink_path.read_text(encoding='utf-8').strip()
+                    rlink_files.append({
+                        'name': rlink_path.name,
+                        'target': target,
+                        'is_valid': Path(target).is_dir()
+                    })
+                except Exception:
+                    pass
 
     return render_template(
         'settings.html',
         users=users,
         tokens=tokens,
-        missing_docs=missing_docs, # --- Passed to template ---
+        missing_docs=missing_docs,
+        rlink_files=rlink_files, # --- Passed to template ---
         form=form,
         max_workers=system_settings['max_workers'],
         use_gpu=system_settings['use_gpu'],
@@ -54,7 +68,6 @@ def settings_page():
         ollama_models=ollama_models
     )
 
-# --- NEW ROUTE: Save the model choice ---
 @settings_bp.route('/model', methods=['POST'])
 @admin_required
 def update_model_settings():
@@ -63,7 +76,6 @@ def update_model_settings():
         new_model = request.form.get('reasoning_model')
         if new_model:
             db = get_db()
-            # Upsert the setting into the database
             db.execute("INSERT INTO app_settings (key, value) VALUES ('reasoning_model', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (new_model,))
             db.commit()
             flash(f'Reasoning model updated to "{new_model}".', 'success')
@@ -137,9 +149,6 @@ def import_package():
         flash('Invalid file type. Please upload a .rklf or .zip package.', 'danger')
         return redirect(url_for('settings.settings_page'))
 
-# ===================================================================
-# --- START: NEW ROUTES FOR MISSION II ---
-# ===================================================================
 @settings_bp.route('/import-contributions', methods=['POST'])
 @admin_required
 def import_contributions():
@@ -160,7 +169,6 @@ def import_contributions():
     upload_dir = Path(current_app.instance_path) / "contributions"
     upload_dir.mkdir(exist_ok=True)
     
-    # Secure filename and add a timestamp to prevent overwrites
     base_filename = secure_filename(file.filename).replace('.json', '')
     timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
     final_filename = f"{base_filename}_{timestamp}.json"
@@ -194,10 +202,6 @@ def review_contributions(filename):
     form = SecureForm()
     return render_template('review_contributions.html', contributions=data, filename=filename, form=form)
 
-# ===================================================================
-# --- END: NEW ROUTES FOR MISSION II ---
-# ===================================================================
-
 @settings_bp.route('/workers', methods=['POST'])
 @admin_required
 def update_workers():
@@ -220,11 +224,9 @@ def update_workers():
         flash("CSRF validation failed.", 'danger')
     return redirect(url_for('settings.settings_page'))
 
-# ===== START: GPU UX FIX (BACKEND) =====
 @settings_bp.route('/gpu', methods=['POST'])
 @admin_required
 def update_gpu_setting():
-    # We no longer need the form validation for this simple API endpoint
     data = request.json
     if 'use_gpu' not in data:
         return jsonify({'success': False, 'message': 'Invalid request.'}), 400
@@ -243,7 +245,6 @@ def update_gpu_setting():
     except sqlite3.Error as e:
         db.rollback()
         return jsonify({'success': False, 'message': f'Database error: {e}'}), 500
-# ===== END: GPU UX FIX (BACKEND) =====
 
 @settings_bp.route('/html', methods=['POST'])
 @admin_required
@@ -333,10 +334,6 @@ def change_user_password(user_id):
         db.rollback()
         return jsonify({'success': False, 'message': f'Database error: {e}'}), 500
 
-# ===================================================================
-# --- NEW: HARD DELETE ROUTES ---
-# ===================================================================
-
 @settings_bp.route('/hard-delete-document/<int:doc_id>', methods=['POST'])
 @admin_required
 def hard_delete_document(doc_id):
@@ -345,12 +342,9 @@ def hard_delete_document(doc_id):
         db = get_db()
         try:
             db.execute("BEGIN TRANSACTION;")
-            # Delete FTS index manually (no cascade)
             db.execute("DELETE FROM content_index WHERE doc_id = ?", (doc_id,))
-            # Delete document (cascades to tags, notes, comments, embeddings)
             db.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
             
-            # Clean up orphaned global items
             db.execute("DELETE FROM entities WHERE id NOT IN (SELECT DISTINCT entity_id FROM entity_appearances)")
             db.execute("DELETE FROM tags WHERE id NOT IN (SELECT DISTINCT tag_id FROM document_tags)")
             
@@ -381,4 +375,67 @@ def empty_recycle_bin():
         except Exception as e:
             db.rollback()
             flash(f"Error emptying recycle bin: {e}", "danger")
+    return redirect(url_for('settings.settings_page'))
+
+# ===================================================================
+# --- NEW: VIRTUAL FOLDER (.rlink) MANAGEMENT ---
+# ===================================================================
+
+@settings_bp.route('/add-rlink', methods=['POST'])
+@admin_required
+def add_rlink():
+    form = SecureForm()
+    if form.validate_on_submit():
+        alias_name = request.form.get('alias_name', '').strip()
+        target_path = request.form.get('target_path', '').strip()
+        
+        if not alias_name or not target_path:
+            flash("Both Alias Name and Target Path are required.", "danger")
+            return redirect(url_for('settings.settings_page'))
+            
+        # Ensure proper extension and safe filename
+        if not alias_name.endswith('.rlink'):
+            alias_name += '.rlink'
+        safe_name = secure_filename(alias_name)
+        
+        # Check if target actually exists and is a directory
+        target_dir = Path(target_path)
+        if not target_dir.exists() or not target_dir.is_dir():
+            flash(f"The target OS path '{target_path}' does not exist or is not a directory.", "danger")
+            return redirect(url_for('settings.settings_page'))
+        
+        # Write the file
+        try:
+            rlink_file = DOCUMENTS_DIR / safe_name
+            rlink_file.write_text(str(target_dir.resolve()), encoding='utf-8')
+            flash(f"Virtual folder link '{safe_name}' created successfully. Run 'Discover Docs' on the Dashboard to index its contents.", "success")
+        except Exception as e:
+            flash(f"Failed to create link file: {e}", "danger")
+    else:
+        flash("CSRF validation failed.", "danger")
+        
+    return redirect(url_for('settings.settings_page'))
+
+@settings_bp.route('/delete-rlink/<filename>', methods=['POST'])
+@admin_required
+def delete_rlink(filename):
+    form = SecureForm()
+    if form.validate_on_submit():
+        safe_name = secure_filename(filename)
+        if not safe_name.endswith('.rlink'):
+            flash("Invalid file type.", "danger")
+            return redirect(url_for('settings.settings_page'))
+            
+        rlink_file = DOCUMENTS_DIR / safe_name
+        try:
+            if rlink_file.exists():
+                rlink_file.unlink()
+                flash(f"Virtual folder link '{safe_name}' deleted. Run 'Discover Docs' on the Dashboard to move its disconnected documents to the Recycle Bin.", "success")
+            else:
+                flash("Link file not found.", "warning")
+        except Exception as e:
+            flash(f"Failed to delete link file: {e}", "danger")
+    else:
+        flash("CSRF validation failed.", "danger")
+        
     return redirect(url_for('settings.settings_page'))

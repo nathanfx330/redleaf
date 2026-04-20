@@ -20,7 +20,8 @@ import ollama
 import numpy as np
 
 # --- Configuration ---
-from project.config import EMBEDDING_MODEL
+# FIXED: Importing resolve_document_path directly from config
+from project.config import EMBEDDING_MODEL, resolve_document_path
 DATABASE_FILE = "knowledge_base.db"
 DOCUMENTS_DIR = Path("./documents").resolve()
 SPACY_MODEL = "en_core_web_lg"
@@ -48,7 +49,6 @@ def get_db_conn():
     """Gets a fresh, process-safe database connection."""
     conn = sqlite3.connect(DATABASE_FILE, timeout=30)
     conn.row_factory = sqlite3.Row
-    # --- THIS IS THE FIX: Enforce cascading deletes on background threads ---
     conn.execute("PRAGMA foreign_keys = ON;")
     conn.execute("PRAGMA journal_mode = WAL;")
     return conn
@@ -69,10 +69,15 @@ def extract_text_for_copying(doc_path: Path, file_type: str, start_page=None, en
         conn = None
         try:
             conn = get_db_conn()
-            rel_path_str = str(doc_path.relative_to(DOCUMENTS_DIR).as_posix())
-            doc_id_row = conn.execute("SELECT id FROM documents WHERE relative_path = ?", (rel_path_str,)).fetchone()
+            doc_id_row = None
+            if doc_path.is_absolute() and not str(doc_path).startswith(str(DOCUMENTS_DIR)):
+                 pass # The caller handles this in the updated assistant_core
+            else:
+                 rel_path_str = str(doc_path.relative_to(DOCUMENTS_DIR).as_posix())
+                 doc_id_row = conn.execute("SELECT id FROM documents WHERE relative_path = ?", (rel_path_str,)).fetchone()
+            
             if not doc_id_row:
-                return f"Error: Document not found in database for path {rel_path_str}"
+                return f"Error: Document not found in database for path {doc_path}"
             
             doc_id = doc_id_row['id']
             if file_type in ['HTML', 'SRT', 'EML']:
@@ -328,7 +333,9 @@ def process_document(doc_id):
             raise ValueError(f"No document found with ID: {doc_id}")
 
         print(f"--- Worker {os.getpid()} processing Doc ID: {doc_id} (Type: {doc_info['file_type']}) ---")
-        full_path = DOCUMENTS_DIR / doc_info['relative_path']
+        
+        # --- FIX: Resolve the path using the new utility function ---
+        full_path = resolve_document_path(doc_info['relative_path'])
         
         page_content_map, page_count, duration_seconds = {}, 0, None
         extracted_data = {"embeddings": [], "super_chunks": []}
@@ -544,8 +551,32 @@ def process_document(doc_id):
         if conn:
             conn.close()
 
+def _gather_files_recursively(base_dir: Path, target_dir: Path, supported_patterns: list, virtual_prefix: str = "") -> list:
+    """
+    Helper function to gather files, allowing for virtual prefix mapping if
+    scanning an external directory mapped by an .rlink file.
+    """
+    files = []
+    try:
+        for pattern in supported_patterns:
+            for file_path in target_dir.rglob(pattern):
+                if not file_path.is_file(): continue
+                # The "virtual path" is what goes in the database.
+                # If it's the main DOCUMENTS_DIR, it's just relative to that.
+                # If it's an external drive, it starts with the alias filename.
+                if virtual_prefix:
+                    rel_path_str = f"{virtual_prefix}/{file_path.relative_to(target_dir).as_posix()}"
+                else:
+                    rel_path_str = file_path.relative_to(base_dir).as_posix()
+                    
+                files.append((file_path, rel_path_str))
+    except Exception as e:
+        print(f"[WARN] Error scanning directory {target_dir}: {e}")
+        
+    return files
+
 def discover_and_register_documents():
-    """Scans the source directory, registers new files, and moves missing ones to the Recycle Bin."""
+    """Scans the source directory (and any .rlink aliases), registers new files, and moves missing ones to the Recycle Bin."""
     print(f"--- Scanning for documents in {DOCUMENTS_DIR} ---")
     conn = get_db_conn() 
     try:
@@ -558,16 +589,28 @@ def discover_and_register_documents():
         registered_count = 0
         restored_count = 0
         supported_patterns = ["*.pdf", "*.txt", "*.html", "*.srt", "*.eml"]
-        all_files = []
-        for pattern in supported_patterns:
-            all_files.extend(DOCUMENTS_DIR.rglob(pattern))
+        
+        # --- FIX: Scan main directory AND follow .rlink files ---
+        all_files_with_virtual_paths = _gather_files_recursively(DOCUMENTS_DIR, DOCUMENTS_DIR, supported_patterns)
+        
+        for rlink_file in DOCUMENTS_DIR.glob('*.rlink'):
+            if rlink_file.is_file():
+                try:
+                    target_path_str = rlink_file.read_text(encoding='utf-8').strip()
+                    target_dir = Path(target_path_str)
+                    if target_dir.exists() and target_dir.is_dir():
+                        print(f"  [INFO] Following alias '{rlink_file.name}' to: {target_dir}")
+                        all_files_with_virtual_paths.extend(
+                            _gather_files_recursively(DOCUMENTS_DIR, target_dir, supported_patterns, virtual_prefix=rlink_file.name)
+                        )
+                    else:
+                        print(f"  [WARN] Alias target does not exist or is not a directory: {target_dir}")
+                except Exception as e:
+                    print(f"  [WARN] Failed to read alias file {rlink_file}: {e}")
             
         found_paths = set() 
 
-        for file_path in all_files:
-            if not file_path.is_file(): continue
-            
-            rel_path_str = str(file_path.relative_to(DOCUMENTS_DIR).as_posix())
+        for file_path, rel_path_str in all_files_with_virtual_paths:
             found_paths.add(rel_path_str) 
             
             stats = file_path.stat()
@@ -618,7 +661,7 @@ def discover_and_register_documents():
                 if db_statuses.get(path) != 'Missing':
                     doc_id = db_path_to_id[path]
                     print(f"  Moving document to Recycle Bin: {path}")
-                    conn.execute("UPDATE documents SET status = 'Missing', status_message = 'File removed from directory. View in Settings > Recycle Bin.' WHERE id = ?", (doc_id,))
+                    conn.execute("UPDATE documents SET status = 'Missing', status_message = 'File removed from directory or alias disconnected. View in Settings > Recycle Bin.' WHERE id = ?", (doc_id,))
                     missing_count += 1
             conn.execute("COMMIT;")
 

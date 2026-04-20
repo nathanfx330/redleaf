@@ -18,6 +18,7 @@
             
             {% if not g.is_precomputed %}
             <button class="tab-link" data-tab="system">System & Processing</button>
+            <button class="tab-link" data-tab="virtual">Virtual Folders</button>
             {% endif %}
 
             <button class="tab-link" data-tab="archive">Archived Items</button>
@@ -247,6 +248,78 @@
                         </div>
                         <button type="submit" class="button button-primary align-self-end">Update Strategy</button>
                     </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab Content: Virtual Folders -->
+        <div id="tab-virtual" class="tab-content">
+            <h3 class="mt-4">Virtual Folders (.rlink)</h3>
+            <p class="text-muted">
+                Map external directories to your Redleaf instance. This allows you to index files stored on external hard drives or network shares without copying them into the main <code>documents/</code> directory.
+            </p>
+            
+            <div class="panel">
+                <div class="panel-header">Add New Virtual Folder</div>
+                <div class="panel-body">
+                    <form action="{{ url_for('settings.add_rlink') }}" method="POST">
+                        {{ form.hidden_tag() }}
+                        <div class="row">
+                            <div class="col-md-4 form-group">
+                                <label for="alias_name" class="form-label">Alias Name</label>
+                                <input type="text" name="alias_name" id="alias_name" class="form-control" placeholder="e.g., Archive_Drive" required>
+                                <small class="text-muted">Will be saved as .rlink</small>
+                            </div>
+                            <div class="col-md-6 form-group">
+                                <label for="target_path" class="form-label">Absolute Target OS Path</label>
+                                <input type="text" name="target_path" id="target_path" class="form-control" placeholder="e.g., D:\Backups\Archive or /Volumes/Drive" required>
+                            </div>
+                            <div class="col-md-2 form-group d-flex align-items-end">
+                                <button type="submit" class="button button-primary w-100">Add Link</button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <div class="panel">
+                <div class="panel-header">Active Virtual Folders</div>
+                <div class="panel-body">
+                    <div class="table-container">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Alias File</th>
+                                    <th>Target Path</th>
+                                    <th>Status</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                            {% for rlink in rlink_files %}
+                                <tr>
+                                    <td><code>{{ rlink.name }}</code></td>
+                                    <td class="path-cell" title="{{ rlink.target }}">{{ rlink.target }}</td>
+                                    <td>
+                                        {% if rlink.is_valid %}
+                                            <span class="status-Indexed">Connected</span>
+                                        {% else %}
+                                            <span class="status-Error">Disconnected / Not Found</span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="action-cell">
+                                        <form action="{{ url_for('settings.delete_rlink', filename=rlink.name) }}" method="post" style="margin:0;" onsubmit="return confirm('Delete this alias? Documents from this folder will be moved to the Recycle Bin on the next Discovery scan.');">
+                                            {{ form.hidden_tag() }}
+                                            <button type="submit" class="button button-danger button-small">Delete Link</button>
+                                        </form>
+                                    </td>
+                                </tr>
+                            {% else %}
+                                <tr><td colspan="4" class="table-empty-message">No virtual folders configured.</td></tr>
+                            {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
         </div>

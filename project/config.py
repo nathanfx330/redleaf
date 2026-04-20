@@ -17,6 +17,41 @@ INSTANCE_DIR.mkdir(exist_ok=True)
 DOCUMENTS_DIR = BASE_DIR / "documents"
 DOCUMENTS_DIR.mkdir(exist_ok=True)
 
+
+# --- PATH RESOLVER ---
+def resolve_document_path(relative_path: str) -> Path:
+    """
+    Resolves a virtual relative path to an absolute OS path.
+    If the root of the path is an .rlink file, it extracts the true target
+    directory from that file and resolves the rest of the path against it.
+    """
+    if not relative_path:
+        return DOCUMENTS_DIR
+        
+    parts = Path(relative_path).parts
+    
+    # Check if the root of this path is an .rlink alias file
+    if parts[0].endswith('.rlink'):
+        rlink_file = DOCUMENTS_DIR / parts[0]
+        if rlink_file.is_file():
+            try:
+                # Read the absolute target path from the .rlink file
+                target_path_str = rlink_file.read_text(encoding='utf-8').strip()
+                target_base = Path(target_path_str)
+                
+                # If there's more to the path, append it to the target base
+                if len(parts) > 1:
+                    return target_base.joinpath(*parts[1:])
+                else:
+                    return target_base
+            except Exception as e:
+                print(f"[WARN] Could not resolve .rlink file {rlink_file}: {e}")
+                
+    # Standard file inside DOCUMENTS_DIR
+    return DOCUMENTS_DIR / relative_path
+# ---------------------
+
+
 # --- Database Configuration ---
 DATABASE_FILE = BASE_DIR / "knowledge_base.db"
 

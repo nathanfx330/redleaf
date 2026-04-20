@@ -4,11 +4,11 @@ import json
 import re
 import datetime
 import sqlite3
+from pathlib import Path
 from markupsafe import Markup
 from flask import current_app, g
 
 # Import from our own package to avoid circular dependencies
-# This is now the ONLY dependency on background.py, and it's one-way.
 from .background import task_queue, active_tasks, active_tasks_lock
 
 # ===================================================================
@@ -113,7 +113,6 @@ def _get_dashboard_state(db):
         'task_states': task_states
     }
 
-# --- START OF NEW FUNCTION ---
 def _create_entity_snippet(page_content, entity_text, context=150):
     """
     Manually creates a highlighted snippet centered on a single entity.
@@ -148,7 +147,6 @@ def _create_entity_snippet(page_content, entity_text, context=150):
     highlighted_snippet = re.sub(f'({pattern})', r'<strong>\1</strong>', snippet_text, flags=re.IGNORECASE)
 
     return Markup(highlighted_snippet)
-# --- END OF NEW FUNCTION ---
 
 def _create_manual_snippet(page_content, subject, object_text, relationship_phrase, context=100):
     """
