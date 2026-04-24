@@ -656,14 +656,12 @@ def discover_and_register_documents():
         missing_count = 0
 
         if missing_paths:
-            conn.execute("BEGIN TRANSACTION;")
             for path in missing_paths:
                 if db_statuses.get(path) != 'Missing':
                     doc_id = db_path_to_id[path]
                     print(f"  Moving document to Recycle Bin: {path}")
                     conn.execute("UPDATE documents SET status = 'Missing', status_message = 'File removed from directory or alias disconnected. View in Settings > Recycle Bin.' WHERE id = ?", (doc_id,))
                     missing_count += 1
-            conn.execute("COMMIT;")
 
         conn.commit()
         print(f"--- Discovery complete. Registered {registered_count}. Restored {restored_count}. Trashed {missing_count}. ---")
