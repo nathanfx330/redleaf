@@ -14,7 +14,7 @@ import processing_pipeline
 # === SHARED DATA FETCHING LOGIC (Used by API & Main Route) ===
 # ==============================================================================
 
-def fetch_dashboard_data(user_id, page=1, per_page=50, sort_key='relative_path', sort_dir='asc'):
+def fetch_dashboard_data(user_id, page=1, per_page=50, sort_key='relative_path', sort_dir='asc', type_filters=None):
     """
     Shared function to fetch dashboard documents and status.
     This allows both the API (for AJAX) and the Main Route (for SSR) to use the same logic.
@@ -42,9 +42,22 @@ def fetch_dashboard_data(user_id, page=1, per_page=50, sort_key='relative_path',
         sort_dir = 'asc'
 
     offset = (page - 1) * per_page
+    
+    # --- START OF FIX: Build dynamic WHERE clause for file types ---
+    where_clause = "d.status != 'Missing'"
+    params = [user_id]
+    
+    if type_filters and isinstance(type_filters, list):
+        # We want to keep documents where file_type is null or matches the filter
+        placeholders = ','.join(['?'] * len(type_filters))
+        where_clause += f" AND (d.file_type IN ({placeholders}) OR d.file_type IS NULL)"
+        params.extend(type_filters)
+        
+    count_params = params[1:] # count query doesn't need user_id
+    # --- END OF FIX ---
 
     # This count is instant (SQLite optimization)
-    total_docs_query = db.execute("SELECT COUNT(id) FROM documents WHERE status != 'Missing'").fetchone()
+    total_docs_query = db.execute(f"SELECT COUNT(id) FROM documents d WHERE {where_clause}", count_params).fetchone()
     total_docs = total_docs_query[0] if total_docs_query else 0
 
     # --- OPTIMIZED QUERY ---
@@ -64,19 +77,26 @@ def fetch_dashboard_data(user_id, page=1, per_page=50, sort_key='relative_path',
             -- Podcast check
             (SELECT 1 FROM document_catalogs dc JOIN catalogs c ON dc.catalog_id = c.id WHERE dc.doc_id = d.id AND c.catalog_type = 'podcast' LIMIT 1) as is_podcast_episode
         FROM documents d
-        WHERE d.status != 'Missing'
+        WHERE {where_clause}
         ORDER BY {db_sort_key} {sort_dir.upper()}
         LIMIT ? OFFSET ?
     """
     
-    docs_data = db.execute(doc_query, (user_id, per_page, offset)).fetchall()
+    params.extend([per_page, offset])
+    docs_data = db.execute(doc_query, params).fetchall()
     state_data = _get_dashboard_state(db)
+    
+    # Also fetch all available file types to build the UI checkboxes
+    types_query = db.execute("SELECT DISTINCT file_type FROM documents WHERE status != 'Missing' AND file_type IS NOT NULL").fetchall()
+    all_types = sorted([row['file_type'] for row in types_query])
     
     return {
         'documents': [dict(row) for row in docs_data],
         'total_documents': total_docs,
         'page': page,
         'per_page': per_page,
+        'all_types': all_types,
+        'selected_types': type_filters if type_filters is not None else all_types,
         'queue_size': state_data['queue_size'],
         'task_states': state_data['task_states']
     }
@@ -97,7 +117,13 @@ def dashboard_status():
     sort_key = request.args.get('sort_key', 'relative_path')
     sort_dir = request.args.get('sort_dir', 'asc')
     
-    data = fetch_dashboard_data(g.user['id'], page, per_page, sort_key, sort_dir)
+    # --- START OF FIX: Extract file type filters from the URL ---
+    type_filters = None
+    if 'filtered' in request.args:
+        type_filters = request.args.getlist('type')
+    # --- END OF FIX ---
+    
+    data = fetch_dashboard_data(g.user['id'], page, per_page, sort_key, sort_dir, type_filters)
     return jsonify(data)
 
 @api_bp.route('/documents_by_tags')

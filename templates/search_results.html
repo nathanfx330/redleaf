@@ -10,23 +10,52 @@
 
 <h3>Results for: <mark>{{ query }}</mark></h3>
 
-{% if results %}
-    <div class="sort-controls">
-        <button id="sort-relevance-btn" class="button button-small active">Relevancy</button>
-        <button id="sort-pages-btn" class="button button-small">Page Count (High-Low)</button>
+{# --- NEW: Filter Checkboxes left of the Sort buttons, aligned right --- #}
+{% if results or all_types %}
+<div class="d-flex justify-content-end align-items-center mb-4 gap-3">
+    
+    {% if all_types %}
+    <div class="filter-controls d-flex align-items-center gap-2">
+        <span class="text-muted" style="font-size: 0.85em; font-weight: bold; text-transform: uppercase;">Filter:</span>
+        {% for f_type in all_types %}
+        <label style="cursor: pointer; display: flex; align-items: center; gap: 4px; font-size: 0.9em; margin-bottom: 0; color: var(--text-light); user-select: none;">
+            <input type="checkbox" class="file-type-filter" value="{{ f_type }}" 
+                   {% if f_type in selected_types %}checked{% endif %}>
+            <span class="chip" style="margin:0;">{{ f_type }}</span>
+        </label>
+        {% endfor %}
     </div>
 
+    <!-- Subtle divider line -->
+    <div style="width: 1px; height: 20px; background-color: var(--border-color);"></div>
+    {% endif %}
+
+    <div class="sort-controls" style="margin-bottom: 0;">
+        <button id="sort-relevance-btn" class="button button-small active" {% if not results %}disabled{% endif %}>Relevancy</button>
+        <button id="sort-pages-btn" class="button button-small" {% if not results %}disabled{% endif %}>Page Count (High-Low)</button>
+    </div>
+
+</div>
+{% endif %}
+
+{% if results %}
     <ul class="result-list" id="result-list-container">
     {# The initial rendering is now handled by JavaScript #}
     </ul>
 
-    <!-- --- PAGINATION CONTROLS ADDED HERE --- -->
+    <!-- --- PAGINATION CONTROLS --- -->
+    {# We build a query string to preserve the active filters when clicking Next/Prev #}
+    {% set filter_qs = "&filtered=true" %}
+    {% for t in selected_types %}
+        {% set filter_qs = filter_qs ~ "&type=" ~ t %}
+    {% endfor %}
+
     <div class="d-flex justify-content-between align-items-center mt-4">
         <a href="{{ url_for('main.discover_view') }}" class="button">← Back to Discovery</a>
         
         <div class="toolbar">
             {% if page > 1 %}
-                <a href="{{ url_for('main.search_results', q=query, page=page-1) }}" class="button button-small">« Previous</a>
+                <a href="{{ url_for('main.search_results', q=query, page=page-1) }}{{ filter_qs }}" class="button button-small">« Previous</a>
             {% else %}
                 <button class="button button-small disabled" disabled>« Previous</button>
             {% endif %}
@@ -34,7 +63,7 @@
             <span class="mx-2 text-muted" style="line-height: 2;">Page {{ page }}</span>
 
             {% if has_next %}
-                <a href="{{ url_for('main.search_results', q=query, page=page+1) }}" class="button button-small">Next »</a>
+                <a href="{{ url_for('main.search_results', q=query, page=page+1) }}{{ filter_qs }}" class="button button-small">Next »</a>
             {% else %}
                 <button class="button button-small disabled" disabled>Next »</button>
             {% endif %}
@@ -42,7 +71,11 @@
     </div>
 
 {% else %}
-    <p class="text-muted empty-state">No results found for your query.</p>
+    <div class="panel">
+        <div class="panel-body text-center py-5">
+            <p class="text-muted empty-state" style="font-size: 1.1em;">No results found for your query with the selected filters.</p>
+        </div>
+    </div>
     <a href="{{ url_for('main.discover_view') }}" class="button mt-4">← Back to Discovery</a>
 {% endif %}
 
@@ -51,17 +84,35 @@
 {% block scripts %}
 {{ super() }}
 
-{% if results %}
 <script>
 document.addEventListener('DOMContentLoaded', () => {
-    // 1. DATA AND ELEMENTS
+    
+    // --- 1. FILTERING LOGIC (Always Active) ---
+    const filterCheckboxes = document.querySelectorAll('.file-type-filter');
+    filterCheckboxes.forEach(cb => {
+        cb.addEventListener('change', () => {
+            filterCheckboxes.forEach(box => box.disabled = true);
+            
+            const checkedTypes = Array.from(document.querySelectorAll('.file-type-filter:checked')).map(box => box.value);
+            
+            const urlParams = new URLSearchParams(window.location.search);
+            urlParams.set('page', '1'); 
+            urlParams.set('filtered', 'true');
+            urlParams.delete('type');
+            
+            checkedTypes.forEach(t => urlParams.append('type', t));
+            window.location.href = window.location.pathname + '?' + urlParams.toString();
+        });
+    });
+
+    // --- 2. RENDERING AND SORTING LOGIC (Only if we have results) ---
+    {% if results %}
     const initialResults = {{ results|tojson }};
     
     const resultsContainer = document.getElementById('result-list-container');
     const sortRelevanceBtn = document.getElementById('sort-relevance-btn');
     const sortPagesBtn = document.getElementById('sort-pages-btn');
 
-    // 2. RENDER FUNCTION
     function renderResults(resultsArray) {
         resultsContainer.innerHTML = ''; 
 
@@ -87,7 +138,6 @@ document.addEventListener('DOMContentLoaded', () => {
             
             const pageCountText = (res.page_count && res.page_count > 0) ? ` of ${res.page_count}` : '';
             
-            // The link now correctly includes the #page=... hash
             const resultItemHtml = `
                 <li class="result-item">
                     <div class="result-item-header">
@@ -95,6 +145,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             ${colorDot}
                             <a class="result-title" href="/document/${res.doc_id}#page=${res.page_number}">${res.relative_path}</a>
                             <span class="ms-2">
+                                <span class="chip" style="background-color: var(--background-dark); border: 1px solid var(--border-color);">${res.file_type}</span>
                                 ${tagsChip}
                                 ${noteChip}
                                 ${commentsChip}
@@ -112,30 +163,32 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // 3. EVENT LISTENERS
     function setActiveButton(activeBtn) {
         [sortRelevanceBtn, sortPagesBtn].forEach(btn => btn.classList.remove('active'));
         activeBtn.classList.add('active');
     }
     
-    sortRelevanceBtn.addEventListener('click', () => {
-        setActiveButton(sortRelevanceBtn);
-        renderResults(initialResults);
-    });
-
-    sortPagesBtn.addEventListener('click', () => {
-        setActiveButton(sortPagesBtn);
-        const sortedByPages = [...initialResults].sort((a, b) => {
-            const pageCountA = a.page_count || 0;
-            const pageCountB = b.page_count || 0;
-            return pageCountB - pageCountA;
+    if (sortRelevanceBtn) {
+        sortRelevanceBtn.addEventListener('click', () => {
+            setActiveButton(sortRelevanceBtn);
+            renderResults(initialResults);
         });
-        renderResults(sortedByPages);
-    });
+    }
 
-    // 4. INITIAL RENDER
+    if (sortPagesBtn) {
+        sortPagesBtn.addEventListener('click', () => {
+            setActiveButton(sortPagesBtn);
+            const sortedByPages = [...initialResults].sort((a, b) => {
+                const pageCountA = a.page_count || 0;
+                const pageCountB = b.page_count || 0;
+                return pageCountB - pageCountA;
+            });
+            renderResults(sortedByPages);
+        });
+    }
+
     renderResults(initialResults);
+    {% endif %}
 });
 </script>
-{% endif %}
 {% endblock %}

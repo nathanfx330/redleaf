@@ -133,16 +133,43 @@ def search_results():
     safe_query = re.sub(r'[^\w\s]', '', query).strip()
     words = [w for w in safe_query.split() if w.lower() != 'and']
     
-    # Join with AND so FTS5 looks for pages containing ALL the words (e.g. "Sam" AND "Cats")
+    # Join with AND so FTS5 looks for pages containing ALL the words
     fts_query = " AND ".join([f'"{w}"' for w in words])
     
     if not fts_query:
-        return render_template('search_results.html', query=query, results=[], page=page, has_next=False)
+        return render_template('search_results.html', query=query, results=[], page=page, has_next=False, all_types=[], selected_types=[])
+
+    # --- NEW: File Type Filtering Logic (Scoped to Search Results) ---
+    # 1. Get all available file types THAT MATCH THE SEARCH
+    types_sql = """
+        SELECT DISTINCT d.file_type 
+        FROM content_index ci
+        JOIN documents d ON ci.doc_id = d.id
+        WHERE d.status != 'Missing' AND d.file_type IS NOT NULL AND ci.content_index MATCH ?
+    """
+    types_query_result = db.execute(types_sql, (fts_query,)).fetchall()
+    all_types = sorted([row['file_type'] for row in types_query_result])
     
-    # Fetch per_page + 1 to easily determine if there is a "Next" page
+    # 2. Determine selected types
+    if 'filtered' in request.args:
+        selected_types = request.args.getlist('type')
+        # Safety check: ensure selected types are actually valid for this query to prevent UI weirdness
+        selected_types = [t for t in selected_types if t in all_types]
+    else:
+        selected_types = all_types
+
+    # If the query is valid but the user unchecked all boxes, return empty cleanly
+    if not selected_types:
+        return render_template('search_results.html', query=query, results=[], page=page, has_next=False, all_types=all_types, selected_types=[])
+    
     fetch_limit = per_page + 1
 
-    sql_query = """
+    # Dynamically build the IN clause for the file types
+    placeholders = ','.join(['?'] * len(selected_types))
+    type_filter_sql = f"AND file_type IN ({placeholders})"
+    sql_params = selected_types + [fts_query, fetch_limit, offset]
+
+    sql_query = f"""
         SELECT d.id as doc_id, d.relative_path, d.color, d.page_count, d.file_type, 
                tm.page_number, tm.snippet,
                d.cached_comment_count as comment_count,
@@ -152,7 +179,7 @@ def search_results():
         FROM (
             SELECT doc_id, page_number, snippet(content_index, 2, '<strong>', '</strong>', '...', 20) as snippet, rank
             FROM content_index 
-            WHERE doc_id IN (SELECT id FROM documents WHERE status != 'Missing') AND content_index MATCH ? 
+            WHERE doc_id IN (SELECT id FROM documents WHERE status != 'Missing' {type_filter_sql}) AND content_index MATCH ? 
             ORDER BY rank 
             LIMIT ? OFFSET ?
         ) tm
@@ -160,7 +187,7 @@ def search_results():
         ORDER BY tm.rank;
     """
     
-    db_results = db.execute(sql_query, (g.user['id'], fts_query, fetch_limit, offset)).fetchall()
+    db_results = db.execute(sql_query, [g.user['id']] + sql_params).fetchall()
     
     # Check if we have more results than the per_page limit
     has_next = len(db_results) > per_page
@@ -186,7 +213,7 @@ def search_results():
             row_dict['snippet'] = _truncate_long_snippet(snippet_html)
         results.append(row_dict)
         
-    return render_template('search_results.html', query=query, results=results, page=page, has_next=has_next)
+    return render_template('search_results.html', query=query, results=results, page=page, has_next=has_next, all_types=all_types, selected_types=selected_types)
 
 @main_bp.route('/discover/entity/<label>/<path:text>')
 @login_required

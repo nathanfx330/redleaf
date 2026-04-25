@@ -1,4 +1,4 @@
-<!-- File: ./templates/dashboard.html (FINAL + SMART CACHE) -->
+<!-- File: ./templates/dashboard.html (FINAL + SMART CACHE + SINGLE VISITED STATE + DYNAMIC TYPE FILTERS) -->
 {% extends 'layout.html' %}
 {% block title %}Dashboard - Redleaf{% endblock %}
 
@@ -9,6 +9,16 @@
         opacity: 0.5;
         pointer-events: none; 
         transition: opacity 0.2s ease-in-out;
+    }
+    
+    /* Single visited row indicator (Subtle dark grey) */
+    .data-table tbody tr.visited-row {
+        background-color: #24242B; 
+    }
+    
+    /* Ensure hover still works cleanly over visited rows */
+    .data-table tbody tr.visited-row:hover {
+        background-color: var(--background-light);
     }
 </style>
 {% endblock %}
@@ -80,6 +90,14 @@
     </div>
 
     <div class="d-flex align-items-center">
+        {# --- FIX: Filter checkboxes moved to the left of the Per Page dropdown --- #}
+        <div id="dashboard-type-filters" class="me-4 align-items-center" style="display: none;">
+            <span class="text-muted me-2" style="font-size: 0.85em; font-weight: bold; text-transform: uppercase;">Filter Type:</span>
+            <div id="type-checkboxes-container" class="d-flex gap-2" style="flex-wrap: wrap;">
+                <!-- JS will populate checkboxes here -->
+            </div>
+        </div>
+
         <label for="per-page-select" class="form-label me-2 mb-0">Per Page:</label>
         <select id="per-page-select" class="form-control" style="width: auto;">
             <option value="25">25</option>
@@ -178,12 +196,9 @@ document.addEventListener('DOMContentLoaded', () => {
         currentPage: {{ initial_data.page }},
         perPage: {{ initial_data.per_page }},
         sort: { key: 'relative_path', direction: 'asc' },
+        typeFilters: null, // NEW: Track active type filters
         isLoading: false,
     };
-
-    // --- SMART CLIENT-SIDE CACHE ---
-    // Stores API responses to make switching sort/page instant
-    const dashboardCache = new Map();
 
     // Load initial sort pref
     try {
@@ -191,11 +206,31 @@ document.addEventListener('DOMContentLoaded', () => {
         if (savedSort) state.sort = savedSort;
     } catch (e) { console.error("Could not parse saved sort state."); }
 
-    // Pre-seed the cache with the current SSR page so we don't re-fetch it
-    const initialCacheKey = `${state.currentPage}-${state.perPage}-${state.sort.key}-${state.sort.direction}`;
-    dashboardCache.set(initialCacheKey, {
+    // --- VISITED STATE TRACKING ---
+    let lastVisitedDocId = localStorage.getItem('redleafLastVisitedDoc');
+    
+    function markDocVisited(docId) {
+        if (!docId) return;
+        lastVisitedDocId = docId.toString();
+        localStorage.setItem('redleafLastVisitedDoc', lastVisitedDocId);
+    }
+
+    // --- SMART CLIENT-SIDE CACHE ---
+    const dashboardCache = new Map();
+    function getCacheKey() {
+        let key = `${state.currentPage}-${state.perPage}-${state.sort.key}-${state.sort.direction}`;
+        if (state.sort.key === 'file_type' && state.typeFilters) {
+            key += `-[${state.typeFilters.join(',')}]`;
+        }
+        return key;
+    }
+
+    // Pre-seed the cache with the current SSR page
+    dashboardCache.set(getCacheKey(), {
         documents: state.docs,
         total_documents: state.totalDocs,
+        all_types: {{ initial_data.all_types | tojson }},
+        selected_types: {{ initial_data.selected_types | tojson }},
         queue_size: {{ initial_data.queue_size }},
         task_states: {{ initial_data.task_states | tojson }}
     });
@@ -204,6 +239,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const sortControls = document.getElementById('registry-sort-controls');
     const paginationContainer = document.getElementById('pagination-container');
     const perPageSelect = document.getElementById('per-page-select');
+    const filterContainer = document.getElementById('dashboard-type-filters');
+    const checkboxContainer = document.getElementById('type-checkboxes-container');
     const queueSizeDisplay = document.getElementById('queue-size-display');
     const docCountDisplay = document.getElementById('doc-count-display');
     const isPrecomputed = {{ g.is_precomputed|tojson }};
@@ -217,11 +254,34 @@ document.addEventListener('DOMContentLoaded', () => {
     let pollingTimer;
 
     // --- RENDER FUNCTIONS ---
+    
+    // NEW: Render the dynamic checkboxes if sorting by file_type
+    function renderTypeFilters(allTypes, selectedTypes) {
+        if (state.sort.key === 'file_type' && allTypes && allTypes.length > 0) {
+            filterContainer.style.setProperty('display', 'flex', 'important');
+            checkboxContainer.innerHTML = '';
+            
+            allTypes.forEach(type => {
+                const isChecked = selectedTypes.includes(type) ? 'checked' : '';
+                const html = `
+                    <label style="cursor: pointer; display: flex; align-items: center; gap: 4px; font-size: 0.85em; margin-bottom: 0; color: var(--text-light); user-select: none;">
+                        <input type="checkbox" class="dash-type-filter" value="${type}" ${isChecked}>
+                        <span class="chip" style="margin:0;">${type}</span>
+                    </label>
+                `;
+                checkboxContainer.insertAdjacentHTML('beforeend', html);
+            });
+        } else {
+            filterContainer.style.setProperty('display', 'none', 'important');
+        }
+    }
+
     function getRowsHtml(docs) {
         if (docs.length === 0) {
-            return `<tr><td colspan="12" class="table-empty-message">No documents registered. Click "Discover Docs" to begin.</td></tr>`;
+            return `<tr><td colspan="12" class="table-empty-message">No documents found matching the current filters.</td></tr>`;
         }
         return docs.map(doc => {
+            const visitedClass = (lastVisitedDocId === doc.id.toString()) ? 'visited-row' : '';
             const colorDot = doc.color ? `<span class="color-dot" style="background-color: ${doc.color};"></span>` : '';
             const pathLink = (doc.status === 'Indexed') ? `<a href="/document/${doc.id}">${doc.relative_path}</a>` : doc.relative_path;
             const statusClass = doc.status ? doc.status.replace(' ', '') : 'New';
@@ -236,7 +296,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const fileSize = formatFileSize(doc.file_size_bytes);
             const duration = formatDuration(doc.duration_seconds);
             return `
-                <tr data-doc-id="${doc.id}">
+                <tr data-doc-id="${doc.id}" class="${visitedClass}">
                     <td>${doc.id}</td><td class="color-cell">${colorDot}</td><td class="path-cell">${pathLink}</td>
                     <td><span class="status-${statusClass}">${doc.status}</span></td>
                     <td class="message-cell" title="${doc.status_message || ''}">${doc.status_message || ''}</td>
@@ -270,6 +330,12 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         state.docs = data.documents;
         state.totalDocs = data.total_documents;
+        
+        // NEW: Update type filters if provided
+        if (data.all_types && data.selected_types) {
+            renderTypeFilters(data.all_types, data.selected_types);
+        }
+        
         renderPagination();
         if (queueSizeDisplay) queueSizeDisplay.textContent = data.queue_size;
         if (docCountDisplay) docCountDisplay.textContent = data.total_documents;
@@ -280,11 +346,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const { isPoll = false } = options;
         if (state.isLoading) return;
 
-        const cacheKey = `${state.currentPage}-${state.perPage}-${state.sort.key}-${state.sort.direction}`;
+        const cacheKey = getCacheKey();
 
         // 1. Check Cache (Only for user actions, not polling)
         if (!isPoll && dashboardCache.has(cacheKey)) {
-            console.log("Cache Hit: Instant Render");
             updateUI(dashboardCache.get(cacheKey));
             return;
         }
@@ -295,7 +360,15 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         
         clearTimeout(pollingTimer);
-        const url = `/api/dashboard/status?page=${state.currentPage}&per_page=${state.perPage}&sort_key=${state.sort.key}&sort_dir=${state.sort.direction}`;
+        
+        // Build URL
+        let url = `/api/dashboard/status?page=${state.currentPage}&per_page=${state.perPage}&sort_key=${state.sort.key}&sort_dir=${state.sort.direction}`;
+        
+        // --- NEW: Add type filters to URL ---
+        if (state.sort.key === 'file_type' && state.typeFilters) {
+            url += '&filtered=true';
+            state.typeFilters.forEach(t => url += `&type=${encodeURIComponent(t)}`);
+        }
         
         try {
             const response = await fetch(url);
@@ -306,12 +379,9 @@ document.addEventListener('DOMContentLoaded', () => {
             updateUI(data);
 
             // 3. Smart Caching
-            // Only cache if the system is stable (no active processing).
-            // If items are processing, the view is changing rapidly, so caching is bad.
             if (data.queue_size === 0) {
                 dashboardCache.set(cacheKey, data);
             } else {
-                // If processing is active, invalidate everything to show fresh status
                 dashboardCache.clear();
             }
 
@@ -327,6 +397,29 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // --- Event Listeners ---
+    
+    // NEW: Listen for checkbox changes
+    checkboxContainer.addEventListener('change', (e) => {
+        if (e.target.classList.contains('dash-type-filter')) {
+            const checkedBoxes = Array.from(document.querySelectorAll('.dash-type-filter:checked'));
+            state.typeFilters = checkedBoxes.map(cb => cb.value);
+            state.currentPage = 1;
+            fetchDashboardData({ isPoll: false });
+        }
+    });
+
+    tableBody.addEventListener('click', (e) => {
+        const clickable = e.target.closest('a, button');
+        if (clickable) {
+            const row = clickable.closest('tr');
+            if (row && row.dataset.docId) {
+                markDocVisited(row.dataset.docId);
+                document.querySelectorAll('.visited-row').forEach(r => r.classList.remove('visited-row'));
+                row.classList.add('visited-row');
+            }
+        }
+    });
+
     sortControls.addEventListener('click', (e) => {
         const btn = e.target.closest('.sort-btn');
         if (!btn) return;
@@ -337,6 +430,13 @@ document.addEventListener('DOMContentLoaded', () => {
             state.sort.key = key;
             state.sort.direction = ['id', 'relative_path', 'status', 'file_type'].includes(key) ? 'asc' : 'desc';
         }
+        
+        // NEW: Clear type filters if leaving 'file_type' sort
+        if (state.sort.key !== 'file_type') {
+            state.typeFilters = null;
+            filterContainer.style.setProperty('display', 'none', 'important');
+        }
+
         localStorage.setItem('dashboardSortState', JSON.stringify(state.sort));
         updateSortButtonUI();
         state.currentPage = 1;
@@ -381,7 +481,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     window.addEventListener('beforeunload', () => clearTimeout(pollingTimer));
 
-    renderPagination();
+    // To ensure the visited state applies instantly on the first SSR load, 
+    // we trigger a fast UI update from the initially seeded cache.
+    updateUI(dashboardCache.get(getCacheKey()));
+    
     updateSortButtonUI();
     if (!isPrecomputed) { 
         pollingTimer = setTimeout(() => fetchDashboardData({ isPoll: true }), POLLING_INTERVAL); 
