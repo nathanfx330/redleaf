@@ -9,7 +9,8 @@ import io
 from pathlib import Path
 from datetime import datetime
 
-from .config import DATABASE_FILE, DOCUMENTS_DIR
+# --- FIX: Added resolve_document_path to support .rlink virtual folders during import verification ---
+from .config import DATABASE_FILE, DOCUMENTS_DIR, resolve_document_path
 from .background import task_queue
 
 def export_knowledge_package():
@@ -103,8 +104,10 @@ def import_knowledge_package(package_path: Path):
         print("Verifying document integrity...")
         errors = []
         for file_info in manifest.get('files', []):
-            local_path = DOCUMENTS_DIR / file_info['relative_path']
-            if not local_path.exists():
+            # --- FIX: Safely resolve the path through any .rlink virtual folders ---
+            local_path = resolve_document_path(file_info['relative_path'])
+            
+            if not local_path.exists() or not local_path.is_file():
                 errors.append(f"Missing file: {file_info['relative_path']}")
                 continue
             
