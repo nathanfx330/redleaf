@@ -55,7 +55,26 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     const renderUnlinkedState = () => {
-        mediaSyncPanel.innerHTML = `<p class="text-muted">Link an audio or video file to enable interactive playback.</p><div class="toolbar" style="gap: 0.5rem; justify-content: flex-start;"><button id="scan-audio-btn" class="button">Scan for Local Audio (.mp3)</button><button id="scan-video-btn" class="button">Scan for Local Video (.mp4)</button></div><p id="media-link-status" class="text-muted mt-2" style="transition: opacity 0.3s; opacity: 0;"></p>`;
+        mediaSyncPanel.innerHTML = `
+            <p class="text-muted">Link an audio or video file to enable interactive playback.</p>
+            
+            <div style="background-color: var(--background-dark); padding: 10px; border-radius: 4px; border: 1px solid var(--page-border); margin-bottom: 12px;">
+                <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                    <input type="checkbox" id="use-fuzzy-checkbox">
+                    <label for="use-fuzzy-checkbox" style="color: var(--text-light); font-size: 0.9em; cursor: pointer; margin: 0;">Enable Fuzzy Name Matching</label>
+                    
+                    <span style="margin-left: auto; color: var(--text-muted); font-size: 0.9em;">Threshold:</span>
+                    <input type="number" id="fuzzy-threshold-input" value="0.85" min="0.1" max="1.0" step="0.05" style="width: 70px; background: var(--background-medium); color: white; border: 1px solid var(--page-border); border-radius: 3px; padding: 4px;" disabled>
+                </div>
+                <p style="margin-top: 8px; margin-bottom: 0; font-size: 0.8em; color: var(--text-muted);">Finds media files named similarly to the transcript (e.g., <code>Take_1_Final.mp4</code> matches <code>Take_1.srt</code>).</p>
+            </div>
+
+            <div class="toolbar" style="gap: 0.5rem; justify-content: flex-start;">
+                <button id="scan-audio-btn" class="button">Scan for Local Audio (.mp3)</button>
+                <button id="scan-video-btn" class="button">Scan for Local Video (.mp4)</button>
+            </div>
+            <p id="media-link-status" class="text-muted mt-2" style="transition: opacity 0.3s; opacity: 0;"></p>
+        `;
         if (xmlSyncPanel) { const scanBtn = xmlSyncPanel.querySelector('#scan-xml-btn'); if (scanBtn) scanBtn.disabled = false; const statusEl = xmlSyncPanel.querySelector('#xml-link-status'); if(statusEl) { statusEl.innerHTML = '<p class="text-muted">Scan for podcast metadata in local XML files.</p>'; statusEl.dataset.wasDisabled = "false"; } }
     };
 
@@ -78,7 +97,65 @@ document.addEventListener('DOMContentLoaded', () => {
     mediaSyncPanel.addEventListener('click', async (event) => {
         const target = event.target;
         const statusEl = document.getElementById('media-link-status');
-        const handleScan = async (mediaType) => { const scanBtn = document.getElementById(`scan-${mediaType}-btn`); if (scanBtn) scanBtn.disabled = true; if (statusEl) { statusEl.textContent = `Scanning for ${mediaType}...`; statusEl.style.opacity = '1'; } try { const response = await fetch(`/api/document/${docId}/find_${mediaType}`, { method: 'POST', headers: { 'X-CSRFToken': CSRF_TOKEN } }); const result = await response.json(); if (result.success) { if(statusEl) statusEl.textContent = `✅ ${mediaType.charAt(0).toUpperCase() + mediaType.slice(1)} found! Viewer will reload.`; docViewerIframe.contentWindow.location.reload(true); await checkMediaStatus(); } else if(statusEl) { statusEl.textContent = `❌ ${result.message}`; } } catch (error) { if(statusEl) statusEl.textContent = `Error during ${mediaType} scan.`; } finally { setTimeout(() => { if (statusEl) statusEl.style.opacity = '0'; if (scanBtn) scanBtn.disabled = false; }, 4000); } };
+
+        // --- NEW: Toggle the threshold input when checkbox is clicked ---
+        if (target.id === 'use-fuzzy-checkbox') {
+            const thresholdInput = document.getElementById('fuzzy-threshold-input');
+            if (thresholdInput) {
+                thresholdInput.disabled = !target.checked;
+            }
+            return;
+        }
+
+        const handleScan = async (mediaType) => { 
+            const scanBtn = document.getElementById(`scan-${mediaType}-btn`); 
+            if (scanBtn) scanBtn.disabled = true; 
+            
+            if (statusEl) { 
+                statusEl.textContent = `Scanning for ${mediaType}...`; 
+                statusEl.style.opacity = '1'; 
+            } 
+            
+            // --- NEW: Grab fuzzy logic values from the UI ---
+            const useFuzzyCb = document.getElementById('use-fuzzy-checkbox');
+            const thresholdInput = document.getElementById('fuzzy-threshold-input');
+            
+            const useFuzzy = useFuzzyCb ? useFuzzyCb.checked : false;
+            const threshold = thresholdInput ? parseFloat(thresholdInput.value) : 0.85;
+
+            try { 
+                const response = await fetch(`/api/document/${docId}/find_${mediaType}`, { 
+                    method: 'POST', 
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': CSRF_TOKEN 
+                    },
+                    // Send the new parameters
+                    body: JSON.stringify({
+                        use_fuzzy: useFuzzy,
+                        fuzzy_threshold: threshold
+                    })
+                }); 
+                
+                const result = await response.json(); 
+                
+                if (result.success) { 
+                    if(statusEl) statusEl.textContent = `✅ ${mediaType.charAt(0).toUpperCase() + mediaType.slice(1)} found! Viewer will reload.`; 
+                    docViewerIframe.contentWindow.location.reload(true); 
+                    await checkMediaStatus(); 
+                } else if(statusEl) { 
+                    statusEl.textContent = `❌ ${result.message}`; 
+                } 
+            } catch (error) { 
+                if(statusEl) statusEl.textContent = `Error during ${mediaType} scan.`; 
+            } finally { 
+                setTimeout(() => { 
+                    if (statusEl) statusEl.style.opacity = '0'; 
+                    if (scanBtn) scanBtn.disabled = false; 
+                }, 4000); 
+            } 
+        };
+
         if (target.id === 'scan-audio-btn') await handleScan('audio');
         if (target.id === 'scan-video-btn') await handleScan('video');
         if (target.id === 'unlink-media-btn') { if (!confirm('Are you sure you want to unlink this media file?')) return; target.disabled = true; target.textContent = 'Unlinking...'; try { const response = await fetch(`/api/document/${docId}/unlink_media`, { method: 'POST', headers: { 'X-CSRFToken': CSRF_TOKEN } }); const result = await response.json(); if (!result.success) throw new Error(result.message); docViewerIframe.contentWindow.location.reload(true); await checkMediaStatus(); } catch (error) { alert(`Error: ${error.message}`); target.disabled = false; target.textContent = 'Unlink Media'; } }

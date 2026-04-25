@@ -6,11 +6,12 @@ from flask import jsonify, request, g, url_for, abort
 from pathlib import Path
 from lxml import etree as ET
 import hashlib
+from difflib import SequenceMatcher # <--- ADDED FOR FUZZY MATCHING
 
 from . import api_bp
 from .helpers import get_document_or_404, find_xml_matches_for_doc, parse_podcast_xml_to_csl
 from ...database import get_db
-from ...config import DOCUMENTS_DIR
+from ...config import DOCUMENTS_DIR, resolve_document_path
 from ..auth import login_required
 
 # ===================================================================
@@ -90,7 +91,7 @@ def save_audio_offset(doc_id):
 # --- END: NEW AND MODIFIED MEDIA ENDPOINTS ---
 # ===================================================================
 
-def _find_and_link_local_media(doc_id: int, extension: str) -> tuple[dict, int]:
+def _find_and_link_local_media(doc_id: int, extension: str, use_fuzzy: bool = False, fuzzy_threshold: float = 0.85) -> tuple[dict, int]:
     """Helper to scan for and link local media files (.mp3, .mp4)."""
     db = get_db()
     doc = get_document_or_404(db, doc_id)
@@ -98,16 +99,67 @@ def _find_and_link_local_media(doc_id: int, extension: str) -> tuple[dict, int]:
         return {'success': False, 'message': 'Document is not an SRT file.'}, 400
     
     doc_path = Path(doc['relative_path'])
-    media_filename = doc_path.with_suffix(extension).name
+    target_stem = doc_path.stem
+    media_filename = target_stem + extension
     
+    # Construct what the virtual path would be if it was right next to the SRT
     path_in_same_dir = doc_path.parent / media_filename
-    if (DOCUMENTS_DIR / path_in_same_dir).is_file():
-        found_path_str = path_in_same_dir.as_posix()
+    virtual_path_str = path_in_same_dir.as_posix()
+    
+    found_path_str = None
+    
+    # --- 1. Fast Exact Match Check ---
+    if resolve_document_path(virtual_path_str).is_file():
+        found_path_str = virtual_path_str
     else:
-        found_files = list(DOCUMENTS_DIR.rglob(media_filename))
-        if not found_files:
-            return {'success': False, 'message': f"No '{media_filename}' file found anywhere."}, 404
-        found_path_str = found_files[0].relative_to(DOCUMENTS_DIR).as_posix()
+        # --- 2. Gather ALL candidates for exact fallback or fuzzy matching ---
+        candidates = []
+        
+        # Scan main directory
+        for f in DOCUMENTS_DIR.rglob(f"*{extension}"):
+            if f.is_file():
+                candidates.append((f, f.relative_to(DOCUMENTS_DIR).as_posix()))
+        
+        # Scan .rlink virtual folders
+        for rlink_file in DOCUMENTS_DIR.glob('*.rlink'):
+            if rlink_file.is_file():
+                try:
+                    target_dir = Path(rlink_file.read_text(encoding='utf-8').strip())
+                    if target_dir.exists() and target_dir.is_dir():
+                        for f in target_dir.rglob(f"*{extension}"):
+                            if f.is_file():
+                                v_path = f"{rlink_file.name}/{f.relative_to(target_dir).as_posix()}"
+                                candidates.append((f, v_path))
+                except Exception:
+                    pass
+
+        # Check for exact match anywhere in the candidates
+        for physical_path, virtual_path in candidates:
+            if physical_path.name == media_filename:
+                found_path_str = virtual_path
+                break
+        
+        # --- 3. Fuzzy Match Check ---
+        if not found_path_str and use_fuzzy and candidates:
+            best_match_path = None
+            best_ratio = 0.0
+            
+            for physical_path, virtual_path in candidates:
+                # Compare the filename stems (without extension)
+                ratio = SequenceMatcher(None, target_stem.lower(), physical_path.stem.lower()).ratio()
+                if ratio > best_ratio:
+                    best_ratio = ratio
+                    best_match_path = virtual_path
+                    
+            if best_ratio >= fuzzy_threshold:
+                found_path_str = best_match_path
+                print(f"[INFO] Fuzzy Match Success: '{target_stem}' matched '{Path(best_match_path).stem}' (Score: {best_ratio:.2f})")
+
+        if not found_path_str:
+            msg = f"No '{media_filename}' file found anywhere."
+            if use_fuzzy:
+                msg += f" Fuzzy search also failed (no files found above {int(fuzzy_threshold*100)}% similarity)."
+            return {'success': False, 'message': msg}, 404
 
     audio_path, video_path = (found_path_str, None) if extension == '.mp3' else (None, found_path_str)
     
@@ -123,13 +175,25 @@ def _find_and_link_local_media(doc_id: int, extension: str) -> tuple[dict, int]:
 @api_bp.route('/document/<int:doc_id>/find_audio', methods=['POST'])
 @login_required
 def find_document_audio(doc_id):
-    result, status_code = _find_and_link_local_media(doc_id, '.mp3')
+    use_fuzzy = False
+    threshold = 0.85
+    if request.is_json:
+        use_fuzzy = request.json.get('use_fuzzy', False)
+        threshold = float(request.json.get('fuzzy_threshold', 0.85))
+        
+    result, status_code = _find_and_link_local_media(doc_id, '.mp3', use_fuzzy, threshold)
     return jsonify(result), status_code
 
 @api_bp.route('/document/<int:doc_id>/find_video', methods=['POST'])
 @login_required
 def find_document_video(doc_id):
-    result, status_code = _find_and_link_local_media(doc_id, '.mp4')
+    use_fuzzy = False
+    threshold = 0.85
+    if request.is_json:
+        use_fuzzy = request.json.get('use_fuzzy', False)
+        threshold = float(request.json.get('fuzzy_threshold', 0.85))
+        
+    result, status_code = _find_and_link_local_media(doc_id, '.mp4', use_fuzzy, threshold)
     return jsonify(result), status_code
 
 @api_bp.route('/document/<int:doc_id>/link_audio_from_url', methods=['POST'])
