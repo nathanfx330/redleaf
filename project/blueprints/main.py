@@ -21,6 +21,7 @@ from .auth import login_required, admin_required, SecureForm
 
 # --- IMPORT OPTIMIZED DATA FETCHING LOGIC ---
 from .api.documents import fetch_dashboard_data
+from .api.helpers import escape_like  # <--- ADDED FOR ADVANCED SEARCH
 
 main_bp = Blueprint('main', __name__)
 
@@ -115,91 +116,284 @@ def discover_view():
                            sorted_labels=ENTITY_LABELS_TO_DISPLAY, 
                            form=form)
 
+@main_bp.route('/discover/advanced')
+@login_required
+def advanced_search_view():
+    db = get_db()
+    # Get catalogs for the dropdown
+    catalogs = db.execute("SELECT id, name FROM catalogs ORDER BY name COLLATE NOCASE").fetchall()
+    
+    # Get tags for the dropdown
+    tags = db.execute("SELECT name FROM tags ORDER BY name COLLATE NOCASE").fetchall()
+    
+    # Get available file types for the checkboxes
+    types_query = db.execute("SELECT DISTINCT file_type FROM documents WHERE status != 'Missing' AND file_type IS NOT NULL").fetchall()
+    all_types = sorted([row['file_type'] for row in types_query])
+    
+    form = SecureForm()
+    return render_template('advanced_search.html', catalogs=catalogs, tags=tags, all_types=all_types, form=form)
+
 @main_bp.route('/discover/search')
 @login_required
 def search_results():
     query = request.args.get('q', '').strip()
+    title_query = request.args.get('title', '').strip()
+    catalog_id = request.args.get('catalog_id', type=int)
+    tag_name = request.args.get('tag_name', '').strip()
     page = request.args.get('page', 1, type=int)
     per_page = 50
     offset = (page - 1) * per_page
     
-    if not query:
-        return redirect(url_for('main.discover_view'))
+    # --- START OF FIX: Parse dynamic Entity filters ---
+    # These arrive as lists because the form has multiple fields with the same 'name' attribute
+    raw_entity_texts = request.args.getlist('entity_text')
+    raw_entity_labels = request.args.getlist('entity_label')
     
+    entity_filters = []
+    for i in range(len(raw_entity_texts)):
+        text = raw_entity_texts[i].strip()
+        if text:
+            # Pair it with the label if one was selected
+            label = raw_entity_labels[i] if i < len(raw_entity_labels) else ""
+            entity_filters.append({"text": text, "label": label})
+    # --- END OF FIX ---
+    
+    # If entirely empty, redirect back
+    if not query and not title_query and not catalog_id and not tag_name and not entity_filters and 'filtered' not in request.args:
+        return redirect(url_for('main.discover_view'))
+        
     db = get_db()
     
-    # --- SMART MULTI-TERM SEARCH LOGIC ---
-    # Strip dangerous punctuation, ignore the literal word "and"
-    safe_query = re.sub(r'[^\w\s]', '', query).strip()
-    words = [w for w in safe_query.split() if w.lower() != 'and']
+    # 1. Build Document Filters (The universe of allowed documents)
+    doc_where = ["status != 'Missing'"]
+    doc_params = []
     
-    # Join with AND so FTS5 looks for pages containing ALL the words
-    fts_query = " AND ".join([f'"{w}"' for w in words])
+    if title_query:
+        doc_where.append("relative_path LIKE ? ESCAPE '\\'")
+        doc_params.append(f"%{escape_like(title_query)}%")
+        
+    if catalog_id:
+        doc_where.append("id IN (SELECT doc_id FROM document_catalogs WHERE catalog_id = ?)")
+        doc_params.append(catalog_id)
+        
+    if tag_name:
+        doc_where.append("id IN (SELECT dt.doc_id FROM document_tags dt JOIN tags t ON dt.tag_id = t.id WHERE t.name = ?)")
+        doc_params.append(tag_name)
+        
+    doc_where_str = " AND ".join(doc_where)
     
-    if not fts_query:
-        return render_template('search_results.html', query=query, results=[], page=page, has_next=False, all_types=[], selected_types=[])
-
-    # --- NEW: File Type Filtering Logic (Scoped to Search Results) ---
-    # 1. Get all available file types THAT MATCH THE SEARCH
-    types_sql = """
-        SELECT DISTINCT d.file_type 
-        FROM content_index ci
-        JOIN documents d ON ci.doc_id = d.id
-        WHERE d.status != 'Missing' AND d.file_type IS NOT NULL AND ci.content_index MATCH ?
-    """
-    types_query_result = db.execute(types_sql, (fts_query,)).fetchall()
+    # 2. Handle Text Search Context
+    if query:
+        safe_query = re.sub(r'[^\w\s]', '', query).strip()
+        words = [w for w in safe_query.split() if w.lower() != 'and']
+        fts_query = " AND ".join([f'"{w}"' for w in words])
+    else:
+        fts_query = ""
+        
+    # 3. Fetch valid types to power the UI checkboxes on the results page
+    # (We build a base filter string here before applying the types)
+    base_types_sql = f"SELECT DISTINCT d.file_type FROM documents d WHERE {doc_where_str} AND d.file_type IS NOT NULL"
+    types_params = list(doc_params)
+    
+    # If FTS is active, restrict types to those containing hits
+    if fts_query:
+        base_types_sql = f"""
+            SELECT DISTINCT d.file_type 
+            FROM content_index ci
+            JOIN documents d ON ci.doc_id = d.id
+            WHERE d.id IN (SELECT id FROM documents WHERE {doc_where_str})
+            AND d.file_type IS NOT NULL 
+            AND ci.content_index MATCH ?
+        """
+        types_params.append(fts_query)
+        
+    # --- START OF FIX: If Entity filters exist, restrict types to those containing the entities ---
+    if entity_filters:
+        # We need a dynamic JOIN chain for each required entity
+        for i, ent in enumerate(entity_filters):
+            base_types_sql = f"""
+                SELECT DISTINCT d.file_type FROM ({base_types_sql}) as temp_types
+                JOIN documents d ON d.file_type = temp_types.file_type
+                JOIN entity_appearances ea{i} ON d.id = ea{i}.doc_id
+                JOIN entities e{i} ON ea{i}.entity_id = e{i}.id
+            """
+            
+            # The WHERE clause for this specific entity
+            entity_where = f"e{i}.text LIKE ?"
+            types_params.append(f"%{escape_like(ent['text'])}%")
+            
+            if ent['label']:
+                entity_where += f" AND e{i}.label = ?"
+                types_params.append(ent['label'])
+                
+            base_types_sql += f" WHERE {entity_where}"
+    # --- END OF FIX ---
+        
+    types_query_result = db.execute(base_types_sql, types_params).fetchall()
     all_types = sorted([row['file_type'] for row in types_query_result])
     
-    # 2. Determine selected types
+    # Determine selected types
     if 'filtered' in request.args:
-        selected_types = request.args.getlist('type')
-        # Safety check: ensure selected types are actually valid for this query to prevent UI weirdness
-        selected_types = [t for t in selected_types if t in all_types]
+        raw_selected = request.args.getlist('type')
+        selected_types = [t for t in raw_selected if t in all_types]
+        
+        # If the user explicitly checked boxes, but they are all invalid for this query -> 0 results
+        if raw_selected and not selected_types and all_types:
+            return render_template('search_results.html', query=query, title_query=title_query, catalog_id=catalog_id, tag_name=tag_name, entity_filters=entity_filters, results=[], page=page, has_next=False, all_types=all_types, selected_types=[])
     else:
+        # Default behavior for new searches: Check all boxes in the UI
         selected_types = all_types
-
-    # If the query is valid but the user unchecked all boxes, return empty cleanly
-    if not selected_types:
-        return render_template('search_results.html', query=query, results=[], page=page, has_next=False, all_types=all_types, selected_types=[])
-    
+        
+    # Apply the SQL filter ONLY if a subset of types is selected. 
+    if selected_types and len(selected_types) < len(all_types):
+        placeholders = ','.join(['?'] * len(selected_types))
+        doc_where.append(f"file_type IN ({placeholders})")
+        doc_params.extend(selected_types)
+        
+    doc_where_str = " AND ".join(doc_where)
     fetch_limit = per_page + 1
-
-    # Dynamically build the IN clause for the file types
-    placeholders = ','.join(['?'] * len(selected_types))
-    type_filter_sql = f"AND file_type IN ({placeholders})"
-    sql_params = selected_types + [fts_query, fetch_limit, offset]
-
-    sql_query = f"""
-        SELECT d.id as doc_id, d.relative_path, d.color, d.page_count, d.file_type, 
-               tm.page_number, tm.snippet,
-               d.cached_comment_count as comment_count,
-               (d.cached_tag_count > 0) as has_tags,
-               (SELECT 1 FROM document_curation WHERE doc_id = d.id AND user_id = ?) as has_personal_note,
-               (SELECT GROUP_CONCAT(c.name, ', ') FROM catalogs c JOIN document_catalogs dc ON c.id = dc.catalog_id WHERE dc.doc_id = d.id) as catalog_names
-        FROM (
-            SELECT doc_id, page_number, snippet(content_index, 2, '<strong>', '</strong>', '...', 20) as snippet, rank
-            FROM content_index 
-            WHERE doc_id IN (SELECT id FROM documents WHERE status != 'Missing' {type_filter_sql}) AND content_index MATCH ? 
-            ORDER BY rank 
-            LIMIT ? OFFSET ?
-        ) tm
-        JOIN documents d ON tm.doc_id = d.id
-        ORDER BY tm.rank;
-    """
     
-    db_results = db.execute(sql_query, [g.user['id']] + sql_params).fetchall()
+    # 4. Main Query Execution
     
-    # Check if we have more results than the per_page limit
+    # --- START OF FIX: Advanced Entity Subquery Generation ---
+    # We want to find documents/pages where ALL the required entities intersect.
+    entity_intersection_sql = ""
+    if entity_filters:
+        # Start with the first entity's appearances
+        entity_intersection_sql = """
+            SELECT ea0.doc_id, ea0.page_number 
+            FROM entity_appearances ea0
+            JOIN entities e0 ON ea0.entity_id = e0.id
+        """
+        
+        # Iteratively join appearances for subsequent entities ON the same doc and page
+        for i in range(1, len(entity_filters)):
+            entity_intersection_sql += f"""
+                JOIN entity_appearances ea{i} 
+                  ON ea0.doc_id = ea{i}.doc_id 
+                  AND ea0.page_number = ea{i}.page_number
+                JOIN entities e{i} ON ea{i}.entity_id = e{i}.id
+            """
+            
+        # Add the WHERE conditions for all entities
+        ent_where_clauses = []
+        for i, ent in enumerate(entity_filters):
+            clause = f"e{i}.text LIKE ?"
+            doc_params.append(f"%{escape_like(ent['text'])}%")
+            if ent['label']:
+                clause += f" AND e{i}.label = ?"
+                doc_params.append(ent['label'])
+            ent_where_clauses.append(clause)
+            
+        entity_intersection_sql += " WHERE " + " AND ".join(ent_where_clauses)
+    # --- END OF FIX ---
+
+    if fts_query and entity_filters:
+        # BOHT FTS AND ENTITY SEARCH
+        sql_params = doc_params + [fts_query, fetch_limit, offset]
+        sql_query = f"""
+            SELECT d.id as doc_id, d.relative_path, d.color, d.page_count, d.file_type, 
+                   tm.page_number, tm.snippet,
+                   d.cached_comment_count as comment_count,
+                   (d.cached_tag_count > 0) as has_tags,
+                   (SELECT 1 FROM document_curation WHERE doc_id = d.id AND user_id = ?) as has_personal_note,
+                   (SELECT GROUP_CONCAT(c.name, ', ') FROM catalogs c JOIN document_catalogs dc ON c.id = dc.catalog_id WHERE dc.doc_id = d.id) as catalog_names
+            FROM (
+                SELECT ci.doc_id, ci.page_number, snippet(ci.content_index, 2, '<strong>', '</strong>', '...', 20) as snippet, ci.rank
+                FROM content_index ci
+                JOIN ({entity_intersection_sql}) ei ON ci.doc_id = ei.doc_id AND ci.page_number = ei.page_number
+                WHERE ci.doc_id IN (SELECT id FROM documents WHERE {doc_where_str}) AND ci.content_index MATCH ? 
+                ORDER BY ci.rank 
+                LIMIT ? OFFSET ?
+            ) tm
+            JOIN documents d ON tm.doc_id = d.id
+            ORDER BY tm.rank;
+        """
+        db_results = db.execute(sql_query, [g.user['id']] + sql_params).fetchall()
+        
+    elif fts_query:
+        # FTS ONLY SEARCH
+        sql_params = doc_params + [fts_query, fetch_limit, offset]
+        sql_query = f"""
+            SELECT d.id as doc_id, d.relative_path, d.color, d.page_count, d.file_type, 
+                   tm.page_number, tm.snippet,
+                   d.cached_comment_count as comment_count,
+                   (d.cached_tag_count > 0) as has_tags,
+                   (SELECT 1 FROM document_curation WHERE doc_id = d.id AND user_id = ?) as has_personal_note,
+                   (SELECT GROUP_CONCAT(c.name, ', ') FROM catalogs c JOIN document_catalogs dc ON c.id = dc.catalog_id WHERE dc.doc_id = d.id) as catalog_names
+            FROM (
+                SELECT doc_id, page_number, snippet(content_index, 2, '<strong>', '</strong>', '...', 20) as snippet, rank
+                FROM content_index 
+                WHERE doc_id IN (SELECT id FROM documents WHERE {doc_where_str}) AND content_index MATCH ? 
+                ORDER BY rank 
+                LIMIT ? OFFSET ?
+            ) tm
+            JOIN documents d ON tm.doc_id = d.id
+            ORDER BY tm.rank;
+        """
+        db_results = db.execute(sql_query, [g.user['id']] + sql_params).fetchall()
+        
+    elif entity_filters:
+        # ENTITY INTERSECTION ONLY (No FTS keyword provided)
+        sql_params = doc_params + [fetch_limit, offset]
+        sql_query = f"""
+            SELECT d.id as doc_id, d.relative_path, d.color, d.page_count, d.file_type, 
+                   tm.page_number, '' as snippet,
+                   d.cached_comment_count as comment_count,
+                   (d.cached_tag_count > 0) as has_tags,
+                   (SELECT 1 FROM document_curation WHERE doc_id = d.id AND user_id = ?) as has_personal_note,
+                   (SELECT GROUP_CONCAT(c.name, ', ') FROM catalogs c JOIN document_catalogs dc ON c.id = dc.catalog_id WHERE dc.doc_id = d.id) as catalog_names
+            FROM (
+                {entity_intersection_sql}
+                AND ea0.doc_id IN (SELECT id FROM documents WHERE {doc_where_str})
+                ORDER BY ea0.doc_id, ea0.page_number
+                LIMIT ? OFFSET ?
+            ) tm
+            JOIN documents d ON tm.doc_id = d.id
+            ORDER BY d.relative_path COLLATE NOCASE, tm.page_number;
+        """
+        db_results = db.execute(sql_query, [g.user['id']] + sql_params).fetchall()
+        
+    else:
+        # METADATA ONLY SEARCH (No FTS, no Entities)
+        sql_params = doc_params + [fetch_limit, offset]
+        sql_query = f"""
+            SELECT d.id as doc_id, d.relative_path, d.color, d.page_count, d.file_type, 
+                   1 as page_number, '' as snippet,
+                   d.cached_comment_count as comment_count,
+                   (d.cached_tag_count > 0) as has_tags,
+                   (SELECT 1 FROM document_curation WHERE doc_id = d.id AND user_id = ?) as has_personal_note,
+                   (SELECT GROUP_CONCAT(c.name, ', ') FROM catalogs c JOIN document_catalogs dc ON c.id = dc.catalog_id WHERE dc.doc_id = d.id) as catalog_names
+            FROM documents d
+            WHERE d.id IN (SELECT id FROM documents WHERE {doc_where_str})
+            ORDER BY d.relative_path COLLATE NOCASE
+            LIMIT ? OFFSET ?;
+        """
+        db_results = db.execute(sql_query, [g.user['id']] + sql_params).fetchall()
+        
     has_next = len(db_results) > per_page
     if has_next:
-        db_results = db_results[:per_page] # Trim off the extra lookahead row
-    
+        db_results = db_results[:per_page]
+        
     results = []
     highlight_re = re.compile('<strong>(.*?)</strong>', re.DOTALL)
     
     for row in db_results:
         row_dict = dict(row)
-        if row_dict.get('file_type') == 'SRT':
+        
+        # Generate custom snippet for entity-only searches
+        if entity_filters and not fts_query:
+            # Grab the raw text for this page
+            page_row = db.execute("SELECT page_content FROM content_index WHERE doc_id = ? AND page_number = ?", (row_dict['doc_id'], row_dict['page_number'])).fetchone()
+            if page_row:
+                raw_text = page_row['page_content']
+                # Create a snippet centered on the FIRST entity in the filter list
+                primary_entity = entity_filters[0]['text']
+                row_dict['snippet'] = _create_entity_snippet(raw_text, primary_entity)
+            else:
+                 row_dict['snippet'] = "<em>Could not load text for snippet.</em>"
+
+        if row_dict.get('file_type') == 'SRT' and row_dict.get('snippet'):
             snippet_html = row_dict['snippet']
             match = highlight_re.search(snippet_html)
             if match:
@@ -211,9 +405,20 @@ def search_results():
                 if cue_row:
                     row_dict['page_number'] = cue_row['sequence']
             row_dict['snippet'] = _truncate_long_snippet(snippet_html)
+            
         results.append(row_dict)
         
-    return render_template('search_results.html', query=query, results=results, page=page, has_next=has_next, all_types=all_types, selected_types=selected_types)
+    return render_template('search_results.html', 
+                           query=query, 
+                           title_query=title_query,
+                           catalog_id=catalog_id,
+                           tag_name=tag_name,
+                           entity_filters=entity_filters, # Passed down to the template to persist state
+                           results=results, 
+                           page=page, 
+                           has_next=has_next, 
+                           all_types=all_types, 
+                           selected_types=selected_types)
 
 @main_bp.route('/discover/entity/<label>/<path:text>')
 @login_required

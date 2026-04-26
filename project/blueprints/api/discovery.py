@@ -93,6 +93,36 @@ def get_discovery_list(label):
         'has_more': len(results) == per_page
     })
 
+# --- START OF NEW: Autocomplete Endpoint ---
+@api_bp.route('/search/entities_autocomplete')
+@login_required
+def entities_autocomplete():
+    """
+    Fast endpoint for UI dropdowns. Searches the browse_cache for partial entity matches.
+    Can optionally be filtered by a specific label.
+    """
+    query = request.args.get('q', '').strip()
+    label_filter = request.args.get('label', '').strip()
+    
+    if not query or len(query) < 2:
+        return jsonify([])
+        
+    db = get_db()
+    
+    sql = "SELECT entity_text as text, entity_label as label, appearance_count as count FROM browse_cache WHERE entity_text LIKE ?"
+    params = [f"%{query}%"]
+    
+    if label_filter:
+        sql += " AND entity_label = ?"
+        params.append(label_filter)
+        
+    # Sort by how common it is, then alphabetical, limit to 10 for quick dropdown rendering
+    sql += " ORDER BY appearance_count DESC, entity_text COLLATE NOCASE ASC LIMIT 10"
+    
+    results = db.execute(sql, params).fetchall()
+    return jsonify([dict(row) for row in results])
+# --- END OF NEW ---
+
 @api_bp.route('/search')
 @login_required
 def api_global_search():

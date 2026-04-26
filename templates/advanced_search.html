@@ -1,0 +1,309 @@
+<!-- File: ./templates/advanced_search.html -->
+{% extends 'layout.html' %}
+{% block title %}Advanced Search - Redleaf{% endblock %}
+
+{% block head_extra %}
+<style>
+    /* Add specific styling for the entity autocomplete dropdowns */
+    .entity-autocomplete-wrapper { position: relative; flex: 2; }
+    .autocomplete-items {
+        position: absolute;
+        border: 1px solid var(--border-color);
+        border-top: none;
+        z-index: 99;
+        top: 100%;
+        left: 0;
+        right: 0;
+        max-height: 200px;
+        overflow-y: auto;
+        background-color: var(--background-light);
+        border-radius: 0 0 4px 4px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+    }
+    .autocomplete-items div {
+        padding: 10px;
+        cursor: pointer;
+        border-bottom: 1px solid var(--border-color);
+        display: flex;
+        justify-content: space-between;
+    }
+    .autocomplete-items div:last-child {
+        border-bottom: none;
+    }
+    .autocomplete-items div:hover, .autocomplete-items div.autocomplete-active {
+        background-color: #4f4f4a;
+    }
+    .ac-label {
+        font-size: 0.8em;
+        color: var(--text-muted);
+        text-transform: uppercase;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="breadcrumb">
+    <a href="{{ url_for('main.discover_view') }}">Discovery</a> /
+    <span>Advanced Search</span>
+</div>
+
+<div class="page-heading">
+    <h1>Advanced Search</h1>
+</div>
+
+<div class="panel">
+    <div class="panel-body">
+        <p class="text-muted">Combine filters to narrow down your results. You can leave fields blank if you don't want to filter by them.</p>
+        
+        <form action="{{ url_for('main.search_results') }}" method="get">
+            <div class="row">
+                <div class="col-md-12 form-group">
+                    <label for="q" class="form-label">Content Keyword (Full-Text Search)</label>
+                    <input type="search" name="q" id="q" class="form-control" placeholder="Search inside the document text...">
+                </div>
+            </div>
+
+            <div class="row mt-2">
+                <div class="col-md-4 form-group">
+                    <label for="title" class="form-label">Document Title / File Path</label>
+                    <input type="text" name="title" id="title" class="form-control" placeholder="e.g. transcript, report">
+                </div>
+                
+                <div class="col-md-4 form-group">
+                    <label for="catalog_id" class="form-label">Limit to Collection</label>
+                    <select name="catalog_id" id="catalog_id" class="form-control">
+                        <option value="">-- All Documents --</option>
+                        {% for catalog in catalogs %}
+                        <option value="{{ catalog.id }}">{{ catalog.name | e }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="col-md-4 form-group">
+                    <label for="tag_name" class="form-label">Limit to Tag</label>
+                    <select name="tag_name" id="tag_name" class="form-control">
+                        <option value="">-- All Tags --</option>
+                        {% for tag in tags %}
+                        <option value="{{ tag.name }}">{{ tag.name | e }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+
+            <!-- === NEW: ENTITY SEARCH BUILDER WITH AUTOCOMPLETE === -->
+            <div class="row mt-3">
+                <div class="col-md-12 form-group">
+                    <label class="form-label" style="color: var(--text-light);">Required Entities (Must appear in document)</label>
+                    <div id="entity-filters-container">
+                        <div class="entity-filter-row d-flex gap-2 mb-2">
+                            <div class="entity-autocomplete-wrapper">
+                                <input type="text" name="entity_text" class="form-control entity-input" placeholder="Start typing an entity (e.g. Bill Murray)" autocomplete="off">
+                            </div>
+                            <select name="entity_label" class="form-control entity-label-select" style="flex: 1;">
+                                <option value="">-- Any Entity Type --</option>
+                                <option value="PERSON">Person</option>
+                                <option value="ORG">Organization</option>
+                                <option value="GPE">Geopolitical Entity (GPE)</option>
+                                <option value="LOC">Location (LOC)</option>
+                                <option value="DATE">Date</option>
+                                <option value="EVENT">Event</option>
+                                <option value="NORP">Nat/Rel/Pol Group (NORP)</option>
+                                <option value="WORK_OF_ART">Work of Art</option>
+                            </select>
+                            <button type="button" class="button remove-entity-btn" style="display: none;" title="Remove Entity">×</button>
+                        </div>
+                    </div>
+                    <button type="button" id="add-entity-btn" class="button button-small mt-1">+ Add Another Entity</button>
+                </div>
+            </div>
+            <!-- === END ENTITY SEARCH BUILDER === -->
+            
+            <div class="row mt-4">
+                <div class="col-md-12 form-group">
+                    <label class="form-label">Limit to Document Types</label>
+                    <div class="d-flex gap-3" style="flex-wrap: wrap;">
+                        {% for type in all_types %}
+                        <label style="cursor: pointer; display: flex; align-items: center; gap: 4px; color: var(--text-light); user-select: none;">
+                            <input type="checkbox" name="type" value="{{ type }}">
+                            <span class="chip" style="margin:0;">{{ type }}</span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                    <small class="text-muted mt-1 d-block">Leave all unchecked to search all types.</small>
+                    <input type="hidden" name="filtered" value="true">
+                </div>
+            </div>
+
+            <div class="mt-4 pt-3" style="border-top: 1px solid var(--border-color);">
+                <button class="button button-primary" type="submit">Run Advanced Search</button>
+                <a href="{{ url_for('main.discover_view') }}" class="button ms-2">Cancel</a>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const container = document.getElementById('entity-filters-container');
+    const addBtn = document.getElementById('add-entity-btn');
+
+    // === ROW MANAGEMENT LOGIC ===
+    addBtn.addEventListener('click', () => {
+        const firstRow = container.querySelector('.entity-filter-row');
+        const newRow = firstRow.cloneNode(true);
+        
+        // Clear the inputs and remove any autocomplete lists that got cloned
+        const input = newRow.querySelector('input');
+        input.value = '';
+        newRow.querySelector('select').value = '';
+        const oldLists = newRow.querySelectorAll('.autocomplete-items');
+        oldLists.forEach(list => list.remove());
+        
+        newRow.querySelector('.remove-entity-btn').style.display = 'inline-block';
+        container.appendChild(newRow);
+        updateRemoveButtons();
+        
+        // Re-bind autocomplete to the new input
+        bindAutocomplete(input);
+    });
+
+    container.addEventListener('click', (e) => {
+        if (e.target.classList.contains('remove-entity-btn')) {
+            e.target.closest('.entity-filter-row').remove();
+            updateRemoveButtons();
+        }
+    });
+
+    function updateRemoveButtons() {
+        const rows = container.querySelectorAll('.entity-filter-row');
+        rows.forEach((row) => {
+            const btn = row.querySelector('.remove-entity-btn');
+            if (rows.length === 1) btn.style.display = 'none';
+            else btn.style.display = 'inline-block';
+        });
+    }
+
+    // === AUTOCOMPLETE LOGIC ===
+    // This connects directly to the existing discovery API route
+    let debounceTimer;
+
+    function bindAutocomplete(inputElement) {
+        let currentFocus;
+
+        inputElement.addEventListener("input", function(e) {
+            clearTimeout(debounceTimer);
+            let val = this.value;
+            closeAllLists();
+            if (!val || val.length < 2) return false;
+
+            currentFocus = -1;
+
+            // Debounce the API call to avoid spamming the server
+            debounceTimer = setTimeout(async () => {
+                let a = document.createElement("DIV");
+                a.setAttribute("id", this.id + "autocomplete-list");
+                a.setAttribute("class", "autocomplete-items");
+                this.parentNode.appendChild(a);
+
+                try {
+                    // We search the 'ALL' label category by default if the user hasn't picked one
+                    const selectEl = this.closest('.entity-filter-row').querySelector('.entity-label-select');
+                    const labelFilter = selectEl.value;
+                    
+                    // We can reuse the existing discovery endpoint. We'll search 'PERSON' first as a default,
+                    // but really we want to search all if possible. For simplicity here, we hit the exact API path.
+                    // If labelFilter is empty, we just query the database for anything matching the string.
+                    // Since Redleaf doesn't have a global autocomplete endpoint yet, we will fetch from the
+                    // /api/search/documents endpoint or create a small fetch wrapper.
+                    
+                    // Actually, the simplest way is to hit the discovery list endpoint. 
+                    // To do a global entity search, we need a small helper.
+                    
+                    const response = await fetch(`/api/search/entities_autocomplete?q=${encodeURIComponent(val)}&label=${encodeURIComponent(labelFilter)}`);
+                    
+                    // If the endpoint doesn't exist yet, we will fail gracefully.
+                    if (!response.ok) throw new Error("Endpoint missing");
+                    
+                    const data = await response.json();
+                    
+                    if (data.length === 0) {
+                        closeAllLists();
+                        return;
+                    }
+
+                    data.forEach(item => {
+                        let b = document.createElement("DIV");
+                        // Make the matching letters bold
+                        const regex = new RegExp(`(${val})`, "gi");
+                        const highlightedText = item.text.replace(regex, "<strong>$1</strong>");
+                        
+                        b.innerHTML = `<span>${highlightedText}</span><span class="ac-label">${item.label}</span>`;
+                        b.innerHTML += `<input type='hidden' value='${item.text.replace(/'/g, "&#39;")}'>`;
+                        b.innerHTML += `<input type='hidden' class='label-val' value='${item.label}'>`;
+                        
+                        b.addEventListener("click", function(e) {
+                            inputElement.value = this.getElementsByTagName("input")[0].value;
+                            // Auto-set the select box to match the chosen entity's label
+                            const labelVal = this.getElementsByClassName("label-val")[0].value;
+                            if (labelVal) selectEl.value = labelVal;
+                            
+                            closeAllLists();
+                        });
+                        a.appendChild(b);
+                    });
+                } catch (err) {
+                    console.log("Autocomplete fetch error. The backend endpoint may need to be added.", err);
+                }
+            }, 300);
+        });
+
+        inputElement.addEventListener("keydown", function(e) {
+            let x = document.getElementById(this.id + "autocomplete-list");
+            if (x) x = x.getElementsByTagName("div");
+            if (e.keyCode == 40) { // Down
+                currentFocus++;
+                addActive(x);
+            } else if (e.keyCode == 38) { // Up
+                currentFocus--;
+                addActive(x);
+            } else if (e.keyCode == 13) { // Enter
+                e.preventDefault();
+                if (currentFocus > -1) {
+                    if (x) x[currentFocus].click();
+                }
+            }
+        });
+
+        function addActive(x) {
+            if (!x) return false;
+            removeActive(x);
+            if (currentFocus >= x.length) currentFocus = 0;
+            if (currentFocus < 0) currentFocus = (x.length - 1);
+            x[currentFocus].classList.add("autocomplete-active");
+        }
+        function removeActive(x) {
+            for (let i = 0; i < x.length; i++) {
+                x[i].classList.remove("autocomplete-active");
+            }
+        }
+        function closeAllLists(elmnt) {
+            let x = document.getElementsByClassName("autocomplete-items");
+            for (let i = 0; i < x.length; i++) {
+                if (elmnt != x[i] && elmnt != inputElement) {
+                    x[i].parentNode.removeChild(x[i]);
+                }
+            }
+        }
+        document.addEventListener("click", function (e) {
+            closeAllLists(e.target);
+        });
+    }
+
+    // Initialize autocomplete on the first row
+    bindAutocomplete(container.querySelector('.entity-input'));
+});
+</script>
+{% endblock %}

@@ -1,14 +1,33 @@
 <!-- File: ./templates/search_results.html -->
 
 {% extends 'layout.html' %}
-{% block title %}Search: {{ query }}{% endblock %}
+{% block title %}Search Results - Redleaf{% endblock %}
 
 {% block content %}
 <div class="page-heading">
     <h1>Search Results</h1>
 </div>
 
-<h3>Results for: <mark>{{ query }}</mark></h3>
+<h3 style="font-size: 1.2em; line-height: 1.6;">
+    Results 
+    {% if query %} for text: <mark>{{ query }}</mark>{% endif %}
+    {% if title_query %} in paths matching: <mark>{{ title_query }}</mark>{% endif %}
+    {% if catalog_id %} within specific collection{% endif %}
+    {% if tag_name %} tagged with: <mark>{{ tag_name }}</mark>{% endif %}
+    
+    {% if entity_filters %}
+        <br>
+        <span style="font-size: 0.85em; font-weight: normal; color: var(--text-muted);">
+            Required Entities: 
+            {% for ent in entity_filters %}
+                <span class="chip" style="color: var(--text-light); border: 1px solid var(--border-color);">
+                    {{ ent.text }} 
+                    {% if ent.label %}<small class="text-muted">({{ ent.label }})</small>{% endif %}
+                </span>
+            {% endfor %}
+        </span>
+    {% endif %}
+</h3>
 
 {# --- NEW: Filter Checkboxes left of the Sort buttons, aligned right --- #}
 {% if results or all_types %}
@@ -46,6 +65,17 @@
     <!-- --- PAGINATION CONTROLS --- -->
     {# We build a query string to preserve the active filters when clicking Next/Prev #}
     {% set filter_qs = "&filtered=true" %}
+    {% if title_query %}{% set filter_qs = filter_qs ~ "&title=" ~ title_query %}{% endif %}
+    {% if catalog_id %}{% set filter_qs = filter_qs ~ "&catalog_id=" ~ catalog_id %}{% endif %}
+    {% if tag_name %}{% set filter_qs = filter_qs ~ "&tag_name=" ~ tag_name %}{% endif %}
+    
+    {% if entity_filters %}
+        {% for ent in entity_filters %}
+            {% set filter_qs = filter_qs ~ "&entity_text=" ~ ent.text|urlencode %}
+            {% set filter_qs = filter_qs ~ "&entity_label=" ~ ent.label|urlencode %}
+        {% endfor %}
+    {% endif %}
+
     {% for t in selected_types %}
         {% set filter_qs = filter_qs ~ "&type=" ~ t %}
     {% endfor %}
@@ -55,7 +85,7 @@
         
         <div class="toolbar">
             {% if page > 1 %}
-                <a href="{{ url_for('main.search_results', q=query, page=page-1) }}{{ filter_qs }}" class="button button-small">« Previous</a>
+                <a href="{{ url_for('main.search_results', q=query, title=title_query, catalog_id=catalog_id, tag_name=tag_name, page=page-1) }}{{ filter_qs }}" class="button button-small">« Previous</a>
             {% else %}
                 <button class="button button-small disabled" disabled>« Previous</button>
             {% endif %}
@@ -63,7 +93,7 @@
             <span class="mx-2 text-muted" style="line-height: 2;">Page {{ page }}</span>
 
             {% if has_next %}
-                <a href="{{ url_for('main.search_results', q=query, page=page+1) }}{{ filter_qs }}" class="button button-small">Next »</a>
+                <a href="{{ url_for('main.search_results', q=query, title=title_query, catalog_id=catalog_id, tag_name=tag_name, page=page+1) }}{{ filter_qs }}" class="button button-small">Next »</a>
             {% else %}
                 <button class="button button-small disabled" disabled>Next »</button>
             {% endif %}
