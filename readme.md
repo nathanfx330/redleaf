@@ -17,7 +17,6 @@ Built for researchers, archivists, and knowledge workers, Redleaf makes it easy 
 * [Why Redleaf?](#-why-redleaf)
 * [Key Features](#-key-features)
 * [Workflows: Building Your Knowledge Base](#-workflows-building-your-knowledge-base)
-
   * [A. The Dashboard Workflow (Simple & Interactive)](#a-the-dashboard-workflow-simple--interactive)
   * [B. The DuckDB Pipeline (Advanced & High-Throughput)](#b-the-duckdb-pipeline-advanced--high-throughput)
 * [Distributing Knowledge: The Precomputed Model](#-distributing-knowledge-the-precomputed-model)
@@ -48,6 +47,7 @@ Modern researchers often face hundreds of scattered PDFs, transcripts, and notes
 * 🎙️ **Transcript & Media Sync** – Auto-scrolls `.srt` transcripts while playing media.
 * ☁️ **Cloud Media Linking** – Seamlessly connect transcripts to media on Archive.org.
 * 🔍 **Hybrid Search** – FTS5 + semantic search + embedding vectors.
+* 🔎 **Advanced Search & Entity Intersection** – Combine full-text keywords, collections, document types, custom tags, and required NLP entities (e.g., find pages mentioning *both* "Bill Murray" and "Santa Monica").
 * 🕸️ **Knowledge Graph** – Automatic entity + relationship extraction using spaCy.
 * 📈 **Entity Profiling & Boosting** – View full entity profiles and manually boost relationships to curate the graph.
 * ⚡ **GPU Acceleration Optional** – CUDA for embeddings & NLP.
@@ -219,9 +219,30 @@ Then go to:
 
 **MIT License**
 
+Copyright (c) 2026 Nathaniel Westveer
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
 ---
 
 ## About the Developer
 
 Created by **Nathaniel Westveer**.
 Free to use, distribute, and modify.
+```
