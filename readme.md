@@ -47,7 +47,7 @@ Modern researchers often face hundreds of scattered PDFs, transcripts, and notes
 * 🎙️ **Transcript & Media Sync** – Auto-scrolls `.srt` transcripts while playing media.
 * ☁️ **Cloud Media Linking** – Seamlessly connect transcripts to media on Archive.org.
 * 🔍 **Hybrid Search** – FTS5 + semantic search + embedding vectors.
-* 🔎 **Advanced Search & Entity Intersection** – Combine full-text keywords, collections, document types, custom tags, and required NLP entities (e.g., find pages mentioning *both* "Bill Murray" and "Santa Monica").
+* 🔎 **Advanced Search & Entity Intersection** – Combine full-text keywords, collections, document types, custom tags, and required NLP entities.
 * 🕸️ **Knowledge Graph** – Automatic entity + relationship extraction using spaCy.
 * 📈 **Entity Profiling & Boosting** – View full entity profiles and manually boost relationships to curate the graph.
 * ⚡ **GPU Acceleration Optional** – CUDA for embeddings & NLP.
