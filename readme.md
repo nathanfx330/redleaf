@@ -245,4 +245,3 @@ SOFTWARE.
 
 Created by **Nathaniel Westveer**.
 Free to use, distribute, and modify.
-```
