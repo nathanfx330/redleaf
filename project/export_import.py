@@ -145,9 +145,9 @@ def import_knowledge_package(package_path: Path):
             if conn_import: conn_import.close()
 
         # Step 4: Trigger background tasks to update the UI
-        task_queue.put(('discover', None))
+        # We removed 'discover' here so the imported items don't get auto-trashed before the user can set up .rlinks!
         task_queue.put(('cache', None))
-        print("Queued discovery and browse cache update.")
+        print("Queued browse cache update.")
         return True, f"Import successful! {len(manifest.get('files',[]))} documents were merged into your knowledge base."
             
     except Exception as e:
