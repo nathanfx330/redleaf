@@ -1,4 +1,4 @@
-<!-- File: ./templates/dashboard.html (FINAL + NO CACHE FREEZE) -->
+<!-- File: ./templates/dashboard.html (FINAL + APPLY BUTTON + CLEAN UI) -->
 {% extends 'layout.html' %}
 {% block title %}Dashboard - Redleaf{% endblock %}
 
@@ -92,7 +92,7 @@
     <div class="d-flex align-items-center">
         <div id="dashboard-type-filters" class="me-4 align-items-center" style="display: none;">
             <span class="text-muted me-2" style="font-size: 0.85em; font-weight: bold; text-transform: uppercase;" id="filter-label-display">Filter Type:</span>
-            <div id="type-checkboxes-container" class="d-flex gap-2" style="flex-wrap: wrap;">
+            <div id="type-checkboxes-container" class="d-flex gap-2 align-items-center" style="flex-wrap: wrap;">
                 <!-- JS will populate checkboxes here -->
             </div>
         </div>
@@ -213,7 +213,7 @@ document.addEventListener('DOMContentLoaded', () => {
         perPage: {{ initial_data.per_page }},
         sort: initialSort, 
         typeFilters: null, 
-        statusFilters: null, 
+        statusFilters: {{ initial_data.selected_statuses | tojson }} || (initialSort.key === 'status' ? ['Queued', 'Indexing', 'Indexed', 'Error'] : null), 
         isLoading: false,
     };
 
@@ -245,7 +245,7 @@ document.addEventListener('DOMContentLoaded', () => {
         total_documents: state.totalDocs,
         all_types: {{ initial_data.all_types | tojson }},
         selected_types: {{ initial_data.selected_types | tojson }},
-        selected_statuses: null,
+        selected_statuses: state.statusFilters,
         queue_size: {{ initial_data.queue_size }},
         task_states: {{ initial_data.task_states | tojson }}
     });
@@ -287,6 +287,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 `;
                 checkboxContainer.insertAdjacentHTML('beforeend', html);
             });
+            checkboxContainer.insertAdjacentHTML('beforeend', '<button id="apply-filters-btn" class="button button-small ms-2">Apply</button>');
         } 
         else if (state.sort.key === 'status') {
             filterContainer.style.setProperty('display', 'flex', 'important');
@@ -294,18 +295,20 @@ document.addEventListener('DOMContentLoaded', () => {
             checkboxContainer.innerHTML = '';
             
             const allStatuses = ['New', 'Queued', 'Indexing', 'Indexed', 'Error'];
-            const currentSelected = selectedStatuses || allStatuses;
+            const defaultStatuses = ['Queued', 'Indexing', 'Indexed', 'Error']; // 'New' omitted by default
+            const currentSelected = selectedStatuses || defaultStatuses;
             
             allStatuses.forEach(status => {
                 const isChecked = currentSelected.includes(status) ? 'checked' : '';
                 const html = `
                     <label style="cursor: pointer; display: flex; align-items: center; gap: 4px; font-size: 0.85em; margin-bottom: 0; color: var(--text-light); user-select: none;">
                         <input type="checkbox" class="dash-status-filter" value="${status}" ${isChecked}>
-                        <span class="status-${status}" style="margin:0; font-weight: bold;">${status}</span>
+                        <span class="chip" style="margin:0;">${status}</span>
                     </label>
                 `;
                 checkboxContainer.insertAdjacentHTML('beforeend', html);
             });
+            checkboxContainer.insertAdjacentHTML('beforeend', '<button id="apply-filters-btn" class="button button-small ms-2">Apply</button>');
         }
         else {
             filterContainer.style.setProperty('display', 'none', 'important');
@@ -382,7 +385,6 @@ document.addEventListener('DOMContentLoaded', () => {
         const cacheKey = getCacheKey();
 
         // 1. Check Cache (Only for user actions, not polling)
-        // --- START FIX: Only use cache if queue size is actually 0 ---
         if (!isPoll && dashboardCache.has(cacheKey)) {
             const cachedData = dashboardCache.get(cacheKey);
             if (cachedData && cachedData.queue_size === 0) {
@@ -390,7 +392,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
         }
-        // --- END FIX ---
 
         if (!isPoll) {
             state.isLoading = true;
@@ -420,7 +421,6 @@ document.addEventListener('DOMContentLoaded', () => {
             updateUI(data);
 
             // 3. Smart Caching
-            // --- FIX: Cache management is now safer ---
             if (data.queue_size === 0) {
                 dashboardCache.set(cacheKey, data);
             } else {
@@ -440,16 +440,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- Event Listeners ---
     
-    checkboxContainer.addEventListener('change', (e) => {
-        if (e.target.classList.contains('dash-type-filter')) {
-            const checkedBoxes = Array.from(document.querySelectorAll('.dash-type-filter:checked'));
-            state.typeFilters = checkedBoxes.map(cb => cb.value);
-            state.currentPage = 1;
-            fetchDashboardData({ isPoll: false });
-        }
-        if (e.target.classList.contains('dash-status-filter')) {
-            const checkedBoxes = Array.from(document.querySelectorAll('.dash-status-filter:checked'));
-            state.statusFilters = checkedBoxes.map(cb => cb.value);
+    // NEW: "Apply" Button logic
+    filterContainer.addEventListener('click', (e) => {
+        if (e.target.id === 'apply-filters-btn') {
+            if (state.sort.key === 'file_type') {
+                const checkedBoxes = Array.from(document.querySelectorAll('.dash-type-filter:checked'));
+                state.typeFilters = checkedBoxes.map(cb => cb.value);
+            } else if (state.sort.key === 'status') {
+                const checkedBoxes = Array.from(document.querySelectorAll('.dash-status-filter:checked'));
+                state.statusFilters = checkedBoxes.map(cb => cb.value);
+            }
             state.currentPage = 1;
             fetchDashboardData({ isPoll: false });
         }
@@ -484,7 +484,11 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (state.sort.key !== 'status') {
             state.statusFilters = null;
+        } else if (state.statusFilters === null) {
+            // Set initial default filters for status (Omitting 'New')
+            state.statusFilters = ['Queued', 'Indexing', 'Indexed', 'Error'];
         }
+        
         // Hide the filter container if neither is active
         if (state.sort.key !== 'file_type' && state.sort.key !== 'status') {
             filterContainer.style.setProperty('display', 'none', 'important');
