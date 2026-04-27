@@ -26,7 +26,7 @@ def create_unified_index(db_path, is_bake_operation=False):
         );
     """)
     # Set default values for settings
-    cursor.execute("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('max_workers', '2');")
+    cursor.execute("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('max_workers', '1');")
     cursor.execute("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('html_parsing_mode', 'generic');")
     cursor.execute("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('use_gpu', 'false');")
 

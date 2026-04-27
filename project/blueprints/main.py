@@ -34,12 +34,23 @@ def dashboard():
     # first page of data immediately and render it into the HTML.
     # This makes the dashboard feel instant.
     
+    # --- START OF FIX: Read status filters from URL for SSR ---
+    status_filters = None
+    if 'status' in request.args:
+        status_filters = request.args.getlist('status')
+    # --- END OF FIX ---
+    
+    # Check if a sort key was passed in the URL (used when redirecting after Process)
+    sort_key = request.args.get('sort_key', 'relative_path')
+    sort_dir = request.args.get('sort_dir', 'asc')
+
     initial_data = fetch_dashboard_data(
         user_id=g.user['id'],
         page=1, 
-        per_page=50, 
-        sort_key='relative_path', 
-        sort_dir='asc'
+        per_page=25, 
+        sort_key=sort_key, 
+        sort_dir=sort_dir,
+        status_filters=status_filters # Pass to fetch function
     )
     
     form = SecureForm()
@@ -68,17 +79,30 @@ def dashboard_process_all_new():
     if not doc_ids:
         flash("No 'New' documents found to process.", "info")
     else:
+        # --- FIX: Update DB immediately so UI reflects the queue instantly ---
+        db.execute("UPDATE documents SET status = 'Queued', status_message = 'Pending assignment' WHERE status = 'New'")
+        db.commit()
+
         for doc_id in doc_ids:
             task_queue.put(('process', doc_id))
         flash(f"Queued {len(doc_ids)} documents for processing.", "success")
-    return redirect(url_for('main.dashboard'))
+        
+    # --- START OF FIX: Use Smart Sort to push active tasks to the top without hiding 'New' docs ---
+    return redirect(url_for('main.dashboard', sort_key='status', sort_dir='asc'))
 
 @main_bp.route('/dashboard/process/<int:doc_id>')
 @login_required
 def dashboard_process_single(doc_id):
+    db = get_db()
+    # --- FIX: Update DB immediately so UI reflects the queue instantly ---
+    db.execute("UPDATE documents SET status = 'Queued', status_message = 'Pending assignment' WHERE id = ?", (doc_id,))
+    db.commit()
+    
     task_queue.put(('process', doc_id))
     flash(f"Queued document ID {doc_id} for re-processing.", "info")
-    return redirect(url_for('main.dashboard'))
+    
+    # --- START OF FIX: Use Smart Sort to push active tasks to the top without hiding 'New' docs ---
+    return redirect(url_for('main.dashboard', sort_key='status', sort_dir='asc'))
 
 @main_bp.route('/dashboard/update_cache')
 @login_required

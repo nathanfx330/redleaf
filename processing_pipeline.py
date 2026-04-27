@@ -20,10 +20,9 @@ import ollama
 import numpy as np
 
 # --- Configuration ---
-# FIXED: Importing resolve_document_path directly from config
-from project.config import EMBEDDING_MODEL, resolve_document_path
-DATABASE_FILE = "knowledge_base.db"
-DOCUMENTS_DIR = Path("./documents").resolve()
+# FIXED: Importing absolute paths directly from config to prevent worker displacement
+from project.config import EMBEDDING_MODEL, resolve_document_path, DATABASE_FILE, DOCUMENTS_DIR
+
 SPACY_MODEL = "en_core_web_lg"
 CHUNK_SIZE = 400
 CHUNK_OVERLAP = 50

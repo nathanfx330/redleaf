@@ -14,7 +14,7 @@ import processing_pipeline
 # === SHARED DATA FETCHING LOGIC (Used by API & Main Route) ===
 # ==============================================================================
 
-def fetch_dashboard_data(user_id, page=1, per_page=50, sort_key='relative_path', sort_dir='asc', type_filters=None):
+def fetch_dashboard_data(user_id, page=1, per_page=25, sort_key='relative_path', sort_dir='asc', type_filters=None, status_filters=None):
     """
     Shared function to fetch dashboard documents and status.
     This allows both the API (for AJAX) and the Main Route (for SSR) to use the same logic.
@@ -43,7 +43,7 @@ def fetch_dashboard_data(user_id, page=1, per_page=50, sort_key='relative_path',
 
     offset = (page - 1) * per_page
     
-    # --- START OF FIX: Build dynamic WHERE clause for file types ---
+    # --- START OF FIX: Build dynamic WHERE clause for file types and statuses ---
     where_clause = "d.status != 'Missing'"
     params = [user_id]
     
@@ -52,6 +52,12 @@ def fetch_dashboard_data(user_id, page=1, per_page=50, sort_key='relative_path',
         placeholders = ','.join(['?'] * len(type_filters))
         where_clause += f" AND (d.file_type IN ({placeholders}) OR d.file_type IS NULL)"
         params.extend(type_filters)
+
+    if status_filters and isinstance(status_filters, list):
+        # Filter by specific processing statuses (e.g. 'Queued', 'Indexing')
+        placeholders = ','.join(['?'] * len(status_filters))
+        where_clause += f" AND d.status IN ({placeholders})"
+        params.extend(status_filters)
         
     count_params = params[1:] # count query doesn't need user_id
     # --- END OF FIX ---
@@ -97,6 +103,7 @@ def fetch_dashboard_data(user_id, page=1, per_page=50, sort_key='relative_path',
         'per_page': per_page,
         'all_types': all_types,
         'selected_types': type_filters if type_filters is not None else all_types,
+        'selected_statuses': status_filters,
         'queue_size': state_data['queue_size'],
         'task_states': state_data['task_states']
     }
@@ -113,17 +120,21 @@ def dashboard_status():
     Now just a wrapper around the shared fetch function.
     """
     page = request.args.get('page', 1, type=int)
-    per_page = request.args.get('per_page', 50, type=int)
+    per_page = request.args.get('per_page', 25, type=int)
     sort_key = request.args.get('sort_key', 'relative_path')
     sort_dir = request.args.get('sort_dir', 'asc')
     
-    # --- START OF FIX: Extract file type filters from the URL ---
     type_filters = None
     if 'filtered' in request.args:
         type_filters = request.args.getlist('type')
+        
+    # --- START OF FIX: Extract status filters from the URL ---
+    status_filters = None
+    if 'status' in request.args:
+        status_filters = request.args.getlist('status')
     # --- END OF FIX ---
     
-    data = fetch_dashboard_data(g.user['id'], page, per_page, sort_key, sort_dir, type_filters)
+    data = fetch_dashboard_data(g.user['id'], page, per_page, sort_key, sort_dir, type_filters, status_filters)
     return jsonify(data)
 
 @api_bp.route('/documents_by_tags')

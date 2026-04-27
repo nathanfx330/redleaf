@@ -17,7 +17,7 @@ from curator_pipeline import get_db_conn, load_spacy_model
 
 def main():
     parser = argparse.ArgumentParser(description="Run the Redleaf Curator Processing Pipeline.")
-    parser.add_argument('-w', '--workers', type=int, default=2, help="Number of parallel worker threads.")
+    parser.add_argument('-w', '--workers', type=int, default=1, help="Number of parallel worker threads.")
     parser.add_argument('--retry-errors', action='store_true', help="Include documents in 'Error' state.")
     # ================= START OF FIX =================
     parser.add_argument('--gpu', action='store_true', help="Enable GPU acceleration for spaCy.")

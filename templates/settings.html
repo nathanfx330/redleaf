@@ -189,8 +189,8 @@
                 <div class="panel-body">
                     <h5>Worker Configuration</h5>
                     <p class="text-muted">
-                        Adjust the number of parallel processes for document processing. While you have <strong>{{ cpu_count or 'N/A' }}</strong> cores, <strong>a value of 2 is recommended for optimal performance.</strong>
-                        <br>Due to SQLite's write limitations, setting this higher often leads to database lock errors and <i>slower</i> overall processing, not faster. Each worker also consumes significant RAM (800MB+).
+                        Adjust the number of parallel processes for document processing. <strong>A value of 1 is highly recommended.</strong>
+                        <br>Because SQLite handles writes like a single tollbooth on a highway, adding more workers forces them to wait in line. This leads to database lock errors and <i>slower</i> overall processing, not faster. Each worker also consumes significant RAM (800MB+).
                     </p>
                     <form action="{{ url_for('settings.update_workers') }}" method="POST" class="d-flex align-items-center gap-3">
                         {{ form.hidden_tag() }}

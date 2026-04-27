@@ -7,6 +7,8 @@ import threading
 import traceback
 import functools
 import sqlite3
+import atexit
+import multiprocessing # <--- ADDED IMPORT
 from concurrent.futures import ProcessPoolExecutor, CancelledError
 from flask import current_app
 
@@ -18,19 +20,20 @@ except ImportError:
 
 import processing_pipeline
 import spacy 
-from .config import REASONING_MODEL # <--- Added Import
+from .config import REASONING_MODEL
 
 task_queue = queue.Queue()
 active_tasks = {}
 active_tasks_lock = threading.Lock()
 executor = None
 restart_executor_event = threading.Event()
+# --- ADDED: Event to signal graceful shutdown ---
+shutdown_event = threading.Event() 
 
 def get_system_settings():
     """Reads all settings from the database and returns them as a dict."""
-    # Added reasoning_model to defaults
     defaults = {
-        'max_workers': 2, 
+        'max_workers': 1, 
         'use_gpu': False, 
         'html_parsing_mode': 'generic',
         'reasoning_model': REASONING_MODEL
@@ -51,7 +54,6 @@ def get_system_settings():
         if db_settings.get('html_parsing_mode') in ['generic', 'pipermail']:
             settings['html_parsing_mode'] = db_settings['html_parsing_mode']
             
-        # Check for custom model setting
         if db_settings.get('reasoning_model'):
             settings['reasoning_model'] = db_settings.get('reasoning_model')
             
@@ -77,13 +79,27 @@ def init_worker(use_gpu=False):
         print(f"FATAL ERROR initializing spaCy in worker {os.getpid()}: {e}")
         raise
 
+# --- ADDED: Graceful shutdown handler ---
+def cleanup_executor():
+    global executor
+    shutdown_event.set()
+    if executor is not None:
+        print("\n--- Shutting down background workers gracefully... ---")
+        executor.shutdown(wait=False, cancel_futures=True)
+        executor = None
+        print("--- Background workers terminated. ---")
+
+# Register the cleanup function to run when Flask exits
+atexit.register(cleanup_executor)
+
 def manager_thread_loop():
     """The main loop for the background task manager thread."""
     global executor, active_tasks
     print("--- Task Manager Thread Started ---")
     current_settings = get_system_settings()
 
-    while True:
+    # --- FIX: Check shutdown_event instead of while True ---
+    while not shutdown_event.is_set():
         try:
             if restart_executor_event.is_set() and not active_tasks:
                 print("--- Restarting Process Pool Executor... ---")
@@ -93,13 +109,19 @@ def manager_thread_loop():
                 restart_executor_event.clear()
                 current_settings = get_system_settings()
 
-            if executor is None:
+            if executor is None and not shutdown_event.is_set():
                 print(f"Manager: Creating new ProcessPoolExecutor with {current_settings['max_workers']} workers. GPU: {current_settings['use_gpu']}")
                 initializer_func = functools.partial(init_worker, use_gpu=current_settings['use_gpu'])
+                
+                # --- START OF FIX: Force 'spawn' context ---
+                ctx = multiprocessing.get_context('spawn')
                 executor = ProcessPoolExecutor(
                     max_workers=current_settings['max_workers'],
-                    initializer=initializer_func
+                    initializer=initializer_func,
+                    mp_context=ctx
                 )
+                # --- END OF FIX ---
+                
                 with active_tasks_lock:
                     active_tasks.clear()
 
@@ -111,12 +133,11 @@ def manager_thread_loop():
                 if task_type == 'process':
                     if active_process_count < current_settings['max_workers']:
                         print(f"Manager: Queuing Doc ID {item_id} for processing.")
-                        # The worker will now set its own 'Queued' and 'Indexing' status
                         future = executor.submit(processing_pipeline.process_document, item_id)
                         with active_tasks_lock:
                             active_tasks[future] = (task_type, item_id)
                     else:
-                        task_queue.put((task_type, item_id)) # Put it back if no free workers
+                        task_queue.put((task_type, item_id)) 
                 elif task_type in ['discover', 'cache']:
                     target_func = {'discover': processing_pipeline.discover_and_register_documents, 'cache': processing_pipeline.update_browse_cache}.get(task_type)
                     if target_func:
@@ -130,7 +151,10 @@ def manager_thread_loop():
 
             with active_tasks_lock:
                 if not active_tasks:
-                    time.sleep(1)
+                    # Break sleep into smaller chunks to stay responsive to shutdown events
+                    for _ in range(10):
+                        if shutdown_event.is_set(): break
+                        time.sleep(0.1)
                     continue
                 done_tasks = [task for task in active_tasks if (isinstance(task, threading.Thread) and not task.is_alive()) or (not isinstance(task, threading.Thread) and task.done())]
 
@@ -142,13 +166,12 @@ def manager_thread_loop():
                         finished_tasks_info.append(task_info)
                 if not isinstance(task, threading.Thread):
                     try:
-                        task.result() # Worker handles its own DB writes, we just check for errors
+                        task.result() 
                         print(f"Manager: Process task '{task_info[0]}' for item '{task_info[1]}' completed successfully.")
                     except Exception as e:
                         print(f"!!! MANAGER DETECTED A WORKER FAILURE for task '{task_info[0]}' on item '{task_info[1]}': {type(e).__name__} !!!")
                         if not isinstance(e, BrokenProcessPool):
                             print(traceback.format_exc())
-                        raise e
                 else:
                     print(f"Manager: Thread task '{task_info[0]}' completed.")
 
@@ -159,9 +182,13 @@ def manager_thread_loop():
                     print("Manager: Document processing finished. Automatically queueing browse cache update.")
                     task_queue.put(('cache', None))
 
-            time.sleep(1)
+            for _ in range(10):
+                if shutdown_event.is_set(): break
+                time.sleep(0.1)
             
         except (BrokenProcessPool, Exception) as e:
+            if shutdown_event.is_set():
+                break # We are shutting down, ignore the crash
             print(f"!!! MANAGER THREAD ENCOUNTERED AN ERROR: {e} !!!")
 
             with active_tasks_lock:
@@ -179,6 +206,8 @@ def manager_thread_loop():
             
             print("Manager: Pool marked for recreation. Restarting in 5 seconds...")
             time.sleep(5)
+            
+    print("--- Task Manager Thread Exited ---")
 
 def start_manager_thread(app):
     """Initializes and starts the background manager thread."""
