@@ -203,12 +203,12 @@ def api_advanced_search():
     
     # 1. Base Document Filters
     doc_where = ["d.status != 'Missing'"]
-    doc_params = []
+    doc_filter_params = []
     
     if file_types:
         placeholders = ','.join(['?'] * len(file_types))
         doc_where.append(f"d.file_type IN ({placeholders})")
-        doc_params.extend(file_types)
+        doc_filter_params.extend(file_types)
         
     doc_where_str = " AND ".join(doc_where)
     
@@ -221,6 +221,7 @@ def api_advanced_search():
 
     # 3. Entity Intersection
     entity_intersection_sql = ""
+    entity_params = []
     if entities:
         entity_intersection_sql = """
             SELECT ea0.doc_id, ea0.page_number 
@@ -237,10 +238,10 @@ def api_advanced_search():
         ent_where_clauses = []
         for i, ent in enumerate(entities):
             clause = f"e{i}.text LIKE ?"
-            doc_params.append(f"%{escape_like(ent.get('text', ''))}%")
+            entity_params.append(f"%{escape_like(ent.get('text', ''))}%")
             if ent.get('label'):
                 clause += f" AND e{i}.label = ?"
-                doc_params.append(ent['label'])
+                entity_params.append(ent['label'])
             ent_where_clauses.append(clause)
         entity_intersection_sql += " WHERE " + " AND ".join(ent_where_clauses)
 
@@ -248,7 +249,7 @@ def api_advanced_search():
     fetch_limit = limit
     
     if fts_query and entities:
-        sql_params = doc_params + [fts_query, fetch_limit]
+        sql_params = entity_params + doc_filter_params + [fts_query, fetch_limit]
         sql_query = f"""
             SELECT d.id as doc_id, d.relative_path, d.file_type, 
                    tm.page_number, tm.snippet
@@ -266,7 +267,7 @@ def api_advanced_search():
         db_results = db.execute(sql_query, sql_params).fetchall()
         
     elif fts_query:
-        sql_params = doc_params + [fts_query, fetch_limit]
+        sql_params = doc_filter_params + [fts_query, fetch_limit]
         sql_query = f"""
             SELECT d.id as doc_id, d.relative_path, d.file_type, 
                    tm.page_number, tm.snippet
@@ -283,7 +284,7 @@ def api_advanced_search():
         db_results = db.execute(sql_query, sql_params).fetchall()
         
     elif entities:
-        sql_params = doc_params + [fetch_limit]
+        sql_params = entity_params + doc_filter_params + [fetch_limit]
         sql_query = f"""
             SELECT d.id as doc_id, d.relative_path, d.file_type, 
                    tm.page_number, '' as snippet
