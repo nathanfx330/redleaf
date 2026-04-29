@@ -153,7 +153,10 @@ def read_specific_pages(db, sources: List[Dict[str, int]], MAX_CONTEXT_CHARS=320
         
         # --- FIX: Resolve the path ---
         resolved_path = resolve_document_path(info['relative_path'])
-        text = extract_text_for_copying(resolved_path, info['file_type'], start_page=src['page_number'], end_page=src['page_number'])
+        
+        # --- FIX: Pass doc_id to extractor ---
+        text = extract_text_for_copying(resolved_path, info['file_type'], start_page=src['page_number'], end_page=src['page_number'], doc_id=src['doc_id'])
+        
         doc_url = f"{REDLEAF_BASE_URL}/document/{src['doc_id']}"
         
         # --- INJECT HINT (The "Sticky Note" concept) ---
@@ -174,7 +177,9 @@ def get_page_content(db, doc_id: int, page_number: int) -> Tuple[str, Dict]:
     
     # --- FIX: Resolve the path ---
     resolved_path = resolve_document_path(doc['relative_path'])
-    page_text = extract_text_for_copying(resolved_path, doc['file_type'], start_page=page_number, end_page=page_number)
+    
+    # --- FIX: Pass doc_id to extractor ---
+    page_text = extract_text_for_copying(resolved_path, doc['file_type'], start_page=page_number, end_page=page_number, doc_id=doc_id)
     
     if not page_text.strip(): return f"Page {page_number} was found but contains no text.", None
     return page_text, dict(doc)
@@ -599,7 +604,9 @@ class BaseAssistant:
         
         # --- FIX: Resolve the path ---
         resolved_path = resolve_document_path(doc['relative_path'])
-        text = extract_text_for_copying(resolved_path, doc['file_type'], start_page=start, end_page=end)
+        
+        # --- FIX: Pass doc_id to extractor ---
+        text = extract_text_for_copying(resolved_path, doc['file_type'], start_page=start, end_page=end, doc_id=d_id)
         
         # --- FIX: Inject Metadata Header for Instruct Command ---
         doc_url = f"{REDLEAF_BASE_URL}/document/{d_id}"

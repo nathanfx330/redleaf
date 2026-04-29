@@ -63,22 +63,27 @@ def _paginate_text(text, words_per_page=300):
         page_content_map[1] = ""
     return page_content_map
 
-def extract_text_for_copying(doc_path: Path, file_type: str, start_page=None, end_page=None) -> str:
+# --- START OF FIX: Accept doc_id directly to bypass path guessing ---
+def extract_text_for_copying(doc_path: Path, file_type: str, start_page=None, end_page=None, doc_id=None) -> str:
     if file_type in ['TXT', 'HTML', 'SRT', 'EML']:
         conn = None
         try:
             conn = get_db_conn()
-            doc_id_row = None
-            if doc_path.is_absolute() and not str(doc_path).startswith(str(DOCUMENTS_DIR)):
-                 pass # The caller handles this in the updated assistant_core
-            else:
-                 rel_path_str = str(doc_path.relative_to(DOCUMENTS_DIR).as_posix())
-                 doc_id_row = conn.execute("SELECT id FROM documents WHERE relative_path = ?", (rel_path_str,)).fetchone()
             
-            if not doc_id_row:
+            # If doc_id wasn't provided, fall back to the old path-guessing logic
+            if not doc_id:
+                if doc_path.is_absolute() and not str(doc_path).startswith(str(DOCUMENTS_DIR)):
+                     pass 
+                else:
+                     rel_path_str = str(doc_path.relative_to(DOCUMENTS_DIR).as_posix())
+                     doc_id_row = conn.execute("SELECT id FROM documents WHERE relative_path = ?", (rel_path_str,)).fetchone()
+                     if doc_id_row:
+                         doc_id = doc_id_row['id']
+            
+            if not doc_id:
                 return f"Error: Document not found in database for path {doc_path}"
             
-            doc_id = doc_id_row['id']
+            # For these types, the database treats them as a single continuous block of text (Page 1)
             if file_type in ['HTML', 'SRT', 'EML']:
                 start_page = None
                 end_page = None
@@ -129,6 +134,7 @@ def extract_text_for_copying(doc_path: Path, file_type: str, start_page=None, en
         return "\n\n".join(full_text)
     else:
         return f"Cannot extract text from unsupported file type: {file_type}"
+# --- END OF FIX ---
 
 def _extract_text_from_pipermail(html_content: str) -> str:
     soup = BeautifulSoup(html_content, 'lxml')

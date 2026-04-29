@@ -6,7 +6,7 @@ from . import api_bp
 from .helpers import get_document_or_404, escape_like, get_base_document_query_fields
 from ...database import get_db
 from ...utils import _create_entity_snippet, _get_dashboard_state
-from ...config import DOCUMENTS_DIR, ENTITY_LABELS_TO_DISPLAY
+from ...config import DOCUMENTS_DIR, ENTITY_LABELS_TO_DISPLAY, resolve_document_path
 from ..auth import login_required
 import processing_pipeline
 
@@ -128,11 +128,9 @@ def dashboard_status():
     if 'filtered' in request.args:
         type_filters = request.args.getlist('type')
         
-    # --- START OF FIX: Extract status filters from the URL ---
     status_filters = None
     if 'status' in request.args:
         status_filters = request.args.getlist('status')
-    # --- END OF FIX ---
     
     data = fetch_dashboard_data(g.user['id'], page, per_page, sort_key, sort_dir, type_filters, status_filters)
     return jsonify(data)
@@ -209,11 +207,25 @@ def get_document_types():
 def get_document_text(doc_id):
     db = get_db()
     doc = get_document_or_404(db, doc_id)
-    full_path = DOCUMENTS_DIR / doc['relative_path']
-    if not full_path.exists(): abort(404, description='Document file is missing from the filesystem.')
+    
+    full_path = resolve_document_path(doc['relative_path'])
+    
+    # --- START OF FIX: Only require physical file for PDFs. Pass doc_id to extractor ---
+    if doc['file_type'] == 'PDF' and not full_path.exists(): 
+        abort(404, description='PDF file is missing from the filesystem.')
+        
     start_page = request.args.get('start_page', type=int)
     end_page = request.args.get('end_page', type=int)
-    text_content = processing_pipeline.extract_text_for_copying(full_path, file_type=doc['file_type'], start_page=start_page, end_page=end_page)
+    
+    text_content = processing_pipeline.extract_text_for_copying(
+        full_path, 
+        file_type=doc['file_type'], 
+        start_page=start_page, 
+        end_page=end_page,
+        doc_id=doc_id  # <--- Passing the ID down to bypass path guessing
+    )
+    # --- END OF FIX ---
+    
     return jsonify({'success': True, 'text': text_content})
 
 @api_bp.route('/document/<int:doc_id>/entities')
