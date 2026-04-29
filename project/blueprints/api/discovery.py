@@ -1,17 +1,21 @@
 # --- File: ./project/blueprints/api/discovery.py (OPTIMIZED) ---
 import sqlite3
 import json
-import uuid # <-- ADDED IMPORT
+import uuid 
+import re 
 from collections import defaultdict
 from flask import jsonify, request, g, abort
 
 from . import api_bp
-from .helpers import get_base_document_query_fields
+from .helpers import get_base_document_query_fields, escape_like
 from ...database import get_db
 from ...config import ENTITY_LABELS_TO_DISPLAY, BASE_DIR
 from ..auth import login_required
 from ...utils import _create_manual_snippet, _create_entity_snippet
 from ...assistant_core import _internal_fts_search, _internal_semantic_search, read_specific_pages
+
+# === THE FIX: Use relative import to ensure we grab the true global CSRF instance ===
+from ... import csrf
 
 # ===================================================================
 # --- Optimized Entity Discovery Endpoints ---
@@ -93,7 +97,6 @@ def get_discovery_list(label):
         'has_more': len(results) == per_page
     })
 
-# --- START OF NEW: Autocomplete Endpoint ---
 @api_bp.route('/search/entities_autocomplete')
 @login_required
 def entities_autocomplete():
@@ -121,7 +124,6 @@ def entities_autocomplete():
     
     results = db.execute(sql, params).fetchall()
     return jsonify([dict(row) for row in results])
-# --- END OF NEW ---
 
 @api_bp.route('/search')
 @login_required
@@ -130,7 +132,6 @@ def api_global_search():
     query = request.args.get('q', '').strip()
     limit = request.args.get('limit', 15, type=int)
     
-    # --- ADDED: Mode parameter to allow skipping slow AI math ---
     mode = request.args.get('mode', 'hybrid').strip().lower()
     
     if not query:
@@ -176,6 +177,149 @@ def api_global_search():
             'title': f"{title} (Page {page_num})",
             'snippet': snippet.strip()
         })
+        
+    return jsonify(results)
+
+# ===================================================================
+# --- NEW: ADVANCED AGENT SEARCH ENDPOINT ---
+# ===================================================================
+@api_bp.route('/search/advanced', methods=['POST'])
+@csrf.exempt  # <-- THE FIX: Guarantee CSRF is disabled for this programmatic endpoint
+@login_required
+def api_advanced_search():
+    """
+    JSON API for Advanced Search.
+    Used by autonomous agents to filter by keyword, required entities, and file types.
+    """
+    # silent=True ensures bad JSON payloads return {} instead of crashing with a 400 Bad Request
+    data = request.get_json(silent=True) or {}
+    
+    query = data.get('q', '').strip()
+    entities = data.get('entities', [])
+    file_types = data.get('file_types', [])
+    limit = data.get('limit', 5)
+
+    db = get_db()
+    
+    # 1. Base Document Filters
+    doc_where = ["d.status != 'Missing'"]
+    doc_params = []
+    
+    if file_types:
+        placeholders = ','.join(['?'] * len(file_types))
+        doc_where.append(f"d.file_type IN ({placeholders})")
+        doc_params.extend(file_types)
+        
+    doc_where_str = " AND ".join(doc_where)
+    
+    # 2. Text Search Context
+    fts_query = ""
+    if query:
+        safe_query = re.sub(r'[^\w\s]', '', query).strip()
+        words = [w for w in safe_query.split() if w.lower() != 'and']
+        fts_query = " AND ".join([f'"{w}"' for w in words])
+
+    # 3. Entity Intersection
+    entity_intersection_sql = ""
+    if entities:
+        entity_intersection_sql = """
+            SELECT ea0.doc_id, ea0.page_number 
+            FROM entity_appearances ea0
+            JOIN entities e0 ON ea0.entity_id = e0.id
+        """
+        for i in range(1, len(entities)):
+            entity_intersection_sql += f"""
+                JOIN entity_appearances ea{i} 
+                  ON ea0.doc_id = ea{i}.doc_id 
+                  AND ea0.page_number = ea{i}.page_number
+                JOIN entities e{i} ON ea{i}.entity_id = e{i}.id
+            """
+        ent_where_clauses = []
+        for i, ent in enumerate(entities):
+            clause = f"e{i}.text LIKE ?"
+            doc_params.append(f"%{escape_like(ent.get('text', ''))}%")
+            if ent.get('label'):
+                clause += f" AND e{i}.label = ?"
+                doc_params.append(ent['label'])
+            ent_where_clauses.append(clause)
+        entity_intersection_sql += " WHERE " + " AND ".join(ent_where_clauses)
+
+    # 4. Main Query Execution
+    fetch_limit = limit
+    
+    if fts_query and entities:
+        sql_params = doc_params + [fts_query, fetch_limit]
+        sql_query = f"""
+            SELECT d.id as doc_id, d.relative_path, d.file_type, 
+                   tm.page_number, tm.snippet
+            FROM (
+                SELECT ci.doc_id, ci.page_number, snippet(ci.content_index, 2, '', '', '...', 40) as snippet, ci.rank
+                FROM content_index ci
+                JOIN ({entity_intersection_sql}) ei ON ci.doc_id = ei.doc_id AND ci.page_number = ei.page_number
+                WHERE ci.doc_id IN (SELECT id FROM documents d WHERE {doc_where_str}) AND ci.content_index MATCH ? 
+                ORDER BY ci.rank 
+                LIMIT ?
+            ) tm
+            JOIN documents d ON tm.doc_id = d.id
+            ORDER BY tm.rank;
+        """
+        db_results = db.execute(sql_query, sql_params).fetchall()
+        
+    elif fts_query:
+        sql_params = doc_params + [fts_query, fetch_limit]
+        sql_query = f"""
+            SELECT d.id as doc_id, d.relative_path, d.file_type, 
+                   tm.page_number, tm.snippet
+            FROM (
+                SELECT doc_id, page_number, snippet(content_index, 2, '', '', '...', 40) as snippet, rank
+                FROM content_index 
+                WHERE doc_id IN (SELECT id FROM documents d WHERE {doc_where_str}) AND content_index MATCH ? 
+                ORDER BY rank 
+                LIMIT ?
+            ) tm
+            JOIN documents d ON tm.doc_id = d.id
+            ORDER BY tm.rank;
+        """
+        db_results = db.execute(sql_query, sql_params).fetchall()
+        
+    elif entities:
+        sql_params = doc_params + [fetch_limit]
+        sql_query = f"""
+            SELECT d.id as doc_id, d.relative_path, d.file_type, 
+                   tm.page_number, '' as snippet
+            FROM (
+                {entity_intersection_sql}
+                AND ea0.doc_id IN (SELECT id FROM documents d WHERE {doc_where_str})
+                ORDER BY ea0.doc_id, ea0.page_number
+                LIMIT ?
+            ) tm
+            JOIN documents d ON tm.doc_id = d.id
+            ORDER BY d.relative_path COLLATE NOCASE, tm.page_number;
+        """
+        db_results = db.execute(sql_query, sql_params).fetchall()
+    else:
+        return jsonify([])
+
+    results = []
+    for row in db_results:
+        row_dict = dict(row)
+        
+        # Generate custom snippet for entity-only searches
+        if entities and not fts_query:
+            page_row = db.execute("SELECT page_content FROM content_index WHERE doc_id = ? AND page_number = ?", (row_dict['doc_id'], row_dict['page_number'])).fetchone()
+            if page_row:
+                raw_text = page_row['page_content']
+                primary_entity = entities[0].get('text', '')
+                # Strip HTML from snippet to save LLM tokens (Agents don't need UI markup)
+                snippet_html = _create_entity_snippet(raw_text, primary_entity, context=200)
+                row_dict['snippet'] = re.sub(r'<[^>]+>', '', snippet_html)
+            else:
+                 row_dict['snippet'] = "Snippet unavailable."
+        else:
+            # Strip potential leftover HTML if any
+            row_dict['snippet'] = re.sub(r'<[^>]+>', '', row_dict.get('snippet', ''))
+
+        results.append(row_dict)
         
     return jsonify(results)
 
@@ -586,13 +730,11 @@ def system_info():
     """Public endpoint for the Flutter app to identify this specific database."""
     db = get_db()
     
-    # Check if this database already has an instance_id
     row = db.execute("SELECT value FROM app_settings WHERE key = 'instance_id'").fetchone()
     
     if row:
         instance_id = row['value']
     else:
-        # Self-healing: If it's an old database without an ID, generate one now.
         instance_id = str(uuid.uuid4())
         db.execute("INSERT INTO app_settings (key, value) VALUES ('instance_id', ?)", (instance_id,))
         db.commit()
