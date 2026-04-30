@@ -7,6 +7,7 @@ import datetime
 import re
 import email
 import json
+import fnmatch
 from email.header import decode_header
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -563,18 +564,21 @@ def _gather_files_recursively(base_dir: Path, target_dir: Path, supported_patter
     """
     files = []
     try:
-        for pattern in supported_patterns:
-            for file_path in target_dir.rglob(pattern):
-                if not file_path.is_file(): continue
-                # The "virtual path" is what goes in the database.
-                # If it's the main DOCUMENTS_DIR, it's just relative to that.
-                # If it's an external drive, it starts with the alias filename.
-                if virtual_prefix:
-                    rel_path_str = f"{virtual_prefix}/{file_path.relative_to(target_dir).as_posix()}"
-                else:
-                    rel_path_str = file_path.relative_to(base_dir).as_posix()
+        # Use os.walk instead of rglob to gracefully bypass Windows PermissionErrors
+        for root, dirs, filenames in os.walk(target_dir):
+            for filename in filenames:
+                if any(fnmatch.fnmatch(filename.lower(), p.lower()) for p in supported_patterns):
+                    file_path = Path(root) / filename
                     
-                files.append((file_path, rel_path_str))
+                    try:
+                        if virtual_prefix:
+                            rel_path_str = f"{virtual_prefix}/{file_path.relative_to(target_dir).as_posix()}"
+                        else:
+                            rel_path_str = file_path.relative_to(base_dir).as_posix()
+                            
+                        files.append((file_path, rel_path_str))
+                    except ValueError:
+                        continue # Skip if relative_to fails
     except Exception as e:
         print(f"[WARN] Error scanning directory {target_dir}: {e}")
         
@@ -591,18 +595,20 @@ def discover_and_register_documents():
         db_statuses = {row['relative_path']: row['status'] for row in db_docs}
         db_path_to_id = {row['relative_path']: row['id'] for row in db_docs}
         
+        # --- FIX: Case-insensitive lookup map for cross-OS imports ---
+        db_files_lower = {k.lower(): k for k in db_files.keys()}
+        
         registered_count = 0
         restored_count = 0
         supported_patterns = ["*.pdf", "*.txt", "*.html", "*.srt", "*.eml"]
         
-        # --- FIX: Scan main directory AND follow .rlink files ---
         all_files_with_virtual_paths = _gather_files_recursively(DOCUMENTS_DIR, DOCUMENTS_DIR, supported_patterns)
         
         for rlink_file in DOCUMENTS_DIR.glob('*.rlink'):
             if rlink_file.is_file():
                 try:
                     target_path_str = rlink_file.read_text(encoding='utf-8').strip()
-                    target_dir = Path(target_path_str)
+                    target_dir = Path(target_path_str).resolve() # Ensure path is normalized
                     if target_dir.exists() and target_dir.is_dir():
                         print(f"  [INFO] Following alias '{rlink_file.name}' to: {target_dir}")
                         all_files_with_virtual_paths.extend(
@@ -613,10 +619,16 @@ def discover_and_register_documents():
                 except Exception as e:
                     print(f"  [WARN] Failed to read alias file {rlink_file}: {e}")
             
-        found_paths = set() 
+        found_paths_exact = set() 
 
         for file_path, rel_path_str in all_files_with_virtual_paths:
-            found_paths.add(rel_path_str) 
+            
+            # --- FIX: Align OS path casing with Database casing ---
+            lower_rel = rel_path_str.lower()
+            if lower_rel in db_files_lower:
+                rel_path_str = db_files_lower[lower_rel]
+                
+            found_paths_exact.add(rel_path_str) 
             
             stats = file_path.stat()
             current_size = stats.st_size
@@ -650,14 +662,13 @@ def discover_and_register_documents():
                 )
                 registered_count += 1
             else:
-                # The file exists and the hash matches perfectly. Was it in the recycle bin?
                 if db_statuses.get(rel_path_str) == 'Missing':
                     print(f"Restoring previously missing file: {rel_path_str}")
                     conn.execute("UPDATE documents SET status = 'Indexed', status_message = 'Restored from Recycle Bin' WHERE relative_path = ?", (rel_path_str,))
                     restored_count += 1
 
         # 2. IDENTIFY MISSING FILES (Soft Delete to Recycle Bin)
-        missing_paths = set(db_files.keys()) - found_paths
+        missing_paths = set(db_files.keys()) - found_paths_exact
         missing_count = 0
 
         if missing_paths:

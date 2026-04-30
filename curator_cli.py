@@ -6,6 +6,7 @@ from pathlib import Path
 import hashlib
 import datetime
 import os
+import fnmatch
 from lxml import etree as ET
 from email.utils import parsedate_to_datetime
 from typing import Union
@@ -100,14 +101,18 @@ def _gather_files_recursively(base_dir: Path, target_dir: Path, supported_patter
     """Helper to gather files, mapping them to a virtual prefix if using an .rlink alias."""
     files = []
     try:
-        for pattern in supported_patterns:
-            for file_path in target_dir.rglob(pattern):
-                if not file_path.is_file(): continue
-                if virtual_prefix:
-                    rel_path_str = f"{virtual_prefix}/{file_path.relative_to(target_dir).as_posix()}"
-                else:
-                    rel_path_str = file_path.relative_to(base_dir).as_posix()
-                files.append((file_path, rel_path_str))
+        for root, dirs, filenames in os.walk(target_dir):
+            for filename in filenames:
+                if any(fnmatch.fnmatch(filename.lower(), p.lower()) for p in supported_patterns):
+                    file_path = Path(root) / filename
+                    try:
+                        if virtual_prefix:
+                            rel_path_str = f"{virtual_prefix}/{file_path.relative_to(target_dir).as_posix()}"
+                        else:
+                            rel_path_str = file_path.relative_to(base_dir).as_posix()
+                        files.append((file_path, rel_path_str))
+                    except ValueError:
+                        continue
     except Exception as e:
         print(f"[WARN] Error scanning directory {target_dir}: {e}")
     return files
@@ -121,10 +126,14 @@ def discover_documents():
         db_files = {row[1]: row[2] for row in db_docs}
         db_statuses = {row[1]: row[3] for row in db_docs}
         db_path_to_id = {row[1]: row[0] for row in db_docs}
+        
+        # Case-insensitive lookup map
+        db_files_lower = {k.lower(): k for k in db_files.keys()}
     except duckdb.CatalogException:
         db_files = {}
         db_statuses = {}
         db_path_to_id = {}
+        db_files_lower = {}
         
     registered_count = 0
     restored_count = 0
@@ -138,7 +147,7 @@ def discover_documents():
         if rlink_file.is_file():
             try:
                 target_path_str = rlink_file.read_text(encoding='utf-8').strip()
-                target_dir = Path(target_path_str)
+                target_dir = Path(target_path_str).resolve()
                 if target_dir.exists() and target_dir.is_dir():
                     print(f"  [INFO] Following alias '{rlink_file.name}' to: {target_dir}")
                     all_files_with_virtual_paths.extend(
@@ -149,10 +158,15 @@ def discover_documents():
             except Exception as e:
                 print(f"  [WARN] Failed to read alias file {rlink_file}: {e}")
 
-    found_paths = set()
+    found_paths_exact = set()
 
     for file_path, rel_path_str in all_files_with_virtual_paths:
-        found_paths.add(rel_path_str)
+        lower_rel = rel_path_str.lower()
+        if lower_rel in db_files_lower:
+            rel_path_str = db_files_lower[lower_rel]
+            
+        found_paths_exact.add(rel_path_str)
+        
         stats = file_path.stat()
         file_type = file_path.suffix[1:].upper()
 
@@ -177,7 +191,7 @@ def discover_documents():
                 restored_count += 1
 
     # Soft delete missing files to the Recycle Bin
-    missing_paths = set(db_files.keys()) - found_paths
+    missing_paths = set(db_files.keys()) - found_paths_exact
     missing_count = 0
 
     if missing_paths:
