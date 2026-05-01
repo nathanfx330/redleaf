@@ -38,6 +38,10 @@ def settings_page():
     except Exception:
         ollama_models = []
 
+    # --- NEW: Fetch Download Setting ---
+    allow_downloads_row = db.execute("SELECT value FROM app_settings WHERE key = 'allow_document_downloads'").fetchone()
+    allow_downloads = allow_downloads_row['value'] == 'true' if allow_downloads_row else False
+
     # --- NEW: Fetch .rlink alias files ---
     rlink_files = []
     if DOCUMENTS_DIR.exists():
@@ -62,11 +66,32 @@ def settings_page():
         form=form,
         max_workers=system_settings['max_workers'],
         use_gpu=system_settings['use_gpu'],
+        allow_downloads=allow_downloads, # --- Passed to template ---
         cpu_count=os.cpu_count(),
         html_parsing_mode=system_settings['html_parsing_mode'],
         reasoning_model=system_settings['reasoning_model'],
         ollama_models=ollama_models
     )
+
+@settings_bp.route('/downloads', methods=['POST'])
+@admin_required
+def update_downloads_setting():
+    data = request.json
+    if 'allow_downloads' not in data:
+        return jsonify({'success': False, 'message': 'Invalid request.'}), 400
+
+    allow_downloads_enabled = data.get('allow_downloads', False)
+    allow_str = 'true' if allow_downloads_enabled else 'false'
+    
+    try:
+        db = get_db()
+        db.execute("INSERT INTO app_settings (key, value) VALUES ('allow_document_downloads', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (allow_str,))
+        db.commit()
+        status = "enabled" if allow_downloads_enabled else "disabled"
+        return jsonify({'success': True, 'message': f'Document downloads have been {status}.'})
+    except sqlite3.Error as e:
+        db.rollback()
+        return jsonify({'success': False, 'message': f'Database error: {e}'}), 500
 
 @settings_bp.route('/model', methods=['POST'])
 @admin_required

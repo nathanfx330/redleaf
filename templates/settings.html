@@ -235,6 +235,16 @@
                     </div>
 
                     <hr>
+                    <h5>Allow Document Downloads</h5>
+                    <p class="text-muted">Enable to allow non-admin users to download original files from the document viewer. (Admins can always download).</p>
+                    
+                    <div class="form-switch">
+                        <input type="checkbox" role="switch" name="allow_downloads" id="allow-downloads-toggle" {% if allow_downloads %}checked{% endif %}>
+                        <label for="allow-downloads-toggle">Enable Downloads</label>
+                        <span id="downloads-save-status" class="save-status-indicator" style="margin-left: 1rem; opacity: 0;"></span>
+                    </div>
+
+                    <hr>
                     <h5>HTML Parsing Strategy</h5>
                     <p class="text-muted">Choose how Redleaf should extract text from <code>.html</code> files. Affects new or re-processed documents only.</p>
                     <form action="{{ url_for('settings.update_html_settings') }}" method="POST" class="d-flex align-items-center gap-3">
@@ -512,6 +522,43 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
     // ===== END: GPU UX FIX (JAVASCRIPT) =====
+
+    // ===== START: DOWNLOADS UX FIX (JAVASCRIPT) =====
+    const downloadsToggle = document.getElementById('allow-downloads-toggle');
+    if (downloadsToggle) {
+        downloadsToggle.addEventListener('change', async () => {
+            const isChecked = downloadsToggle.checked;
+            const statusEl = document.getElementById('downloads-save-status');
+            
+            statusEl.textContent = 'Saving...';
+            statusEl.style.opacity = '1';
+            downloadsToggle.disabled = true;
+
+            try {
+                const response = await fetch("{{ url_for('settings.update_downloads_setting') }}", {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrfToken
+                    },
+                    body: JSON.stringify({ allow_downloads: isChecked })
+                });
+                const result = await response.json();
+                if (!response.ok) throw new Error(result.message);
+                
+                statusEl.textContent = 'Saved!';
+            } catch (error) {
+                console.error('Failed to update download setting:', error);
+                statusEl.textContent = 'Error!';
+            } finally {
+                setTimeout(() => {
+                    statusEl.style.opacity = '0';
+                    downloadsToggle.disabled = false;
+                }, 2500);
+            }
+        });
+    }
+    // ===== END: DOWNLOADS UX FIX (JAVASCRIPT) =====
 
     const userTableBody = document.querySelector('.data-table tbody');
     if (userTableBody) {

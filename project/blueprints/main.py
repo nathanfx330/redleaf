@@ -613,6 +613,45 @@ def send_to_synthesis(doc_id):
             return redirect(url_for('main.document_view', doc_id=doc_id))
     return redirect(url_for('synthesis.report_view', report_id=report_id_to_load, load_doc=doc_id))
 
+# --- NEW: SECURE DOWNLOAD ROUTE ---
+@main_bp.route('/download/<int:doc_id>')
+@login_required
+def download_document(doc_id):
+    db = get_db()
+    
+    # 1. Check Permissions
+    allow_downloads_row = db.execute("SELECT value FROM app_settings WHERE key = 'allow_document_downloads'").fetchone()
+    allow_downloads = allow_downloads_row['value'] == 'true' if allow_downloads_row else False
+    
+    if not allow_downloads and g.user['role'] != 'admin':
+        abort(403, "Document downloads are currently disabled by the administrator.")
+        
+    # 2. Get Document Path
+    doc = db.execute("SELECT relative_path FROM documents WHERE id = ?", (doc_id,)).fetchone()
+    if not doc:
+        abort(404)
+        
+    resolved_path = resolve_document_path(doc['relative_path']).resolve()
+    
+    # 3. Security Check (Same as serve_document to prevent directory traversal)
+    parts = Path(doc['relative_path']).parts
+    if parts and parts[0].endswith('.rlink'):
+        rlink_file = DOCUMENTS_DIR / parts[0]
+        if not rlink_file.is_file():
+            abort(403)
+        target_base = Path(rlink_file.read_text(encoding='utf-8').strip()).resolve()
+        if not str(resolved_path).startswith(str(target_base)):
+            abort(403)
+    else:
+        if not str(resolved_path).startswith(str(DOCUMENTS_DIR.resolve())):
+            abort(403)
+            
+    if not resolved_path.exists() or not resolved_path.is_file():
+        abort(404)
+        
+    return send_from_directory(resolved_path.parent, resolved_path.name, as_attachment=True)
+# --------------------------------
+
 @main_bp.route('/document/<int:doc_id>')
 @login_required
 def document_view(doc_id):
@@ -628,6 +667,11 @@ def document_view(doc_id):
     
     if not doc:
         abort(404)
+
+    # --- NEW: Fetch Download Permission ---
+    allow_downloads_row = db.execute("SELECT value FROM app_settings WHERE key = 'allow_document_downloads'").fetchone()
+    allow_downloads = allow_downloads_row['value'] == 'true' if allow_downloads_row else False
+    # --------------------------------------
 
     form = SecureForm()
     timestamp = int(time.time())
@@ -654,7 +698,8 @@ def document_view(doc_id):
                            doc=doc, 
                            form=form, 
                            timestamp=timestamp,
-                           pills_data=pills_data)
+                           pills_data=pills_data,
+                           allow_downloads=allow_downloads) # <-- Passed to template
 
 # --- FIXED: Serve Document securely handles .rlink virtual paths ---
 @main_bp.route('/serve_doc/<path:relative_path>')

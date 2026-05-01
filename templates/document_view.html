@@ -92,6 +92,17 @@
             {% if doc.file_type == 'HTML' %}
                 <button class="button" id="toggle-html-view-btn">Show Stripped Text</button>
             {% endif %}
+            
+            {# --- NEW: SECURE DOWNLOAD BUTTON --- #}
+            {% if allow_downloads or g.user.role == 'admin' %}
+                <a href="{{ url_for('main.download_document', doc_id=doc.id) }}" class="button" title="Download original file">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" style="vertical-align: text-bottom; margin-right: 4px;">
+                        <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
+                    </svg>
+                    Download
+                </a>
+            {% endif %}
+            
             <a href="{{ url_for('main.send_to_synthesis', doc_id=doc.id) }}" class="button button-primary">
                 ↗ Send to Synthesis
             </a>
