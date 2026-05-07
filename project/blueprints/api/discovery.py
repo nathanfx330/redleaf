@@ -4,12 +4,16 @@ import json
 import uuid 
 import re 
 from collections import defaultdict
+import numpy as np
+import heapq
+import ollama
+
 from flask import jsonify, request, g, abort
 
 from . import api_bp
 from .helpers import get_base_document_query_fields, escape_like
 from ...database import get_db
-from ...config import ENTITY_LABELS_TO_DISPLAY, BASE_DIR
+from ...config import ENTITY_LABELS_TO_DISPLAY, BASE_DIR, EMBEDDING_MODEL
 from ..auth import login_required
 from ...utils import _create_manual_snippet, _create_entity_snippet
 from ...assistant_core import _internal_fts_search, _internal_semantic_search, read_specific_pages
@@ -188,10 +192,10 @@ def api_global_search():
 @login_required
 def api_advanced_search():
     """
-    JSON API for Advanced Search.
-    Used by autonomous agents to filter by keyword, required entities, and file types.
+    JSON API for Advanced Search (Used by Autonomous Agents).
+    Now upgraded to perform HYBRID (FTS + Semantic) search while
+    strictly respecting entity and file_type SQL filters.
     """
-    # silent=True ensures bad JSON payloads return {} instead of crashing with a 400 Bad Request
     data = request.get_json(silent=True) or {}
     
     query = data.get('q', '').strip()
@@ -212,14 +216,7 @@ def api_advanced_search():
         
     doc_where_str = " AND ".join(doc_where)
     
-    # 2. Text Search Context
-    fts_query = ""
-    if query:
-        safe_query = re.sub(r'[^\w\s]', '', query).strip()
-        words = [w for w in safe_query.split() if w.lower() != 'and']
-        fts_query = " AND ".join([f'"{w}"' for w in words])
-
-    # 3. Entity Intersection
+    # 2. Entity Intersection SQL Logic
     entity_intersection_sql = ""
     entity_params = []
     if entities:
@@ -245,45 +242,15 @@ def api_advanced_search():
             ent_where_clauses.append(clause)
         entity_intersection_sql += " WHERE " + " AND ".join(ent_where_clauses)
 
-    # 4. Main Query Execution
     fetch_limit = limit
-    
-    if fts_query and entities:
-        sql_params = entity_params + doc_filter_params + [fts_query, fetch_limit]
-        sql_query = f"""
-            SELECT d.id as doc_id, d.relative_path, d.file_type, 
-                   tm.page_number, tm.snippet
-            FROM (
-                SELECT ci.doc_id, ci.page_number, snippet(ci.content_index, 2, '', '', '...', 40) as snippet, ci.rank
-                FROM content_index ci
-                JOIN ({entity_intersection_sql}) ei ON ci.doc_id = ei.doc_id AND ci.page_number = ei.page_number
-                WHERE ci.doc_id IN (SELECT id FROM documents d WHERE {doc_where_str}) AND ci.content_index MATCH ? 
-                ORDER BY ci.rank 
-                LIMIT ?
-            ) tm
-            JOIN documents d ON tm.doc_id = d.id
-            ORDER BY tm.rank;
-        """
-        db_results = db.execute(sql_query, sql_params).fetchall()
-        
-    elif fts_query:
-        sql_params = doc_filter_params + [fts_query, fetch_limit]
-        sql_query = f"""
-            SELECT d.id as doc_id, d.relative_path, d.file_type, 
-                   tm.page_number, tm.snippet
-            FROM (
-                SELECT doc_id, page_number, snippet(content_index, 2, '', '', '...', 40) as snippet, rank
-                FROM content_index 
-                WHERE doc_id IN (SELECT id FROM documents d WHERE {doc_where_str}) AND content_index MATCH ? 
-                ORDER BY rank 
-                LIMIT ?
-            ) tm
-            JOIN documents d ON tm.doc_id = d.id
-            ORDER BY tm.rank;
-        """
-        db_results = db.execute(sql_query, sql_params).fetchall()
-        
-    elif entities:
+
+    # ==========================================================
+    # SCENARIO A: Agent only searched for Entities (No keyword query)
+    # ==========================================================
+    if not query:
+        if not entities:
+            return jsonify([])
+            
         sql_params = entity_params + doc_filter_params + [fetch_limit]
         sql_query = f"""
             SELECT d.id as doc_id, d.relative_path, d.file_type, 
@@ -298,29 +265,139 @@ def api_advanced_search():
             ORDER BY d.relative_path COLLATE NOCASE, tm.page_number;
         """
         db_results = db.execute(sql_query, sql_params).fetchall()
-    else:
-        return jsonify([])
-
-    results = []
-    for row in db_results:
-        row_dict = dict(row)
         
-        # Generate custom snippet for entity-only searches
-        if entities and not fts_query:
+        results = []
+        for row in db_results:
+            row_dict = dict(row)
             page_row = db.execute("SELECT page_content FROM content_index WHERE doc_id = ? AND page_number = ?", (row_dict['doc_id'], row_dict['page_number'])).fetchone()
             if page_row:
                 raw_text = page_row['page_content']
-                primary_entity = entities[0].get('text', '')
-                # Strip HTML from snippet to save LLM tokens (Agents don't need UI markup)
-                snippet_html = _create_entity_snippet(raw_text, primary_entity, context=200)
+                snippet_html = _create_entity_snippet(raw_text, entities[0].get('text', ''), context=200)
                 row_dict['snippet'] = re.sub(r'<[^>]+>', '', snippet_html)
             else:
                  row_dict['snippet'] = "Snippet unavailable."
-        else:
-            # Strip potential leftover HTML if any
-            row_dict['snippet'] = re.sub(r'<[^>]+>', '', row_dict.get('snippet', ''))
+            results.append(row_dict)
+            
+        return jsonify(results)
 
-        results.append(row_dict)
+    # ==========================================================
+    # SCENARIO B: HYBRID SEARCH (Keyword + Vectors)
+    # ==========================================================
+    safe_query = re.sub(r'[^\w\s]', '', query).strip()
+    words = [w for w in safe_query.split() if w.lower() != 'and']
+    fts_query = " AND ".join([f'"{w}"' for w in words])
+
+    rrf_scores = defaultdict(float)
+    snippet_map = {}
+    k = 60
+
+    # --- 1. FULL-TEXT SEARCH PHASE ---
+    if fts_query:
+        if entities:
+            fts_sql = f"""
+                SELECT ci.doc_id, ci.page_number, snippet(ci.content_index, 2, '', '', '...', 40) as snippet, ci.rank
+                FROM content_index ci
+                JOIN ({entity_intersection_sql}) ei ON ci.doc_id = ei.doc_id AND ci.page_number = ei.page_number
+                WHERE ci.doc_id IN (SELECT id FROM documents d WHERE {doc_where_str}) AND ci.content_index MATCH ? 
+                ORDER BY ci.rank LIMIT ?
+            """
+            fts_params = entity_params + doc_filter_params + [fts_query, fetch_limit * 2]
+        else:
+            fts_sql = f"""
+                SELECT doc_id, page_number, snippet(content_index, 2, '', '', '...', 40) as snippet, rank
+                FROM content_index 
+                WHERE doc_id IN (SELECT id FROM documents d WHERE {doc_where_str}) AND content_index MATCH ? 
+                ORDER BY rank LIMIT ?
+            """
+            fts_params = doc_filter_params + [fts_query, fetch_limit * 2]
+            
+        fts_hits = db.execute(fts_sql, fts_params).fetchall()
+        for rank, row in enumerate(fts_hits):
+            key = (row['doc_id'], row['page_number'])
+            rrf_scores[key] += 1 / (k + rank + 1)
+            snippet_map[key] = row['snippet']
+
+    # --- 2. SEMANTIC (VECTOR) SEARCH PHASE ---
+    try:
+        q_embed_res = ollama.embeddings(model=EMBEDDING_MODEL, prompt=query)
+        q_vec = np.array(q_embed_res['embedding'], dtype=np.float32)
+        norm_q_vec = q_vec / np.linalg.norm(q_vec)
+        
+        top_k_heap = []
+        
+        # Check both standard and super embedding tables
+        for table in ["embedding_chunks", "super_embedding_chunks"]:
+            try:
+                if entities:
+                    sem_sql = f"""
+                        SELECT e.doc_id, e.page_number, e.chunk_text, e.embedding 
+                        FROM {table} e
+                        JOIN ({entity_intersection_sql}) ei ON e.doc_id = ei.doc_id AND e.page_number = ei.page_number
+                        JOIN documents d ON e.doc_id = d.id
+                        WHERE {doc_where_str}
+                    """
+                    sem_params = entity_params + doc_filter_params
+                else:
+                    sem_sql = f"""
+                        SELECT e.doc_id, e.page_number, e.chunk_text, e.embedding 
+                        FROM {table} e
+                        JOIN documents d ON e.doc_id = d.id
+                        WHERE {doc_where_str}
+                    """
+                    sem_params = doc_filter_params
+
+                # Stream the batches to keep RAM usage extremely low
+                cursor = db.execute(sem_sql, sem_params)
+                while True:
+                    batch = cursor.fetchmany(2000)
+                    if not batch: 
+                        break
+                    
+                    embeddings = np.array([np.frombuffer(row['embedding'], dtype=np.float32) for row in batch])
+                    norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+                    norms[norms == 0] = 1
+                    norm_embeddings = embeddings / norms
+                    
+                    similarities = np.dot(norm_embeddings, norm_q_vec)
+                    
+                    for i, score in enumerate(similarities):
+                        if len(top_k_heap) < fetch_limit * 2:
+                            heapq.heappush(top_k_heap, (score, batch[i]['doc_id'], batch[i]['page_number'], batch[i]['chunk_text']))
+                        else:
+                            if score > top_k_heap[0][0]:
+                                heapq.heapreplace(top_k_heap, (score, batch[i]['doc_id'], batch[i]['page_number'], batch[i]['chunk_text']))
+            except sqlite3.OperationalError:
+                continue # Skip if embedding table isn't baked yet
+                
+        # Merge Semantic scores into RRF
+        top_k_heap.sort(key=lambda x: x[0], reverse=True)
+        for rank, (score, d_id, p_num, chunk_text) in enumerate(top_k_heap):
+            key = (d_id, p_num)
+            rrf_scores[key] += 1 / (k + rank + 1)
+            if key not in snippet_map:
+                snippet_map[key] = chunk_text
+                
+    except Exception as e:
+        print(f"[ERROR] Semantic phase failed during agent search: {e}")
+
+    # --- 3. MERGE, SORT, AND RETURN ---
+    sorted_keys = sorted(rrf_scores.keys(), key=lambda s: rrf_scores[s], reverse=True)[:fetch_limit]
+    
+    results = []
+    for doc_id, page_num in sorted_keys:
+        doc_row = db.execute("SELECT relative_path, file_type FROM documents WHERE id = ?", (doc_id,)).fetchone()
+        if not doc_row: continue
+        
+        # Strip HTML markup since agents don't need UI tags
+        clean_snippet = re.sub(r'<[^>]+>', '', snippet_map.get((doc_id, page_num), ""))
+        
+        results.append({
+            'doc_id': doc_id,
+            'relative_path': doc_row['relative_path'],
+            'file_type': doc_row['file_type'],
+            'page_number': page_num,
+            'snippet': clean_snippet
+        })
         
     return jsonify(results)
 
