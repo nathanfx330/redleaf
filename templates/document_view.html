@@ -268,14 +268,33 @@
                                     <div class="col"><select id="csl-date-day" class="form-control" aria-label="Day"></select></div>
                                 </div>
                             </div>
-                            <div class="form-group csl-field-specific" data-csl-type="report broadcast motion_picture">
+                            
+                            <!-- MODIFIED: Added article-magazine -->
+                            <div class="form-group csl-field-specific" data-csl-type="report broadcast motion_picture article-magazine">
                                 <label for="csl-publisher" data-label-for="report, broadcast">Publisher / Network</label>
                                 <input type="text" id="csl-publisher" class="form-control">
                             </div>
-                            <div class="form-group csl-field-specific" data-csl-type="article-journal broadcast interview" style="display:none;">
+                            
+                            <!-- MODIFIED: Added article-magazine -->
+                            <div class="form-group csl-field-specific" data-csl-type="article-journal article-magazine broadcast interview" style="display:none;">
                                 <label for="csl-container-title" data-label-for="article-journal">Journal / Program / Series Title</label>
                                 <input type="text" id="csl-container-title" class="form-control">
                             </div>
+                            
+                            <!-- NEW: Volume and Issue fields for Journals & Magazines -->
+                            <div class="form-group csl-field-specific" data-csl-type="article-journal article-magazine" style="display:none;">
+                                <div class="row gx-2">
+                                    <div class="col">
+                                        <label for="csl-volume">Volume</label>
+                                        <input type="text" id="csl-volume" class="form-control" placeholder="e.g., 12">
+                                    </div>
+                                    <div class="col">
+                                        <label for="csl-issue">Issue</label>
+                                        <input type="text" id="csl-issue" class="form-control" placeholder="e.g., 4 or Spring">
+                                    </div>
+                                </div>
+                            </div>
+                            
                              <div class="form-group csl-field-specific" data-csl-type="webpage broadcast interview motion_picture" style="display:none;">
                                 <label for="csl-url">URL</label>
                                 <input type="url" id="csl-url" class="form-control">

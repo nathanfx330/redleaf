@@ -293,19 +293,42 @@ document.addEventListener('DOMContentLoaded', () => {
         const saveBtn = document.getElementById('save-metadata-btn');
         const saveStatus = document.getElementById('metadata-save-status');
         
-        function populateYearSelect() { const yearSelect = document.getElementById('csl-date-year'); if(!yearSelect) return; const currentYear = new Date().getFullYear(); yearSelect.innerHTML = '<option value="">Year</option>'; for (let y = currentYear + 1; y >= 1600; y--) yearSelect.add(new Option(y, y)); }
-        function populateMonthSelect() { const monthSelect = document.getElementById('csl-date-month'); if(!monthSelect) return; const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]; monthSelect.innerHTML = '<option value="">Month</option>'; months.forEach((month, i) => monthSelect.add(new Option(month, i + 1))); }
-        function populateDaySelect() { const daySelect = document.getElementById('csl-date-day'); if(!daySelect) return; daySelect.innerHTML = '<option value="">Day</option>'; for (let d = 1; d <= 31; d++) daySelect.add(new Option(d, d)); }
+        function populateYearSelect() { 
+            const yearSelect = document.getElementById('csl-date-year'); 
+            if(!yearSelect) return; 
+            const currentYear = new Date().getFullYear(); 
+            yearSelect.innerHTML = '<option value="">Year</option>'; 
+            for (let y = currentYear + 1; y >= 1600; y--) {
+                yearSelect.add(new Option(y, y)); 
+            }
+        }
         
-        // --- START OF MODIFICATION ---
+        function populateMonthSelect() { 
+            const monthSelect = document.getElementById('csl-date-month'); 
+            if(!monthSelect) return; 
+            const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]; 
+            monthSelect.innerHTML = '<option value="">Month</option>'; 
+            months.forEach((month, i) => monthSelect.add(new Option(month, i + 1))); 
+        }
+        
+        function populateDaySelect() { 
+            const daySelect = document.getElementById('csl-date-day'); 
+            if(!daySelect) return; 
+            daySelect.innerHTML = '<option value="">Day</option>'; 
+            for (let d = 1; d <= 31; d++) {
+                daySelect.add(new Option(d, d)); 
+            }
+        }
+        
         function populateDocTypeSelect() {
             if(!typeSelect) return;
             const types = { 
                 'report': 'Report', 
                 'article-journal': 'Journal Article', 
+                'article-magazine': 'Magazine Article', // <-- ADDED
                 'book': 'Book', 
                 'webpage': 'Webpage',
-                'personal_communication': 'Email', // <-- ADDED
+                'personal_communication': 'Email',
                 'broadcast': 'TV/Radio Broadcast', 
                 'interview': 'Interview/Podcast', 
                 'motion_picture': 'Movie / Short Film',
@@ -315,7 +338,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 'bill': 'Bill / Legislation' 
             };
             typeSelect.innerHTML = ''; 
-            for (const [value, text] of Object.entries(types)) typeSelect.add(new Option(text, value)); 
+            for (const [value, text] of Object.entries(types)) {
+                typeSelect.add(new Option(text, value)); 
+            }
         }
 
         function updateFormFields() {
@@ -339,6 +364,9 @@ document.addEventListener('DOMContentLoaded', () => {
             // Now, apply specific overrides for the selected type
             if (selectedType === 'article-journal') {
                 containerTitleLabel.textContent = 'Journal Title';
+            } else if (selectedType === 'article-magazine') {
+                containerTitleLabel.textContent = 'Magazine Title';
+                if (publisherLabel) publisherLabel.textContent = 'Magazine Publisher (Optional)';
             } else if (selectedType === 'broadcast') {
                 containerTitleLabel.textContent = 'Program / Series Title';
                 publisherLabel.textContent = 'Network / Station';
@@ -357,14 +385,135 @@ document.addEventListener('DOMContentLoaded', () => {
                 if(urlGroup) urlGroup.style.display = 'none';
             }
         }
-        // --- END OF MODIFICATION ---
 
-        function populateForm(cslData) { const data = cslData || {}; typeSelect.value = data.type || 'report'; const docTitleElement = document.querySelector('.document-file-name'); document.getElementById('csl-title').value = data.title || (docTitleElement ? docTitleElement.textContent : ''); document.getElementById('csl-author').value = (data.author || []).map(a => a.literal ? a.literal : `${a.family || ''}, ${a.given || ''}`.trim().replace(/^,|,$/g, '')).join('; '); const yearSelect = document.getElementById('csl-date-year'); const monthSelect = document.getElementById('csl-date-month'); const daySelect = document.getElementById('csl-date-day'); if (data.issued && data.issued['date-parts'] && data.issued['date-parts'][0]) { const [year, month, day] = data.issued['date-parts'][0]; yearSelect.value = year || ''; monthSelect.value = month || ''; daySelect.value = day || ''; } else { yearSelect.value = ''; monthSelect.value = ''; daySelect.value = ''; } document.getElementById('csl-publisher').value = data.publisher || ''; document.getElementById('csl-container-title').value = data['container-title'] || ''; document.getElementById('csl-url').value = data.URL || ''; updateFormFields(); }
-        function buildCslFromForm() { const csl = { id: `doc-${docId}`, type: typeSelect.value }; const title = document.getElementById('csl-title').value.trim(); if (title) csl.title = title; const authorString = document.getElementById('csl-author').value.trim(); if (authorString) csl.author = authorString.split(';').map(name => ({ 'literal': name.trim() })).filter(a => a.literal); const dateParts = [document.getElementById('csl-date-year').value, document.getElementById('csl-date-month').value, document.getElementById('csl-date-day').value].filter(Boolean).map(p => parseInt(p, 10)); if (dateParts.length > 0) csl.issued = { 'date-parts': [dateParts] }; const publisher = document.getElementById('csl-publisher').value.trim(); if (['report', 'broadcast', 'interview', 'motion_picture'].includes(csl.type) && publisher) csl.publisher = publisher; const containerTitle = document.getElementById('csl-container-title').value.trim(); if (['article-journal', 'broadcast', 'interview'].includes(csl.type) && containerTitle) csl['container-title'] = containerTitle; const url = document.getElementById('csl-url').value.trim(); if (['webpage', 'broadcast', 'interview', 'motion_picture'].includes(csl.type) && url) csl.URL = url; return csl; }
-        async function loadMetadata() { try { const response = await fetch(`/api/document/${docId}/metadata`); const data = await response.json(); populateForm(data.csl_json ? JSON.parse(data.csl_json) : null); } catch (error) { saveStatus.textContent = "Error loading data."; saveStatus.style.opacity = '1'; } }
-        saveBtn.addEventListener('click', async () => { const newCslData = buildCslFromForm(); const cslJsonString = JSON.stringify(newCslData, null, 2); saveBtn.disabled = true; saveStatus.textContent = "Saving..."; saveStatus.style.opacity = '1'; try { const response = await fetch(`/api/document/${docId}/metadata`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN }, body: JSON.stringify({ csl_json: cslJsonString }) }); const result = await response.json(); if (!response.ok) throw new Error(result.message); saveStatus.textContent = "Saved successfully."; setTimeout(() => { window.location.reload(); }, 1000); } catch (error) { saveStatus.textContent = `Error: ${error.message}`; saveBtn.disabled = false; } });
+        function populateForm(cslData) { 
+            const data = cslData || {}; 
+            typeSelect.value = data.type || 'report'; 
+            
+            const docTitleElement = document.querySelector('.document-file-name'); 
+            document.getElementById('csl-title').value = data.title || (docTitleElement ? docTitleElement.textContent : ''); 
+            
+            document.getElementById('csl-author').value = (data.author || []).map(a => a.literal ? a.literal : `${a.family || ''}, ${a.given || ''}`.trim().replace(/^,|,$/g, '')).join('; '); 
+            
+            const yearSelect = document.getElementById('csl-date-year'); 
+            const monthSelect = document.getElementById('csl-date-month'); 
+            const daySelect = document.getElementById('csl-date-day'); 
+            
+            if (data.issued && data.issued['date-parts'] && data.issued['date-parts'][0]) { 
+                const [year, month, day] = data.issued['date-parts'][0]; 
+                yearSelect.value = year || ''; 
+                monthSelect.value = month || ''; 
+                daySelect.value = day || ''; 
+            } else { 
+                yearSelect.value = ''; monthSelect.value = ''; daySelect.value = ''; 
+            } 
+            
+            document.getElementById('csl-publisher').value = data.publisher || ''; 
+            document.getElementById('csl-container-title').value = data['container-title'] || ''; 
+            document.getElementById('csl-url').value = data.URL || ''; 
+            
+            // NEW: Populate Volume and Issue
+            const volEl = document.getElementById('csl-volume');
+            if (volEl) volEl.value = data.volume || ''; 
+            
+            const issEl = document.getElementById('csl-issue');
+            if (issEl) issEl.value = data.issue || ''; 
+            
+            updateFormFields(); 
+        }
+
+        function buildCslFromForm() { 
+            const csl = { id: `doc-${docId}`, type: typeSelect.value }; 
+            
+            const title = document.getElementById('csl-title').value.trim(); 
+            if (title) csl.title = title; 
+            
+            const authorString = document.getElementById('csl-author').value.trim(); 
+            if (authorString) csl.author = authorString.split(';').map(name => ({ 'literal': name.trim() })).filter(a => a.literal); 
+            
+            const dateParts = [
+                document.getElementById('csl-date-year').value, 
+                document.getElementById('csl-date-month').value, 
+                document.getElementById('csl-date-day').value
+            ].filter(Boolean).map(p => parseInt(p, 10)); 
+            
+            if (dateParts.length > 0) csl.issued = { 'date-parts': [dateParts] }; 
+            
+            const publisher = document.getElementById('csl-publisher').value.trim(); 
+            if (['report', 'broadcast', 'interview', 'motion_picture', 'article-magazine'].includes(csl.type) && publisher) {
+                csl.publisher = publisher; 
+            }
+            
+            const containerTitle = document.getElementById('csl-container-title').value.trim(); 
+            if (['article-journal', 'article-magazine', 'broadcast', 'interview'].includes(csl.type) && containerTitle) {
+                csl['container-title'] = containerTitle; 
+            }
+            
+            const url = document.getElementById('csl-url').value.trim(); 
+            if (['webpage', 'broadcast', 'interview', 'motion_picture'].includes(csl.type) && url) {
+                csl.URL = url; 
+            }
+            
+            // NEW: Save Volume and Issue
+            const volEl = document.getElementById('csl-volume');
+            if (volEl) {
+                const volume = volEl.value.trim();
+                if (['article-journal', 'article-magazine'].includes(csl.type) && volume) csl.volume = volume;
+            }
+            
+            const issEl = document.getElementById('csl-issue');
+            if (issEl) {
+                const issue = issEl.value.trim();
+                if (['article-journal', 'article-magazine'].includes(csl.type) && issue) csl.issue = issue;
+            }
+            
+            return csl; 
+        }
+
+        async function loadMetadata() { 
+            try { 
+                const response = await fetch(`/api/document/${docId}/metadata`); 
+                const data = await response.json(); 
+                populateForm(data.csl_json ? JSON.parse(data.csl_json) : null); 
+            } catch (error) { 
+                saveStatus.textContent = "Error loading data."; 
+                saveStatus.style.opacity = '1'; 
+            } 
+        }
+        
+        saveBtn.addEventListener('click', async () => { 
+            const newCslData = buildCslFromForm(); 
+            const cslJsonString = JSON.stringify(newCslData, null, 2); 
+            
+            saveBtn.disabled = true; 
+            saveStatus.textContent = "Saving..."; 
+            saveStatus.style.opacity = '1'; 
+            
+            try { 
+                const response = await fetch(`/api/document/${docId}/metadata`, { 
+                    method: 'POST', 
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN }, 
+                    body: JSON.stringify({ csl_json: cslJsonString }) 
+                }); 
+                
+                const result = await response.json(); 
+                if (!response.ok) throw new Error(result.message); 
+                
+                saveStatus.textContent = "Saved successfully."; 
+                setTimeout(() => { window.location.reload(); }, 1000); 
+            } catch (error) { 
+                saveStatus.textContent = `Error: ${error.message}`; 
+                saveBtn.disabled = false; 
+            } 
+        });
+        
         typeSelect.addEventListener('change', updateFormFields);
-        populateDocTypeSelect(); populateYearSelect(); populateMonthSelect(); populateDaySelect(); loadMetadata();
+        populateDocTypeSelect(); 
+        populateYearSelect(); 
+        populateMonthSelect(); 
+        populateDaySelect(); 
+        loadMetadata();
+        
         metadataTab.populateForm = populateForm;
     }
     
