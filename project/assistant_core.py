@@ -129,18 +129,19 @@ def _internal_semantic_search(db, query: str, limit: int = 50) -> List[Dict]:
             
     return top_results
 
-# === MODIFIED: Reads text AND prepends Curator Hints (Private Notes) ===
+# === MODIFIED: Reads text AND prepends Curator Hints (Private Notes) and Metadata ===
 def read_specific_pages(db, sources: List[Dict[str, int]], MAX_CONTEXT_CHARS=32000) -> str:
     if not sources: return "No sources were provided to read."
     doc_ids = list(set(s['doc_id'] for s in sources))
     if not doc_ids: return ""
     placeholders = ','.join('?' for _ in doc_ids)
     
-    # Query includes the 'note' from document_curation
+    # --- MODIFIED: Added dm.csl_json to the query ---
     sql = f"""
-        SELECT d.id, d.relative_path, d.file_type, dc.note
+        SELECT d.id, d.relative_path, d.file_type, dc.note, dm.csl_json
         FROM documents d
         LEFT JOIN document_curation dc ON d.id = dc.doc_id
+        LEFT JOIN document_metadata dm ON d.id = dm.doc_id
         WHERE d.id IN ({placeholders})
     """
     
@@ -151,20 +152,36 @@ def read_specific_pages(db, sources: List[Dict[str, int]], MAX_CONTEXT_CHARS=320
         info = doc_map.get(src['doc_id'])
         if not info: continue
         
-        # --- FIX: Resolve the path ---
         resolved_path = resolve_document_path(info['relative_path'])
-        
-        # --- FIX: Pass doc_id to extractor ---
         text = extract_text_for_copying(resolved_path, info['file_type'], start_page=src['page_number'], end_page=src['page_number'], doc_id=src['doc_id'])
-        
         doc_url = f"{REDLEAF_BASE_URL}/document/{src['doc_id']}"
         
-        # --- INJECT HINT (The "Sticky Note" concept) ---
+        # --- NEW: Parse CSL-JSON into a readable metadata string ---
+        metadata_str = ""
+        if info.get('csl_json'):
+            try:
+                csl = json.loads(info['csl_json'])
+                title = csl.get('title', '')
+                author = ""
+                if csl.get('author') and csl['author'][0]:
+                    author = csl['author'][0].get('literal') or csl['author'][0].get('family', '')
+                year = ""
+                if csl.get('issued', {}).get('date-parts'):
+                    year = str(csl['issued']['date-parts'][0][0])
+                
+                parts = []
+                if title: parts.append(f'"{title}"')
+                if author: parts.append(f"by {author}")
+                if year: parts.append(f"({year})")
+                if parts: metadata_str = " | METADATA: " + " ".join(parts)
+            except: pass
+        
         curator_hint = ""
         if info.get('note') and info['note'].strip():
             curator_hint = f"\n[!!! CURATOR HINT / CONTEXT: {info['note']} !!!]\n"
         
-        entry = f"--- CONTEXT from Document #{src['doc_id']} ({info['relative_path']}) URL: {doc_url}, Page {src['page_number']} ---{curator_hint}\n{text}\n\n"
+        # --- MODIFIED: Inject metadata_str into the header ---
+        entry = f"--- CONTEXT from Document #{src['doc_id']} ({info['relative_path']}){metadata_str} | URL: {doc_url}, Page {src['page_number']} ---{curator_hint}\n{text}\n\n"
         
         if len(context) + len(entry) > MAX_CONTEXT_CHARS: break
         context += entry

@@ -171,8 +171,34 @@ def api_global_search():
     # 3. Format output for Flutter
     results = []
     for doc_id, page_num in sorted_keys[:limit]:
-        doc = db.execute("SELECT relative_path FROM documents WHERE id = ?", (doc_id,)).fetchone()
+        doc = db.execute("""
+            SELECT d.relative_path, dm.csl_json 
+            FROM documents d 
+            LEFT JOIN document_metadata dm ON d.id = dm.doc_id 
+            WHERE d.id = ?
+        """, (doc_id,)).fetchone()
+        
         title = doc['relative_path'] if doc else f"Document #{doc_id}"
+        
+        # --- NEW: Build metadata string into the title so it passes through existing pipelines automatically ---
+        if doc and doc['csl_json']:
+            try:
+                csl = json.loads(doc['csl_json'])
+                csl_title = csl.get('title', '')
+                author = ""
+                if csl.get('author') and csl['author'][0]:
+                    author = csl['author'][0].get('literal') or csl['author'][0].get('family', '')
+                year = ""
+                if csl.get('issued', {}).get('date-parts'):
+                    year = str(csl['issued']['date-parts'][0][0])
+                
+                parts = []
+                if csl_title: parts.append(f'"{csl_title}"')
+                if author: parts.append(f"by {author}")
+                if year: parts.append(f"({year})")
+                if parts: title += " | METADATA: " + " ".join(parts)
+            except: pass
+
         snippet = source_data.get((doc_id, page_num), "Snippet unavailable.")
         
         results.append({
@@ -254,7 +280,7 @@ def api_advanced_search():
         sql_params = entity_params + doc_filter_params + [fetch_limit]
         sql_query = f"""
             SELECT d.id as doc_id, d.relative_path, d.file_type, 
-                   tm.page_number, '' as snippet
+                   tm.page_number, '' as snippet, dm.csl_json
             FROM (
                 {entity_intersection_sql}
                 AND ea0.doc_id IN (SELECT id FROM documents d WHERE {doc_where_str})
@@ -262,6 +288,7 @@ def api_advanced_search():
                 LIMIT ?
             ) tm
             JOIN documents d ON tm.doc_id = d.id
+            LEFT JOIN document_metadata dm ON d.id = dm.doc_id
             ORDER BY d.relative_path COLLATE NOCASE, tm.page_number;
         """
         db_results = db.execute(sql_query, sql_params).fetchall()
@@ -276,6 +303,30 @@ def api_advanced_search():
                 row_dict['snippet'] = re.sub(r'<[^>]+>', '', snippet_html)
             else:
                  row_dict['snippet'] = "Snippet unavailable."
+                 
+            # --- NEW: Extract and format CSL-JSON into a string ---
+            metadata_str = ""
+            if row_dict.get('csl_json'):
+                try:
+                    csl = json.loads(row_dict['csl_json'])
+                    title = csl.get('title', '')
+                    author = ""
+                    if csl.get('author') and csl['author'][0]:
+                        author = csl['author'][0].get('literal') or csl['author'][0].get('family', '')
+                    year = ""
+                    if csl.get('issued', {}).get('date-parts'):
+                        year = str(csl['issued']['date-parts'][0][0])
+                    
+                    parts = []
+                    if title: parts.append(f'"{title}"')
+                    if author: parts.append(f"by {author}")
+                    if year: parts.append(f"({year})")
+                    if parts: metadata_str = " ".join(parts)
+                except: pass
+            
+            row_dict['metadata_str'] = metadata_str
+            row_dict.pop('csl_json', None)
+                 
             results.append(row_dict)
             
         return jsonify(results)
@@ -385,18 +436,46 @@ def api_advanced_search():
     
     results = []
     for doc_id, page_num in sorted_keys:
-        doc_row = db.execute("SELECT relative_path, file_type FROM documents WHERE id = ?", (doc_id,)).fetchone()
+        # --- MODIFIED: JOIN document_metadata to fetch CSL-JSON ---
+        doc_row = db.execute("""
+            SELECT d.relative_path, d.file_type, dm.csl_json 
+            FROM documents d 
+            LEFT JOIN document_metadata dm ON d.id = dm.doc_id 
+            WHERE d.id = ?
+        """, (doc_id,)).fetchone()
+        
         if not doc_row: continue
         
         # Strip HTML markup since agents don't need UI tags
         clean_snippet = re.sub(r'<[^>]+>', '', snippet_map.get((doc_id, page_num), ""))
         
+        # --- NEW: Generate Metadata String for Flutter ---
+        metadata_str = ""
+        if doc_row['csl_json']:
+            try:
+                csl = json.loads(doc_row['csl_json'])
+                title = csl.get('title', '')
+                author = ""
+                if csl.get('author') and csl['author'][0]:
+                    author = csl['author'][0].get('literal') or csl['author'][0].get('family', '')
+                year = ""
+                if csl.get('issued', {}).get('date-parts'):
+                    year = str(csl['issued']['date-parts'][0][0])
+                
+                parts = []
+                if title: parts.append(f'"{title}"')
+                if author: parts.append(f"by {author}")
+                if year: parts.append(f"({year})")
+                if parts: metadata_str = " ".join(parts)
+            except: pass
+
         results.append({
             'doc_id': doc_id,
             'relative_path': doc_row['relative_path'],
             'file_type': doc_row['file_type'],
             'page_number': page_num,
-            'snippet': clean_snippet
+            'snippet': clean_snippet,
+            'metadata_str': metadata_str # <-- Added this field
         })
         
     return jsonify(results)

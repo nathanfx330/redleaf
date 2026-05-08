@@ -206,7 +206,16 @@ def get_document_types():
 @login_required
 def get_document_text(doc_id):
     db = get_db()
-    doc = get_document_or_404(db, doc_id)
+    
+    # --- MODIFIED: Fetch metadata as well ---
+    query = """
+        SELECT d.*, dm.csl_json 
+        FROM documents d
+        LEFT JOIN document_metadata dm ON d.id = dm.doc_id
+        WHERE d.id = ? AND d.status != 'Missing'
+    """
+    doc = db.execute(query, (doc_id,)).fetchone()
+    if not doc: abort(404)
     
     full_path = resolve_document_path(doc['relative_path'])
     
@@ -226,7 +235,32 @@ def get_document_text(doc_id):
     )
     # --- END OF FIX ---
     
-    return jsonify({'success': True, 'text': text_content})
+    # --- NEW: Build metadata string ---
+    metadata_str = ""
+    if doc['csl_json']:
+        try:
+            import json
+            csl = json.loads(doc['csl_json'])
+            title = csl.get('title', '')
+            author = ""
+            if csl.get('author') and csl['author'][0]:
+                author = csl['author'][0].get('literal') or csl['author'][0].get('family', '')
+            year = ""
+            if csl.get('issued', {}).get('date-parts'):
+                year = str(csl['issued']['date-parts'][0][0])
+            
+            parts = []
+            if title: parts.append(f'"{title}"')
+            if author: parts.append(f"by {author}")
+            if year: parts.append(f"({year})")
+            if parts: metadata_str = " ".join(parts)
+        except: pass
+
+    return jsonify({
+        'success': True, 
+        'text': text_content,
+        'metadata_str': metadata_str
+    })
 
 @api_bp.route('/document/<int:doc_id>/entities')
 @login_required
