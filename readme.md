@@ -7,6 +7,9 @@ Built for researchers, archivists, and knowledge workers, Redleaf makes it easy 
 
 **Redleaf Engine 2.0 Blog Post:**
 [https://nathanielwestveer.com/posts/redleaf-engine-update/](https://nathanielwestveer.com/posts/redleaf-engine-update/)
+**Redleaf Engine 2.5 Blog Post:**
+[https://nathanielwestveer.com/posts/redleaf-engine-2-5/](https://nathanielwestveer.com/posts/redleaf-engine-2-5/)
+
 
 ![Dashboard Screenshot](https://nathanfx330.github.io/blog/posts/redleaf-engine-update/dashboard.jpg)
 
