@@ -1,5 +1,6 @@
-# --- File: ./project/database.py (FIXED for Timestamp Handling) ---
+# --- File: ./project/database.py (FIXED for Timestamp Handling & Vector Search) ---
 import sqlite3
+import sqlite_vec
 from flask import g, current_app
 
 def get_db():
@@ -19,6 +20,11 @@ def get_db():
             timeout=15  # Increased timeout for potentially long-running write operations
         )
         # --- END OF FIX ---
+        
+        # --- Load sqlite-vec extension for native vector search ---
+        g.db.enable_load_extension(True)
+        sqlite_vec.load(g.db)
+        g.db.enable_load_extension(False)
         
         # Use sqlite3.Row to allow accessing columns by name
         g.db.row_factory = sqlite3.Row

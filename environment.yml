@@ -35,3 +35,4 @@ dependencies:
     - duckdb
     - tqdm
     - pytz
+    - sqlite-vec

@@ -28,6 +28,7 @@ requests==2.31.0
 # == Curator CLI & Database ==
 duckdb
 pytz
+sqlite-vec
 
 # == CLI & User Experience ==
 tqdm

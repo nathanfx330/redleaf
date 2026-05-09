@@ -1,16 +1,17 @@
-# --- File: ./project/assistant_core.py ---
+# --- File: ./project/assistant_core.py (UPDATED FOR SQLITE-VEC) ---
 import sys
 import getpass
 import re
 import json
 import ollama
 import html
-import heapq  # <-- NEW: Used for keeping top scores without hoarding RAM
+import heapq  
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Union, List, Tuple, Set, Optional
 from collections import defaultdict
 import numpy as np
+import struct # Needed to pack numpy arrays for sqlite-vec
 
 # --- Add project to Python path to access its modules ---
 project_dir = Path(__file__).resolve().parent.parent
@@ -20,7 +21,6 @@ sys.path.append(str(project_dir))
 from project.database import get_db
 from werkzeug.security import check_password_hash
 from processing_pipeline import extract_text_for_copying
-# FIXED: Importing resolve_document_path directly from config
 from project.config import DOCUMENTS_DIR, REDLEAF_BASE_URL, EMBEDDING_MODEL, resolve_document_path
 
 # --- Import prompts ---
@@ -49,7 +49,6 @@ class Style:
 
 # --- Core Search & Data Retrieval Functions ---
 def _internal_fts_search(db, query: str, limit: int = 50) -> List[Dict]:
-    # --- FIXED: Smart Multi-Term (A AND B) Search ---
     safe_query = re.sub(r'[^\w\s]', '', query).strip()
     words = [w for w in safe_query.split() if w.lower() != 'and']
     fts_query = " AND ".join([f'"{w}"' for w in words])
@@ -66,61 +65,67 @@ def _internal_fts_search(db, query: str, limit: int = 50) -> List[Dict]:
     """
     return [dict(r) for r in db.execute(sql, [fts_query, limit]).fetchall()]
 
+def serialize_f32(vector: List[float]) -> bytes:
+    """Serializes a list of floats into a compact byte format for sqlite-vec."""
+    return struct.pack("%sf" % len(vector), *vector)
+
 def _internal_semantic_search(db, query: str, limit: int = 50) -> List[Dict]:
-    # --- FIXED: RAM-Safe Vector Streaming ---
+    # --- SQLITE-VEC OPTIMIZED SEARCH ---
     try:
         query_embedding_response = ollama.embeddings(model=EMBEDDING_MODEL, prompt=query)
-        query_vector = np.array(query_embedding_response['embedding'], dtype=np.float32)
-        norm_query_vector = query_vector / np.linalg.norm(query_vector)
+        # Serialize the raw float list directly for sqlite-vec
+        query_blob = serialize_f32(query_embedding_response['embedding'])
     except Exception as e:
         print(f"{Style.RED}[ERROR] Could not generate query embedding: {e}{Style.END}")
         return []
 
-    top_k_heap = [] # Stores tuples of (score, doc_id, page_number, snippet)
-    batch_size = 2000 # Stream 2000 rows at a time (Uses < 10MB of RAM)
+    top_k_heap = [] # Stores tuples of (distance, doc_id, page_number, snippet)
 
-    def process_batch(batch):
-        if not batch: return
-        
-        # Extract embeddings and normalize them
-        embeddings = np.array([np.frombuffer(row['embedding'], dtype=np.float32) for row in batch])
-        norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
-        norms[norms == 0] = 1 # Prevent division by zero
-        norm_embeddings = embeddings / norms
-        
-        # Vectorized dot product for blazingly fast similarity calculation
-        similarities = np.dot(norm_embeddings, norm_query_vector)
-        
-        for i, score in enumerate(similarities):
-            # Maintain a Min-Heap of the top N results
-            if len(top_k_heap) < limit:
-                heapq.heappush(top_k_heap, (score, batch[i]['doc_id'], batch[i]['page_number'], batch[i]['chunk_text']))
-            else:
-                if score > top_k_heap[0][0]:
-                    heapq.heapreplace(top_k_heap, (score, batch[i]['doc_id'], batch[i]['page_number'], batch[i]['chunk_text']))
+    # We search both virtual vector tables using the native MATCH operator
+    search_targets = [
+        ("vec_embedding_chunks", "embedding_chunks"),
+        ("vec_super_embedding_chunks", "super_embedding_chunks")
+    ]
 
-    # Stream from both embedding tables without exhausting memory
-    for table in ["embedding_chunks", "super_embedding_chunks"]:
+    for vec_table, meta_table in search_targets:
         try:
-            cursor = db.execute(f"""
-                SELECT e.doc_id, e.page_number, e.chunk_text, e.embedding 
-                FROM {table} e
+            # We use vec_distance_cosine to sort directly in SQLite (C level)
+            sql = f"""
+                SELECT e.doc_id, e.page_number, e.chunk_text, 
+                       vec_distance_cosine(v.embedding, ?) as distance
+                FROM {vec_table} v
+                JOIN {meta_table} e ON v.chunk_id = e.id
                 JOIN documents d ON e.doc_id = d.id
-                WHERE d.status != 'Missing'
-            """)
-            while True:
-                batch = cursor.fetchmany(batch_size)
-                if not batch: 
-                    break
-                process_batch(batch)
-        except sqlite3.OperationalError:
-            continue # Table might not exist yet if the pipeline hasn't finished
+                WHERE v.embedding MATCH ? AND k = ? AND d.status != 'Missing'
+            """
+            # sqlite-vec MATCH requires the blob twice: once for the math, once for the index
+            results = db.execute(sql, [query_blob, query_blob, limit * 2]).fetchall()
+            
+            for row in results:
+                # Store distance (lower is better, so we negate it for the max-heap logic if needed,
+                # but standard cosine distance is 0 to 2, where 0 is exact match).
+                # We want the smallest distances, so we push -distance to the heap to keep the smallest at the top
+                dist = row['distance']
+                # To maintain a heap of size `limit` keeping the SMALLEST items:
+                # Python's heapq is a min-heap. If we push (-dist, item), the largest distance sits at the top [0].
+                # When we exceed the limit, we pop it, leaving only the smallest distances.
+                if len(top_k_heap) < limit:
+                    heapq.heappush(top_k_heap, (-dist, row['doc_id'], row['page_number'], row['chunk_text']))
+                else:
+                    if -dist > top_k_heap[0][0]: # If this distance is smaller (thus -dist is larger)
+                        heapq.heapreplace(top_k_heap, (-dist, row['doc_id'], row['page_number'], row['chunk_text']))
+                        
+        except sqlite3.OperationalError as e:
+            # Table might not exist yet if the pipeline hasn't finished
+            print(f"[WARN] Vector table {vec_table} skipped: {e}")
+            continue
 
-    # Sort the heap descending (highest similarity first)
+    # Unpack the heap and sort by smallest distance first (highest similarity)
+    # Since we stored -dist, we sort descending to put the largest -dist (smallest real dist) first
     top_k_heap.sort(key=lambda x: x[0], reverse=True)
     
     top_results = []
-    for score, doc_id, page_number, chunk_text in top_k_heap:
+    for neg_dist, doc_id, page_number, chunk_text in top_k_heap:
         top_results.append({
             'doc_id': doc_id, 
             'page_number': page_number,
@@ -129,14 +134,12 @@ def _internal_semantic_search(db, query: str, limit: int = 50) -> List[Dict]:
             
     return top_results
 
-# === MODIFIED: Reads text AND prepends Curator Hints (Private Notes) and Metadata ===
 def read_specific_pages(db, sources: List[Dict[str, int]], MAX_CONTEXT_CHARS=32000) -> str:
     if not sources: return "No sources were provided to read."
     doc_ids = list(set(s['doc_id'] for s in sources))
     if not doc_ids: return ""
     placeholders = ','.join('?' for _ in doc_ids)
     
-    # --- MODIFIED: Added dm.csl_json to the query ---
     sql = f"""
         SELECT d.id, d.relative_path, d.file_type, dc.note, dm.csl_json
         FROM documents d
@@ -156,7 +159,6 @@ def read_specific_pages(db, sources: List[Dict[str, int]], MAX_CONTEXT_CHARS=320
         text = extract_text_for_copying(resolved_path, info['file_type'], start_page=src['page_number'], end_page=src['page_number'], doc_id=src['doc_id'])
         doc_url = f"{REDLEAF_BASE_URL}/document/{src['doc_id']}"
         
-        # --- NEW: Parse CSL-JSON into a readable metadata string ---
         metadata_str = ""
         if info.get('csl_json'):
             try:
@@ -180,7 +182,6 @@ def read_specific_pages(db, sources: List[Dict[str, int]], MAX_CONTEXT_CHARS=320
         if info.get('note') and info['note'].strip():
             curator_hint = f"\n[!!! CURATOR HINT / CONTEXT: {info['note']} !!!]\n"
         
-        # --- MODIFIED: Inject metadata_str into the header ---
         entry = f"--- CONTEXT from Document #{src['doc_id']} ({info['relative_path']}){metadata_str} | URL: {doc_url}, Page {src['page_number']} ---{curator_hint}\n{text}\n\n"
         
         if len(context) + len(entry) > MAX_CONTEXT_CHARS: break
@@ -192,10 +193,7 @@ def get_page_content(db, doc_id: int, page_number: int) -> Tuple[str, Dict]:
     if not doc: return f"Error: No document found with ID {doc_id}.", None
     if doc['page_count'] and (page_number < 1 or page_number > doc['page_count']): return f"Error: Invalid page number.", None
     
-    # --- FIX: Resolve the path ---
     resolved_path = resolve_document_path(doc['relative_path'])
-    
-    # --- FIX: Pass doc_id to extractor ---
     page_text = extract_text_for_copying(resolved_path, doc['file_type'], start_page=page_number, end_page=page_number, doc_id=doc_id)
     
     if not page_text.strip(): return f"Page {page_number} was found but contains no text.", None
@@ -349,20 +347,11 @@ class BaseAssistant:
         except IOError as e:
             print(f"{Style.RED}[ERROR] Could not write to file: {e}{Style.END}")
 
-    # ===================================================================
-    # --- NEW: SYSTEM AWARENESS & GLOBAL CONTEXT ---
-    # ===================================================================
     def _get_global_context(self) -> str:
         """Generates a high-level briefing of what is in the database."""
-        
         briefing_parts = []
-
-        # 1. Automatic Scan (Always runs)
         try:
-            # Get total doc count
             total_docs = self.db.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
-            
-            # Get time range from metadata
             date_range = self.db.execute("""
                 SELECT MIN(json_extract(csl_json, '$.issued."date-parts"[0][0]')) as min_year,
                        MAX(json_extract(csl_json, '$.issued."date-parts"[0][0]')) as max_year
@@ -374,7 +363,6 @@ class BaseAssistant:
             else:
                 date_str = "Years covered: Unknown"
 
-            # Get top 5 tags
             top_tags = self.db.execute("""
                 SELECT t.name, COUNT(dt.doc_id) as c 
                 FROM tags t JOIN document_tags dt ON t.id = dt.tag_id 
@@ -386,23 +374,17 @@ class BaseAssistant:
         except Exception as e:
             briefing_parts.append("[AUTO-DETECTED]: System briefing unavailable (Database error).")
 
-        # 2. Manual Context (Appended if present)
         if self.manual_context:
             briefing_parts.append(f"\n[USER OVERRIDE]: {self.manual_context}")
 
         return "\n".join(briefing_parts)
 
-    # ===================================================================
-    # --- MODIFIED: AGENTIC RECURSIVE STUDY IMPLEMENTATION ---
-    # ===================================================================
     def _handle_study_command(self, user_input: str) -> Optional[str]:
         """Executes a deep, multi-document study workflow with Broad-to-Narrow filtering."""
         study_match = re.search(r'^study:\s*(.+)', user_input, re.IGNORECASE)
         if not study_match: return None
         
         goal = study_match.group(1).strip()
-        
-        # 1. GET POOL CONTEXT
         system_stats = self._get_global_context()
         
         print(f"\n{Style.MAGENTA}{Style.BOLD}=== 🕵️ Starting Autonomous Study on: '{goal}' ==={Style.END}")
@@ -416,8 +398,6 @@ class BaseAssistant:
         for step in range(1, max_steps + 1):
             print(f"{Style.BOLD}[Step {step}/{max_steps}]{Style.END}", end=" ")
             
-            # 2. DECIDE NEXT MOVE
-            # Inject Persona and System Stats into the prompt
             prompt_content = RECURSIVE_STUDY_PROMPT.format(
                 goal=goal, 
                 current_notes=accumulated_notes, 
@@ -432,13 +412,12 @@ class BaseAssistant:
                 decision = json.loads(decision_json)
                 action = decision.get("action", "finish")
                 thought = decision.get("thought", "No thought provided.")
-                comment = decision.get("comment", "") # Capture new AI comment
+                comment = decision.get("comment", "")
                 query = decision.get("query", "")
             except json.JSONDecodeError:
                 print(f"{Style.RED}[Error] JSON Decode failed. Stopping.{Style.END}")
                 break
 
-            # 3. PRINT AI SCRATCHPAD COMMENT
             if comment:
                 print(f"{Style.MAGENTA}AI: \"{comment}\"{Style.END}")
             print(f"{Style.YELLOW}Thought: {thought}{Style.END}")
@@ -450,11 +429,9 @@ class BaseAssistant:
             if action == "search" and query:
                 print(f"{Style.CYAN}--> Action: Searching for '{query}'...{Style.END}")
                 
-                # 4. SCAN (Hybrid Search) - Get top 50 candidates
                 fts_hits = _internal_fts_search(self.db, query, limit=50)
                 sem_hits = _internal_semantic_search(self.db, query, limit=50)
                 
-                # Merge and deduplicate based on Doc ID + Page
                 candidates = {}
                 for hit in fts_hits + sem_hits:
                     key = f"{hit['doc_id']}:{hit['page_number']}"
@@ -466,7 +443,6 @@ class BaseAssistant:
                     accumulated_notes += f"\n[System Note]: Search for '{query}' yielded no new documents."
                     continue
 
-                # Format candidates for the Selector Agent (Broad Filter)
                 candidate_text = ""
                 indexed_candidates = list(candidates.values())[:20]
                 
@@ -475,8 +451,6 @@ class BaseAssistant:
                     doc_name = Path(doc_path_row['relative_path']).name if doc_path_row else "Unknown"
                     candidate_text += f"ID {i}: [Doc {cand['doc_id']} - {doc_name} (Pg {cand['page_number']})]: {cand['snippet'][:150]}...\n"
 
-                # 5. SELECT (Broad Context Filtering)
-                # KEY CHANGE: We pass the GOAL + Query to the selector so it knows to filter out drift.
                 print(f"{Style.CYAN}    Scanning {len(candidates)} candidates for relevance to '{goal}'...{Style.END}")
                 broad_context_query = f"GOAL: {goal} (Specific Search: {query})"
                 selector_messages = [{"role": "system", "content": SELECTOR_PROMPT.format(query=broad_context_query, candidates=candidate_text, k=3)}]
@@ -488,7 +462,6 @@ class BaseAssistant:
                 except:
                     selected_indices = [0, 1, 2]
 
-                # 6. READ & EXTRACT (Narrow Filtering)
                 docs_read_count = 0
                 for idx in selected_indices:
                     if idx >= len(indexed_candidates): continue
@@ -497,12 +470,9 @@ class BaseAssistant:
                     if key in read_history: continue
                     read_history.add(key)
                     
-                    # read_specific_pages now includes Curator Hints!
                     full_text = read_specific_pages(self.db, [{'doc_id': target['doc_id'], 'page_number': target['page_number']}])
                     print(f"{Style.GREEN}    Reading Doc {target['doc_id']} (Pg {target['page_number']})...{Style.END}")
                     
-                    # 7. UPDATE NOTES (Inject Persona & Goal for Strict Filtering)
-                    # KEY CHANGE: Passing 'goal' to Note Taker enforces the narrow filter.
                     extractor_messages = [{"role": "system", "content": NOTE_TAKER_PROMPT.format(
                         goal=goal, 
                         current_notes=accumulated_notes, 
@@ -520,7 +490,6 @@ class BaseAssistant:
                 if docs_read_count == 0:
                     accumulated_notes += f"\n[System Note]: Investigated documents for '{query}' but found no *new* relevant information."
 
-        # 8. FINAL REPORT (Inject Persona here too)
         print(f"\n{Style.MAGENTA}{Style.BOLD}=== 📝 Synthesizing Final Report ==={Style.END}")
         
         writer_messages = [
@@ -532,7 +501,6 @@ class BaseAssistant:
         final_report = self.get_assistant_response_stream(writer_messages)
         print(f"{Style.END}\n", end='')
 
-        # 9. POST-PROCESSING: LINKS
         links_section = "\n\n🔗 **Reference Links:**\n"
         cited_ids = set(re.findall(r'\[Doc[:.]?\s*(\d+)\]', final_report, re.IGNORECASE))
         
@@ -556,16 +524,12 @@ class BaseAssistant:
         return final_report + links_section
 
     def _handle_research_command(self, user_input: str, active_doc: Dict) -> str:
-        # (Legacy simple research command - retained for backward compatibility)
         research_match = re.search(r'^research:\s*(.+)', user_input, re.IGNORECASE)
         if not research_match: return None
         user_instruction = research_match.group(1).strip()
         print(f"{Style.MAGENTA}[INFO] Executing simple lookup for: '{user_instruction}'{Style.END}")
         return self.available_tools['research_across_all_documents']([user_instruction])
 
-    # ===================================================================
-    # --- STANDARD SEARCH & INTERACTION (Unchanged logic) ---
-    # ===================================================================
     def _handle_search_command(self, user_input: str) -> Tuple[Union[str, None], Union[Tuple[str, str], None]]:
         search_match = re.search(r'^search:\s*(.+)', user_input, re.IGNORECASE)
         if not search_match: return None, None
@@ -619,13 +583,9 @@ class BaseAssistant:
         doc = self.db.execute("SELECT relative_path, file_type FROM documents WHERE id = ?", (d_id,)).fetchone()
         if not doc: return f"{Style.RED}Doc not found.{Style.END}"
         
-        # --- FIX: Resolve the path ---
         resolved_path = resolve_document_path(doc['relative_path'])
-        
-        # --- FIX: Pass doc_id to extractor ---
         text = extract_text_for_copying(resolved_path, doc['file_type'], start_page=start, end_page=end, doc_id=d_id)
         
-        # --- FIX: Inject Metadata Header for Instruct Command ---
         doc_url = f"{REDLEAF_BASE_URL}/document/{d_id}"
         header = f"--- CONTEXT from Document #{d_id} ({doc['relative_path']}) URL: {doc_url}, Pages {page_range} ---\n"
         full_context = header + text
@@ -700,13 +660,11 @@ class BaseAssistant:
             except (KeyboardInterrupt, EOFError): print("\nGoodbye!"); break
             if not user_input: continue
 
-            # --- INTERCEPT STUDY COMMAND ---
             if user_input.lower().startswith("study:"):
                 report_content = self._handle_study_command(user_input)
                 if report_content:
                     conversation_history.append({"role": "assistant", "content": report_content})
                 continue
-            # -------------------------------
 
             if user_input.startswith('/'):
                 command = user_input.lstrip('/').split(maxsplit=1)[0].lower()
@@ -718,7 +676,6 @@ class BaseAssistant:
             
             conversation_history.append({"role": "user", "content": user_input})
             
-            # Handle other commands (search, load, etc)
             if user_input.lower().startswith('search:'):
                 ans, ctx = self._handle_search_command(user_input)
                 if ans:
@@ -726,13 +683,11 @@ class BaseAssistant:
                     if ctx: last_global_context, last_global_query = ctx
                 continue
 
-            # 4. Instruct (id:X + page:Y)
             ans = self._handle_instruct_command(user_input)
             if ans:
                 conversation_history.append({"role": "assistant", "content": ans})
                 continue
 
-            # 5. For Each
             ans, ctx = self._handle_for_each_page_command(user_input, active_doc)
             if ans:
                 if ctx:
@@ -741,12 +696,10 @@ class BaseAssistant:
                 conversation_history.append({"role": "assistant", "content": ans})
                 continue
 
-            # 6. Load/Find (Regex check)
             find_match = re.search(r'^(?:find|search for)\s+(.+)', user_input, re.IGNORECASE)
             load_match = re.search(r'^(?:load|open|get)\s+(?:doc|document)?\s*(?:#|id:?)?\s*(\S+)', user_input, re.IGNORECASE)
 
             if find_match or load_match:
-                # Remove the user command from history if it was just a system op
                 conversation_history.pop()
                 
                 if find_match:
@@ -767,11 +720,10 @@ class BaseAssistant:
                     if not rec: print(f"{Style.RED}[FAIL] Doc not found.{Style.END}")
                     else:
                         active_doc = dict(rec)
-                        conversation_history = [] # Reset history on new doc load
+                        conversation_history = [] 
                         print(f"{Style.GREEN}[OK] Loaded Doc ID {active_doc['id']}: '{active_doc['relative_path']}'{Style.END}")
                 continue
             
-            # 7. Default Chat (Conversation)
             context_to_use = last_doc_context if (active_doc and last_doc_context) else last_global_context
             
             if context_to_use:
@@ -783,7 +735,6 @@ class BaseAssistant:
                     {"role": "user", "content": user_input}
                 ]
             else:
-                # Fallback to simple chat if no context loaded
                 print(f"{Style.CYAN}[Thinking... General Chat]{Style.END}")
                 msgs = [{"role": "system", "content": CONVERSATION_PROMPT}, *conversation_history[-5:]]
 

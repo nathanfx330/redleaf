@@ -1,4 +1,4 @@
-# --- File: ./processing_pipeline.py ---
+# --- File: ./processing_pipeline.py (UPDATED FOR SQLITE-VEC - SYNTAX FIXED) ---
 import sqlite3
 import hashlib
 import traceback
@@ -19,6 +19,7 @@ import spacy
 from bs4 import BeautifulSoup
 import ollama
 import numpy as np
+import sqlite_vec
 
 # --- Configuration ---
 # FIXED: Importing absolute paths directly from config to prevent worker displacement
@@ -48,6 +49,12 @@ def load_spacy_model():
 def get_db_conn():
     """Gets a fresh, process-safe database connection."""
     conn = sqlite3.connect(DATABASE_FILE, timeout=30)
+    
+    # --- Load sqlite-vec extension for native vector search ---
+    conn.enable_load_extension(True)
+    sqlite_vec.load(conn)
+    conn.enable_load_extension(False)
+    
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON;")
     conn.execute("PRAGMA journal_mode = WAL;")
@@ -64,7 +71,6 @@ def _paginate_text(text, words_per_page=300):
         page_content_map[1] = ""
     return page_content_map
 
-# --- START OF FIX: Accept doc_id directly to bypass path guessing ---
 def extract_text_for_copying(doc_path: Path, file_type: str, start_page=None, end_page=None, doc_id=None) -> str:
     if file_type in ['TXT', 'HTML', 'SRT', 'EML']:
         conn = None
@@ -135,7 +141,6 @@ def extract_text_for_copying(doc_path: Path, file_type: str, start_page=None, en
         return "\n\n".join(full_text)
     else:
         return f"Cannot extract text from unsupported file type: {file_type}"
-# --- END OF FIX ---
 
 def _extract_text_from_pipermail(html_content: str) -> str:
     soup = BeautifulSoup(html_content, 'lxml')
@@ -340,7 +345,6 @@ def process_document(doc_id):
 
         print(f"--- Worker {os.getpid()} processing Doc ID: {doc_id} (Type: {doc_info['file_type']}) ---")
         
-        # --- FIX: Resolve the path using the new utility function ---
         full_path = resolve_document_path(doc_info['relative_path'])
         
         page_content_map, page_count, duration_seconds = {}, 0, None
@@ -462,8 +466,11 @@ def process_document(doc_id):
         cursor.execute("DELETE FROM content_index WHERE doc_id = ?", (doc_id,))
         cursor.execute("DELETE FROM entity_appearances WHERE doc_id = ?", (doc_id,))
         cursor.execute("DELETE FROM entity_relationships WHERE doc_id = ?", (doc_id,))
+        
+        # This will trigger the cascading deletes in vec_embedding_chunks due to our SQLite triggers
         cursor.execute("DELETE FROM embedding_chunks WHERE doc_id = ?", (doc_id,))
         cursor.execute("DELETE FROM super_embedding_chunks WHERE doc_id = ?", (doc_id,))
+        
         cursor.execute("DELETE FROM email_metadata WHERE doc_id = ?", (doc_id,))
         cursor.execute("DELETE FROM document_metadata WHERE doc_id = ?", (doc_id,))
 
@@ -482,8 +489,18 @@ def process_document(doc_id):
         if extracted_data.get("content"):
             cursor.executemany("INSERT INTO content_index (doc_id, page_number, page_content) VALUES (?, ?, ?)", [(doc_id, pn, pt) for pn, pt in extracted_data["content"]])
         
+        # --- NEW: Write to sqlite-vec virtual tables ---
         if extracted_data.get("embeddings"):
-             cursor.executemany("INSERT INTO embedding_chunks (doc_id, page_number, chunk_text, embedding) VALUES (?, ?, ?, ?)", extracted_data["embeddings"])
+            for d_id, page_num, chunk_text, embedding_blob in extracted_data["embeddings"]:
+                cursor.execute(
+                    "INSERT INTO embedding_chunks (doc_id, page_number, chunk_text) VALUES (?, ?, ?)", 
+                    (d_id, page_num, chunk_text)
+                )
+                chunk_id = cursor.lastrowid
+                cursor.execute(
+                    "INSERT INTO vec_embedding_chunks (chunk_id, embedding) VALUES (?, ?)",
+                    (chunk_id, embedding_blob)
+                )
         
         if csl_json_text:
             cursor.execute("""
@@ -516,7 +533,6 @@ def process_document(doc_id):
                 )
             
             if extracted_data.get("super_chunks"):
-                super_embeddings_to_store = []
                 for chunk_data in extracted_data["super_chunks"]:
                     entity_tuple = chunk_data["entity"]
                     if entity_tuple in entity_id_map:
@@ -525,16 +541,21 @@ def process_document(doc_id):
                         try:
                             response = ollama.embeddings(model=EMBEDDING_MODEL, prompt=chunk_text)
                             embedding_blob = np.array(response['embedding'], dtype=np.float32).tobytes()
-                            super_embeddings_to_store.append((doc_id, chunk_data["page_number"], entity_id, chunk_text, embedding_blob))
+                            
+                            # Insert metadata and get ID
+                            cursor.execute(
+                                "INSERT INTO super_embedding_chunks (doc_id, page_number, entity_id, chunk_text) VALUES (?, ?, ?, ?)",
+                                (doc_id, chunk_data["page_number"], entity_id, chunk_text)
+                            )
+                            chunk_id = cursor.lastrowid
+                            # Insert vector into vec0
+                            cursor.execute(
+                                "INSERT INTO vec_super_embedding_chunks (chunk_id, embedding) VALUES (?, ?)",
+                                (chunk_id, embedding_blob)
+                            )
                         except Exception as e:
                             print(f"WORKER WARNING: Could not generate super embedding for chunk '{chunk_text[:50]}...'. Error: {e}")
                             continue
-                
-                if super_embeddings_to_store:
-                    cursor.executemany(
-                        "INSERT INTO super_embedding_chunks (doc_id, page_number, entity_id, chunk_text, embedding) VALUES (?, ?, ?, ?, ?)",
-                        super_embeddings_to_store
-                    )
 
         cursor.execute("UPDATE documents SET status = ?, status_message = ?, processed_at = CURRENT_TIMESTAMP WHERE id = ?", ('Indexed', 'Processing complete.', doc_id))
         conn.commit()

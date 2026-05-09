@@ -1,5 +1,6 @@
-# --- File: ./storage_setup.py (FUTURE PROOFED) ---
+# --- File: ./storage_setup.py (UPDATED FOR 768 DIMENSIONS) ---
 import sqlite3
+import sqlite_vec
 from pathlib import Path
 
 DATABASE_FILE = "knowledge_base.db"
@@ -11,6 +12,12 @@ def create_unified_index(db_path, is_bake_operation=False):
     """
     print(f"--- Setting up the Unified Index at {db_path} ---")
     conn = sqlite3.connect(db_path)
+    
+    # --- Load sqlite-vec extension for native vector search ---
+    conn.enable_load_extension(True)
+    sqlite_vec.load(conn)
+    conn.enable_load_extension(False)
+    
     cursor = conn.cursor()
 
     # --- Set up essential PRAGMA for performance and integrity ---
@@ -327,21 +334,19 @@ def create_unified_index(db_path, is_bake_operation=False):
         );
     """)
     
-    # === 9. Vector Search Index ===
-    print("Creating Vector Search Index...")
+    # === 9. Vector Search Index (Updated for sqlite-vec) ===
+    print("Creating Vector Metadata Tables...")
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS embedding_chunks (
             id INTEGER PRIMARY KEY,
             doc_id INTEGER NOT NULL,
             page_number INTEGER NOT NULL,
             chunk_text TEXT NOT NULL,
-            embedding BLOB NOT NULL,
             FOREIGN KEY (doc_id) REFERENCES documents(id) ON DELETE CASCADE
         );
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_embedding_doc_id ON embedding_chunks (doc_id);")
 
-    print("Creating Super Vector Search Index...")
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS super_embedding_chunks (
             id INTEGER PRIMARY KEY,
@@ -349,13 +354,29 @@ def create_unified_index(db_path, is_bake_operation=False):
             page_number INTEGER NOT NULL,
             entity_id INTEGER NOT NULL,
             chunk_text TEXT NOT NULL,
-            embedding BLOB NOT NULL,
             FOREIGN KEY (doc_id) REFERENCES documents(id) ON DELETE CASCADE,
             FOREIGN KEY (entity_id) REFERENCES entities(id) ON DELETE CASCADE
         );
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_super_embedding_doc_id ON super_embedding_chunks (doc_id);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_super_embedding_entity_id ON super_embedding_chunks (entity_id);")
+
+    print("Creating sqlite-vec Virtual Tables...")
+    
+    # --- CHANGED TO 768 DIMENSIONS ---
+    cursor.execute("""
+        CREATE VIRTUAL TABLE IF NOT EXISTS vec_embedding_chunks USING vec0(
+            chunk_id INTEGER PRIMARY KEY,
+            embedding float[768]
+        );
+    """)
+    
+    cursor.execute("""
+        CREATE VIRTUAL TABLE IF NOT EXISTS vec_super_embedding_chunks USING vec0(
+            chunk_id INTEGER PRIMARY KEY,
+            embedding float[768]
+        );
+    """)
     
     # === 10. USER-DRIVEN WEIGHTING ===
     print("Creating Boosted Relationships table...")
@@ -374,7 +395,6 @@ def create_unified_index(db_path, is_bake_operation=False):
     """)
 
     # === 11. AUTOMATIC MAINTENANCE TRIGGERS ===
-    # These ensure cached columns in 'documents' stay in sync forever.
     print("Installing automatic maintenance triggers...")
     
     # Comments
@@ -397,10 +417,23 @@ def create_unified_index(db_path, is_bake_operation=False):
         BEGIN UPDATE documents SET cached_tag_count = MAX(0, cached_tag_count - 1) WHERE id = OLD.doc_id; END;
     """)
 
+    # --- Vector Garbage Collection Triggers ---
+    cursor.execute("""
+        CREATE TRIGGER IF NOT EXISTS trg_delete_vec_embedding AFTER DELETE ON embedding_chunks
+        BEGIN
+            DELETE FROM vec_embedding_chunks WHERE chunk_id = OLD.id;
+        END;
+    """)
+    cursor.execute("""
+        CREATE TRIGGER IF NOT EXISTS trg_delete_vec_super_embedding AFTER DELETE ON super_embedding_chunks
+        BEGIN
+            DELETE FROM vec_super_embedding_chunks WHERE chunk_id = OLD.id;
+        END;
+    """)
+
     conn.commit()
     conn.close()
     print("--- Unified Index setup is complete. ---")
-
 
 if __name__ == '__main__':
     db_file = Path(DATABASE_FILE)

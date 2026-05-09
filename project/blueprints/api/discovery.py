@@ -1,12 +1,12 @@
-# --- File: ./project/blueprints/api/discovery.py (OPTIMIZED) ---
+# --- File: ./project/blueprints/api/discovery.py (UPDATED WITH DYNAMIC THRESHOLD) ---
 import sqlite3
 import json
 import uuid 
 import re 
 from collections import defaultdict
-import numpy as np
 import heapq
 import ollama
+import struct
 
 from flask import jsonify, request, g, abort
 
@@ -16,10 +16,15 @@ from ...database import get_db
 from ...config import ENTITY_LABELS_TO_DISPLAY, BASE_DIR, EMBEDDING_MODEL
 from ..auth import login_required
 from ...utils import _create_manual_snippet, _create_entity_snippet
-from ...assistant_core import _internal_fts_search, _internal_semantic_search, read_specific_pages
+from ...assistant_core import _internal_fts_search, read_specific_pages
 
 # === THE FIX: Use relative import to ensure we grab the true global CSRF instance ===
 from ... import csrf
+
+# --- Helper for Vector Serialization ---
+def serialize_f32(vector: list[float]) -> bytes:
+    """Serializes a list of floats into a compact byte format for sqlite-vec."""
+    return struct.pack("%sf" % len(vector), *vector)
 
 # ===================================================================
 # --- Optimized Entity Discovery Endpoints ---
@@ -132,15 +137,12 @@ def entities_autocomplete():
 @api_bp.route('/search')
 @login_required
 def api_global_search():
-    """Provides a JSON endpoint for Hybrid Global Search (FTS + Semantic)"""
+    """Provides a JSON endpoint for Hybrid Global Search (FTS + sqlite-vec)"""
     query = request.args.get('q', '').strip()
     limit = request.args.get('limit', 15, type=int)
-    
     mode = request.args.get('mode', 'hybrid').strip().lower()
     
-    if not query:
-        return jsonify([])
-        
+    if not query: return jsonify([])
     db = get_db()
     
     # 1. Run the fast FTS text search
@@ -154,17 +156,57 @@ def api_global_search():
         key = (source['doc_id'], source['page_number'])
         rrf_scores[key] += 1 / (k + rank + 1)
         if key not in source_data:
-            # FTS uses <<< and >>> for highlighting
             source_data[key] = source.get('snippet', '').replace('<<<', '').replace('>>>', '')
             
-    # 2. ONLY run the heavy semantic search if mode is 'hybrid'
+    # 2. Run Semantic Search via sqlite-vec if mode is 'hybrid'
     if mode == 'hybrid':
-        sem_hits = _internal_semantic_search(db, query, limit=limit * 2)
-        for rank, source in enumerate(sem_hits): 
-            key = (source['doc_id'], source['page_number'])
-            rrf_scores[key] += 1 / (k + rank + 1)
-            if key not in source_data:
-                 source_data[key] = source.get('snippet', '')
+        try:
+            q_embed_res = ollama.embeddings(model=EMBEDDING_MODEL, prompt=query)
+            query_blob = serialize_f32(q_embed_res['embedding'])
+            
+            top_k_heap = []
+            search_targets = [
+                ("vec_embedding_chunks", "embedding_chunks"),
+                ("vec_super_embedding_chunks", "super_embedding_chunks")
+            ]
+            
+            for vec_table, meta_table in search_targets:
+                try:
+                    sql = f"""
+                        SELECT e.doc_id, e.page_number, e.chunk_text, 
+                               vec_distance_cosine(v.embedding, ?) as distance
+                        FROM {vec_table} v
+                        JOIN {meta_table} e ON v.chunk_id = e.id
+                        JOIN documents d ON e.doc_id = d.id
+                        WHERE v.embedding MATCH ? AND k = ? AND d.status != 'Missing'
+                    """
+                    results = db.execute(sql, [query_blob, query_blob, limit * 2]).fetchall()
+                    
+                    for row in results:
+                        dist = row['distance']
+                        
+                        # --- STATIC UI THRESHOLD ---
+                        # Standard global search should be fairly strict by default
+                        if dist > 0.70:
+                            continue
+                            
+                        if len(top_k_heap) < limit * 2:
+                            heapq.heappush(top_k_heap, (-dist, row['doc_id'], row['page_number'], row['chunk_text']))
+                        else:
+                            if -dist > top_k_heap[0][0]: 
+                                heapq.heapreplace(top_k_heap, (-dist, row['doc_id'], row['page_number'], row['chunk_text']))
+                except sqlite3.OperationalError:
+                    continue 
+
+            top_k_heap.sort(key=lambda x: x[0], reverse=True)
+            for rank, (neg_dist, doc_id, page_number, chunk_text) in enumerate(top_k_heap):
+                key = (doc_id, page_number)
+                rrf_scores[key] += 1 / (k + rank + 1)
+                if key not in source_data:
+                    source_data[key] = chunk_text
+
+        except Exception as e:
+            print(f"[ERROR] Semantic phase failed during global search: {e}")
     
     sorted_keys = sorted(rrf_scores.keys(), key=lambda s: rrf_scores[s], reverse=True)
     
@@ -180,7 +222,6 @@ def api_global_search():
         
         title = doc['relative_path'] if doc else f"Document #{doc_id}"
         
-        # --- NEW: Build metadata string into the title so it passes through existing pipelines automatically ---
         if doc and doc['csl_json']:
             try:
                 csl = json.loads(doc['csl_json'])
@@ -214,12 +255,12 @@ def api_global_search():
 # --- NEW: ADVANCED AGENT SEARCH ENDPOINT ---
 # ===================================================================
 @api_bp.route('/search/advanced', methods=['POST'])
-@csrf.exempt  # <-- THE FIX: Guarantee CSRF is disabled for this programmatic endpoint
+@csrf.exempt  
 @login_required
 def api_advanced_search():
     """
     JSON API for Advanced Search (Used by Autonomous Agents).
-    Now upgraded to perform HYBRID (FTS + Semantic) search while
+    Now upgraded to perform HYBRID (FTS + sqlite-vec) search while
     strictly respecting entity and file_type SQL filters.
     """
     data = request.get_json(silent=True) or {}
@@ -228,6 +269,9 @@ def api_advanced_search():
     entities = data.get('entities', [])
     file_types = data.get('file_types', [])
     limit = data.get('limit', 5)
+    
+    # --- NEW: DYNAMIC THRESHOLD ---
+    threshold = request.args.get('threshold', 0.80, type=float)
 
     db = get_db()
     
@@ -304,7 +348,6 @@ def api_advanced_search():
             else:
                  row_dict['snippet'] = "Snippet unavailable."
                  
-            # --- NEW: Extract and format CSL-JSON into a string ---
             metadata_str = ""
             if row_dict.get('csl_json'):
                 try:
@@ -332,7 +375,7 @@ def api_advanced_search():
         return jsonify(results)
 
     # ==========================================================
-    # SCENARIO B: HYBRID SEARCH (Keyword + Vectors)
+    # SCENARIO B: HYBRID SEARCH (Keyword + Vectors via sqlite-vec)
     # ==========================================================
     safe_query = re.sub(r'[^\w\s]', '', query).strip()
     words = [w for w in safe_query.split() if w.lower() != 'and']
@@ -371,58 +414,58 @@ def api_advanced_search():
     # --- 2. SEMANTIC (VECTOR) SEARCH PHASE ---
     try:
         q_embed_res = ollama.embeddings(model=EMBEDDING_MODEL, prompt=query)
-        q_vec = np.array(q_embed_res['embedding'], dtype=np.float32)
-        norm_q_vec = q_vec / np.linalg.norm(q_vec)
+        query_blob = serialize_f32(q_embed_res['embedding'])
         
         top_k_heap = []
+        search_targets = [
+            ("vec_embedding_chunks", "embedding_chunks"),
+            ("vec_super_embedding_chunks", "super_embedding_chunks")
+        ]
         
-        # Check both standard and super embedding tables
-        for table in ["embedding_chunks", "super_embedding_chunks"]:
+        for vec_table, meta_table in search_targets:
             try:
                 if entities:
                     sem_sql = f"""
-                        SELECT e.doc_id, e.page_number, e.chunk_text, e.embedding 
-                        FROM {table} e
+                        SELECT e.doc_id, e.page_number, e.chunk_text,
+                               vec_distance_cosine(v.embedding, ?) as distance
+                        FROM {vec_table} v
+                        JOIN {meta_table} e ON v.chunk_id = e.id
                         JOIN ({entity_intersection_sql}) ei ON e.doc_id = ei.doc_id AND e.page_number = ei.page_number
                         JOIN documents d ON e.doc_id = d.id
-                        WHERE {doc_where_str}
+                        WHERE v.embedding MATCH ? AND k = ? AND {doc_where_str}
                     """
-                    sem_params = entity_params + doc_filter_params
+                    sem_params = [query_blob, query_blob, fetch_limit * 2] + entity_params + doc_filter_params
                 else:
                     sem_sql = f"""
-                        SELECT e.doc_id, e.page_number, e.chunk_text, e.embedding 
-                        FROM {table} e
+                        SELECT e.doc_id, e.page_number, e.chunk_text,
+                               vec_distance_cosine(v.embedding, ?) as distance
+                        FROM {vec_table} v
+                        JOIN {meta_table} e ON v.chunk_id = e.id
                         JOIN documents d ON e.doc_id = d.id
-                        WHERE {doc_where_str}
+                        WHERE v.embedding MATCH ? AND k = ? AND {doc_where_str}
                     """
-                    sem_params = doc_filter_params
+                    sem_params = [query_blob, query_blob, fetch_limit * 2] + doc_filter_params
 
-                # Stream the batches to keep RAM usage extremely low
-                cursor = db.execute(sem_sql, sem_params)
-                while True:
-                    batch = cursor.fetchmany(2000)
-                    if not batch: 
-                        break
+                results = db.execute(sem_sql, sem_params).fetchall()
+                for row in results:
+                    dist = row['distance']
                     
-                    embeddings = np.array([np.frombuffer(row['embedding'], dtype=np.float32) for row in batch])
-                    norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
-                    norms[norms == 0] = 1
-                    norm_embeddings = embeddings / norms
-                    
-                    similarities = np.dot(norm_embeddings, norm_q_vec)
-                    
-                    for i, score in enumerate(similarities):
-                        if len(top_k_heap) < fetch_limit * 2:
-                            heapq.heappush(top_k_heap, (score, batch[i]['doc_id'], batch[i]['page_number'], batch[i]['chunk_text']))
-                        else:
-                            if score > top_k_heap[0][0]:
-                                heapq.heapreplace(top_k_heap, (score, batch[i]['doc_id'], batch[i]['page_number'], batch[i]['chunk_text']))
+                    # --- DYNAMIC THRESHOLD ---
+                    if dist > threshold:
+                        continue
+                        
+                    if len(top_k_heap) < fetch_limit * 2:
+                        heapq.heappush(top_k_heap, (-dist, row['doc_id'], row['page_number'], row['chunk_text']))
+                    else:
+                        if -dist > top_k_heap[0][0]:
+                            heapq.heapreplace(top_k_heap, (-dist, row['doc_id'], row['page_number'], row['chunk_text']))
+                            
             except sqlite3.OperationalError:
-                continue # Skip if embedding table isn't baked yet
+                continue 
                 
         # Merge Semantic scores into RRF
         top_k_heap.sort(key=lambda x: x[0], reverse=True)
-        for rank, (score, d_id, p_num, chunk_text) in enumerate(top_k_heap):
+        for rank, (neg_dist, d_id, p_num, chunk_text) in enumerate(top_k_heap):
             key = (d_id, p_num)
             rrf_scores[key] += 1 / (k + rank + 1)
             if key not in snippet_map:
@@ -436,7 +479,6 @@ def api_advanced_search():
     
     results = []
     for doc_id, page_num in sorted_keys:
-        # --- MODIFIED: JOIN document_metadata to fetch CSL-JSON ---
         doc_row = db.execute("""
             SELECT d.relative_path, d.file_type, dm.csl_json 
             FROM documents d 
@@ -446,10 +488,8 @@ def api_advanced_search():
         
         if not doc_row: continue
         
-        # Strip HTML markup since agents don't need UI tags
         clean_snippet = re.sub(r'<[^>]+>', '', snippet_map.get((doc_id, page_num), ""))
         
-        # --- NEW: Generate Metadata String for Flutter ---
         metadata_str = ""
         if doc_row['csl_json']:
             try:
@@ -475,7 +515,7 @@ def api_advanced_search():
             'file_type': doc_row['file_type'],
             'page_number': page_num,
             'snippet': clean_snippet,
-            'metadata_str': metadata_str # <-- Added this field
+            'metadata_str': metadata_str 
         })
         
     return jsonify(results)

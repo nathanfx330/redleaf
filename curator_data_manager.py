@@ -1,10 +1,11 @@
-# --- File: ./curator_data_manager.py (OPTIMIZED BAKE SCRIPT) ---
+# --- File: ./curator_data_manager.py (OPTIMIZED BAKE SCRIPT FOR SQLITE-VEC) ---
 import argparse
 import sys
 from pathlib import Path
 import sqlite3
 import duckdb
 import pandas as pd
+import sqlite_vec
 from tqdm import tqdm
 
 project_dir = Path(__file__).resolve().parent
@@ -71,6 +72,19 @@ def apply_sqlite_optimizations(sqlite_conn):
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_cache_label_appearance ON browse_cache (entity_label, appearance_count DESC)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_cache_label_text_search ON browse_cache (entity_label, entity_text COLLATE NOCASE)")
 
+    # --- Vector Deletion Triggers ---
+    cursor.execute("DROP TRIGGER IF EXISTS trg_delete_vec_embedding")
+    cursor.execute("""
+        CREATE TRIGGER trg_delete_vec_embedding AFTER DELETE ON embedding_chunks
+        BEGIN DELETE FROM vec_embedding_chunks WHERE chunk_id = OLD.id; END;
+    """)
+
+    cursor.execute("DROP TRIGGER IF EXISTS trg_delete_vec_super_embedding")
+    cursor.execute("""
+        CREATE TRIGGER trg_delete_vec_super_embedding AFTER DELETE ON super_embedding_chunks
+        BEGIN DELETE FROM vec_super_embedding_chunks WHERE chunk_id = OLD.id; END;
+    """)
+
     sqlite_conn.commit()
     print("  [OK]   Optimizations applied successfully.")
 
@@ -85,7 +99,7 @@ def bake_sqlite_database(output_path_str: str):
     TABLES_TO_TRANSFER = [
         'documents', 'document_metadata', 'email_metadata', 'catalogs', 
         'document_catalogs', 'content_index', 'entities', 'entity_appearances', 
-        'browse_cache', 'entity_relationships', 'super_embedding_chunks',
+        'browse_cache', 'entity_relationships', 'embedding_chunks', 'super_embedding_chunks',
         'srt_cues' 
     ]
     CHUNK_SIZE = 100000
@@ -104,7 +118,13 @@ def bake_sqlite_database(output_path_str: str):
     duck_conn, sqlite_conn = None, None
     try:
         duck_conn = get_db_conn()
+        
         sqlite_conn = sqlite3.connect(output_path)
+        
+        # Load sqlite_vec extension to allow writing to the vec0 tables
+        sqlite_conn.enable_load_extension(True)
+        sqlite_vec.load(sqlite_conn)
+        sqlite_conn.enable_load_extension(False)
         
         # Optimization: PRAGMA settings for bulk inserts
         sqlite_conn.execute("PRAGMA synchronous = OFF;")
@@ -129,7 +149,27 @@ def bake_sqlite_database(output_path_str: str):
                 for chunk in tqdm(stream_result, total=(total_rows // CHUNK_SIZE) + 1, desc=f"    Transferring '{table}'"):
                     df = chunk.to_pandas()
                     df.columns = column_names
-                    df.to_sql(table, sqlite_conn, if_exists='append', index=False)
+                    
+                    # --- INTERCEPT VECTOR TABLES ---
+                    if table in ['embedding_chunks', 'super_embedding_chunks']:
+                        # Separate the metadata from the raw blobs
+                        df_metadata = df.drop(columns=['embedding'])
+                        
+                        # Prepare the tuple rows for the vec0 table (chunk_id, embedding_blob)
+                        vec_data = [(row.id, row.embedding) for row in df.itertuples()]
+                        
+                        # Insert metadata into standard table
+                        df_metadata.to_sql(table, sqlite_conn, if_exists='append', index=False)
+                        
+                        # Insert blobs into the virtual vec0 table
+                        target_vec_table = f"vec_{table}"
+                        sqlite_conn.executemany(
+                            f"INSERT INTO {target_vec_table} (chunk_id, embedding) VALUES (?, ?)", 
+                            vec_data
+                        )
+                    else:
+                        # Standard tables transfer as normal
+                        df.to_sql(table, sqlite_conn, if_exists='append', index=False)
 
             except duckdb.CatalogException:
                 print(f"    [WARN] Table '{table}' not found in DuckDB. Skipping.")
@@ -139,7 +179,7 @@ def bake_sqlite_database(output_path_str: str):
 
         sqlite_conn.commit()
         
-        # --- NEW: Automatically apply indexes and triggers ---
+        # Automatically apply indexes and triggers
         apply_sqlite_optimizations(sqlite_conn)
         
         # Restore safe PRAGMA settings after bulk operations
