@@ -93,13 +93,13 @@
             <!-- === NEW: ENTITY SEARCH BUILDER WITH AUTOCOMPLETE === -->
             <div class="row mt-3">
                 <div class="col-md-12 form-group">
-                    <label class="form-label" style="color: var(--text-light);">Required Entities (Must appear in document)</label>
+                    <label class="form-label" style="color: var(--text-light);">Entity Constraints</label>
                     <div id="entity-filters-container">
                         <div class="entity-filter-row d-flex gap-2 mb-2">
                             <div class="entity-autocomplete-wrapper">
                                 <input type="text" name="entity_text" class="form-control entity-input" placeholder="Start typing an entity (e.g. Bill Murray)" autocomplete="off">
                             </div>
-                            <select name="entity_label" class="form-control entity-label-select" style="flex: 1;">
+                            <select name="entity_label" class="form-control entity-label-select" style="flex: 1; max-width: 200px;">
                                 <option value="">-- Any Entity Type --</option>
                                 <option value="PERSON">Person</option>
                                 <option value="ORG">Organization</option>
@@ -109,6 +109,11 @@
                                 <option value="EVENT">Event</option>
                                 <option value="NORP">Nat/Rel/Pol Group (NORP)</option>
                                 <option value="WORK_OF_ART">Work of Art</option>
+                            </select>
+                            <select name="entity_mode" class="form-control entity-mode-select" style="flex: 1; max-width: 220px;">
+                                <option value="doc">Require in Document</option>
+                                <option value="page">Require on Same Page</option>
+                                <option value="exclude" style="color: var(--red-danger);">Exclude Document</option>
                             </select>
                             <button type="button" class="button remove-entity-btn" style="display: none;" title="Remove Entity">×</button>
                         </div>
@@ -156,9 +161,11 @@ document.addEventListener('DOMContentLoaded', () => {
         const newRow = firstRow.cloneNode(true);
         
         // Clear the inputs and remove any autocomplete lists that got cloned
-        const input = newRow.querySelector('input');
+        const input = newRow.querySelector('input[name="entity_text"]');
         input.value = '';
-        newRow.querySelector('select').value = '';
+        newRow.querySelector('select[name="entity_label"]').value = '';
+        newRow.querySelector('select[name="entity_mode"]').value = 'doc'; // Default to doc
+        
         const oldLists = newRow.querySelectorAll('.autocomplete-items');
         oldLists.forEach(list => list.remove());
         
@@ -187,7 +194,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // === AUTOCOMPLETE LOGIC ===
-    // This connects directly to the existing discovery API route
     let debounceTimer;
 
     function bindAutocomplete(inputElement) {
@@ -209,22 +215,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 this.parentNode.appendChild(a);
 
                 try {
-                    // We search the 'ALL' label category by default if the user hasn't picked one
                     const selectEl = this.closest('.entity-filter-row').querySelector('.entity-label-select');
                     const labelFilter = selectEl.value;
                     
-                    // We can reuse the existing discovery endpoint. We'll search 'PERSON' first as a default,
-                    // but really we want to search all if possible. For simplicity here, we hit the exact API path.
-                    // If labelFilter is empty, we just query the database for anything matching the string.
-                    // Since Redleaf doesn't have a global autocomplete endpoint yet, we will fetch from the
-                    // /api/search/documents endpoint or create a small fetch wrapper.
-                    
-                    // Actually, the simplest way is to hit the discovery list endpoint. 
-                    // To do a global entity search, we need a small helper.
-                    
                     const response = await fetch(`/api/search/entities_autocomplete?q=${encodeURIComponent(val)}&label=${encodeURIComponent(labelFilter)}`);
                     
-                    // If the endpoint doesn't exist yet, we will fail gracefully.
                     if (!response.ok) throw new Error("Endpoint missing");
                     
                     const data = await response.json();
@@ -236,7 +231,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
                     data.forEach(item => {
                         let b = document.createElement("DIV");
-                        // Make the matching letters bold
                         const regex = new RegExp(`(${val})`, "gi");
                         const highlightedText = item.text.replace(regex, "<strong>$1</strong>");
                         
@@ -246,7 +240,6 @@ document.addEventListener('DOMContentLoaded', () => {
                         
                         b.addEventListener("click", function(e) {
                             inputElement.value = this.getElementsByTagName("input")[0].value;
-                            // Auto-set the select box to match the chosen entity's label
                             const labelVal = this.getElementsByClassName("label-val")[0].value;
                             if (labelVal) selectEl.value = labelVal;
                             
@@ -255,7 +248,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         a.appendChild(b);
                     });
                 } catch (err) {
-                    console.log("Autocomplete fetch error. The backend endpoint may need to be added.", err);
+                    console.log("Autocomplete fetch error.", err);
                 }
             }, 300);
         });

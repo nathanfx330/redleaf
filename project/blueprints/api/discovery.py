@@ -1,4 +1,4 @@
-# --- File: ./project/blueprints/api/discovery.py (UPDATED WITH DYNAMIC THRESHOLD) ---
+# --- File: ./project/blueprints/api/discovery.py ---
 import sqlite3
 import json
 import uuid 
@@ -186,7 +186,6 @@ def api_global_search():
                         dist = row['distance']
                         
                         # --- STATIC UI THRESHOLD ---
-                        # Standard global search should be fairly strict by default
                         if dist > 0.70:
                             continue
                             
@@ -259,43 +258,76 @@ def api_global_search():
 @login_required
 def api_advanced_search():
     """
-    JSON API for Advanced Search (Used by Autonomous Agents).
-    Now upgraded to perform HYBRID (FTS + sqlite-vec) search while
-    strictly respecting entity and file_type SQL filters.
+    JSON API for Advanced Search (Used by Autonomous Agents and UI).
+    Supports bucketing entities into 'doc', 'page', and 'exclude' modes.
     """
     data = request.get_json(silent=True) or {}
     
     query = data.get('q', '').strip()
-    entities = data.get('entities', [])
+    raw_entities = data.get('entities', [])
     file_types = data.get('file_types', [])
     limit = data.get('limit', 5)
-    
-    # --- NEW: DYNAMIC THRESHOLD ---
     threshold = request.args.get('threshold', 0.80, type=float)
 
     db = get_db()
     
-    # 1. Base Document Filters
+    # --- 1. Bucket Entities by their Search Mode ---
+    page_entities = []
+    doc_entities = []
+    exclude_entities = []
+
+    for ent in raw_entities:
+        mode = ent.get('mode', 'doc') # Default to Doc-level intersection
+        if mode == 'exclude':
+            exclude_entities.append(ent)
+        elif mode == 'page':
+            page_entities.append(ent)
+        else:
+            doc_entities.append(ent)
+
+    # --- 2. Build Base Document Constraints (WHERE clause) ---
     doc_where = ["d.status != 'Missing'"]
     doc_filter_params = []
     
+    # A. File Types
     if file_types:
         placeholders = ','.join(['?'] * len(file_types))
         doc_where.append(f"d.file_type IN ({placeholders})")
         doc_filter_params.extend(file_types)
         
+    # B. Excluded Entities (Must not be anywhere in Doc)
+    for ent in exclude_entities:
+        clause = "d.id NOT IN (SELECT doc_id FROM entity_appearances ea JOIN entities e ON ea.entity_id = e.id WHERE e.text LIKE ?"
+        doc_filter_params.append(f"%{escape_like(ent.get('text', ''))}%")
+        if ent.get('label'):
+            clause += " AND e.label = ?"
+            doc_filter_params.append(ent['label'])
+        clause += ")"
+        doc_where.append(clause)
+
+    # C. Doc-Level Required Entities (Must be somewhere in Doc)
+    for ent in doc_entities:
+        clause = "d.id IN (SELECT doc_id FROM entity_appearances ea JOIN entities e ON ea.entity_id = e.id WHERE e.text LIKE ?"
+        doc_filter_params.append(f"%{escape_like(ent.get('text', ''))}%")
+        if ent.get('label'):
+            clause += " AND e.label = ?"
+            doc_filter_params.append(ent['label'])
+        clause += ")"
+        doc_where.append(clause)
+
     doc_where_str = " AND ".join(doc_where)
     
-    # 2. Entity Intersection SQL Logic
+    # --- 3. Build Page-Level Entity Intersection Logic ---
     entity_intersection_sql = ""
     entity_params = []
-    if entities:
+    
+    if page_entities:
         entity_intersection_sql = """
             SELECT ea0.doc_id, ea0.page_number 
             FROM entity_appearances ea0
             JOIN entities e0 ON ea0.entity_id = e0.id
         """
-        for i in range(1, len(entities)):
+        for i in range(1, len(page_entities)):
             entity_intersection_sql += f"""
                 JOIN entity_appearances ea{i} 
                   ON ea0.doc_id = ea{i}.doc_id 
@@ -303,7 +335,7 @@ def api_advanced_search():
                 JOIN entities e{i} ON ea{i}.entity_id = e{i}.id
             """
         ent_where_clauses = []
-        for i, ent in enumerate(entities):
+        for i, ent in enumerate(page_entities):
             clause = f"e{i}.text LIKE ?"
             entity_params.append(f"%{escape_like(ent.get('text', ''))}%")
             if ent.get('label'):
@@ -318,18 +350,33 @@ def api_advanced_search():
     # SCENARIO A: Agent only searched for Entities (No keyword query)
     # ==========================================================
     if not query:
-        if not entities:
+        if not raw_entities:
             return jsonify([])
             
-        sql_params = entity_params + doc_filter_params + [fetch_limit]
-        sql_query = f"""
-            SELECT d.id as doc_id, d.relative_path, d.file_type, 
-                   tm.page_number, '' as snippet, dm.csl_json
-            FROM (
+        if page_entities:
+            tm_subquery = f"""
                 {entity_intersection_sql}
                 AND ea0.doc_id IN (SELECT id FROM documents d WHERE {doc_where_str})
                 ORDER BY ea0.doc_id, ea0.page_number
                 LIMIT ?
+            """
+            sql_params = entity_params + doc_filter_params + [fetch_limit]
+        else:
+            # We have doc_entities or exclude_entities, but no page limits. Default to page 1.
+            tm_subquery = f"""
+                SELECT id as doc_id, 1 as page_number
+                FROM documents d 
+                WHERE {doc_where_str}
+                ORDER BY id
+                LIMIT ?
+            """
+            sql_params = doc_filter_params + [fetch_limit]
+
+        sql_query = f"""
+            SELECT d.id as doc_id, d.relative_path, d.file_type, 
+                   tm.page_number, '' as snippet, dm.csl_json
+            FROM (
+                {tm_subquery}
             ) tm
             JOIN documents d ON tm.doc_id = d.id
             LEFT JOIN document_metadata dm ON d.id = dm.doc_id
@@ -341,9 +388,14 @@ def api_advanced_search():
         for row in db_results:
             row_dict = dict(row)
             page_row = db.execute("SELECT page_content FROM content_index WHERE doc_id = ? AND page_number = ?", (row_dict['doc_id'], row_dict['page_number'])).fetchone()
+            
             if page_row:
                 raw_text = page_row['page_content']
-                snippet_html = _create_entity_snippet(raw_text, entities[0].get('text', ''), context=200)
+                primary_ent = ""
+                if page_entities: primary_ent = page_entities[0].get('text', '')
+                elif doc_entities: primary_ent = doc_entities[0].get('text', '')
+                
+                snippet_html = _create_entity_snippet(raw_text, primary_ent, context=200)
                 row_dict['snippet'] = re.sub(r'<[^>]+>', '', snippet_html)
             else:
                  row_dict['snippet'] = "Snippet unavailable."
@@ -387,7 +439,7 @@ def api_advanced_search():
 
     # --- 1. FULL-TEXT SEARCH PHASE ---
     if fts_query:
-        if entities:
+        if page_entities:
             fts_sql = f"""
                 SELECT ci.doc_id, ci.page_number, snippet(ci.content_index, 2, '', '', '...', 40) as snippet, ci.rank
                 FROM content_index ci
@@ -424,7 +476,7 @@ def api_advanced_search():
         
         for vec_table, meta_table in search_targets:
             try:
-                if entities:
+                if page_entities:
                     sem_sql = f"""
                         SELECT e.doc_id, e.page_number, e.chunk_text,
                                vec_distance_cosine(v.embedding, ?) as distance

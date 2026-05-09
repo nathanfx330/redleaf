@@ -16,12 +16,12 @@ from flask import (
 from ..database import get_db
 from ..background import task_queue
 from ..utils import _get_dashboard_state, _truncate_long_snippet, _create_entity_snippet
-from ..config import DOCUMENTS_DIR, ENTITY_LABELS_TO_DISPLAY, resolve_document_path # <--- FIXED IMPORT
+from ..config import DOCUMENTS_DIR, ENTITY_LABELS_TO_DISPLAY, resolve_document_path
 from .auth import login_required, admin_required, SecureForm
 
 # --- IMPORT OPTIMIZED DATA FETCHING LOGIC ---
 from .api.documents import fetch_dashboard_data
-from .api.helpers import escape_like  # <--- ADDED FOR ADVANCED SEARCH
+from .api.helpers import escape_like 
 
 main_bp = Blueprint('main', __name__)
 
@@ -29,18 +29,10 @@ main_bp = Blueprint('main', __name__)
 @main_bp.route('/dashboard')
 @login_required
 def dashboard():
-    # --- OPTIMIZATION: Server-Side Rendering (SSR) ---
-    # Instead of sending an empty page that makes an AJAX call, we fetch the 
-    # first page of data immediately and render it into the HTML.
-    # This makes the dashboard feel instant.
-    
-    # --- START OF FIX: Read status filters from URL for SSR ---
     status_filters = None
     if 'status' in request.args:
         status_filters = request.args.getlist('status')
-    # --- END OF FIX ---
     
-    # Check if a sort key was passed in the URL (used when redirecting after Process)
     sort_key = request.args.get('sort_key', 'relative_path')
     sort_dir = request.args.get('sort_dir', 'asc')
 
@@ -50,7 +42,7 @@ def dashboard():
         per_page=25, 
         sort_key=sort_key, 
         sort_dir=sort_dir,
-        status_filters=status_filters # Pass to fetch function
+        status_filters=status_filters
     )
     
     form = SecureForm()
@@ -62,7 +54,7 @@ def dashboard():
                            form=form, 
                            task_states=initial_data['task_states'],
                            doc_dir=DOCUMENTS_DIR,
-                           initial_data=initial_data) # Pass full object for JS hydration
+                           initial_data=initial_data)
 
 @main_bp.route('/dashboard/discover')
 @login_required
@@ -79,7 +71,6 @@ def dashboard_process_all_new():
     if not doc_ids:
         flash("No 'New' documents found to process.", "info")
     else:
-        # --- FIX: Update DB immediately so UI reflects the queue instantly ---
         db.execute("UPDATE documents SET status = 'Queued', status_message = 'Pending assignment' WHERE status = 'New'")
         db.commit()
 
@@ -87,21 +78,18 @@ def dashboard_process_all_new():
             task_queue.put(('process', doc_id))
         flash(f"Queued {len(doc_ids)} documents for processing.", "success")
         
-    # --- START OF FIX: Use Smart Sort to push active tasks to the top without hiding 'New' docs ---
     return redirect(url_for('main.dashboard', sort_key='status', sort_dir='asc'))
 
 @main_bp.route('/dashboard/process/<int:doc_id>')
 @login_required
 def dashboard_process_single(doc_id):
     db = get_db()
-    # --- FIX: Update DB immediately so UI reflects the queue instantly ---
     db.execute("UPDATE documents SET status = 'Queued', status_message = 'Pending assignment' WHERE id = ?", (doc_id,))
     db.commit()
     
     task_queue.put(('process', doc_id))
     flash(f"Queued document ID {doc_id} for re-processing.", "info")
     
-    # --- START OF FIX: Use Smart Sort to push active tasks to the top without hiding 'New' docs ---
     return redirect(url_for('main.dashboard', sort_key='status', sort_dir='asc'))
 
 @main_bp.route('/dashboard/update_cache')
@@ -144,13 +132,8 @@ def discover_view():
 @login_required
 def advanced_search_view():
     db = get_db()
-    # Get catalogs for the dropdown
     catalogs = db.execute("SELECT id, name FROM catalogs ORDER BY name COLLATE NOCASE").fetchall()
-    
-    # Get tags for the dropdown
     tags = db.execute("SELECT name FROM tags ORDER BY name COLLATE NOCASE").fetchall()
-    
-    # Get available file types for the checkboxes
     types_query = db.execute("SELECT DISTINCT file_type FROM documents WHERE status != 'Missing' AND file_type IS NOT NULL").fetchall()
     all_types = sorted([row['file_type'] for row in types_query])
     
@@ -168,21 +151,32 @@ def search_results():
     per_page = 50
     offset = (page - 1) * per_page
     
-    # --- START OF FIX: Parse dynamic Entity filters ---
-    # These arrive as lists because the form has multiple fields with the same 'name' attribute
+    # --- PARSE ENTITY FILTERS WITH MODE ---
     raw_entity_texts = request.args.getlist('entity_text')
     raw_entity_labels = request.args.getlist('entity_label')
+    raw_entity_modes = request.args.getlist('entity_mode')
     
     entity_filters = []
+    page_entities = []
+    doc_entities = []
+    exclude_entities = []
+
     for i in range(len(raw_entity_texts)):
         text = raw_entity_texts[i].strip()
         if text:
-            # Pair it with the label if one was selected
             label = raw_entity_labels[i] if i < len(raw_entity_labels) else ""
-            entity_filters.append({"text": text, "label": label})
-    # --- END OF FIX ---
+            mode = raw_entity_modes[i] if i < len(raw_entity_modes) else "doc"
+            
+            ent_dict = {"text": text, "label": label, "mode": mode}
+            entity_filters.append(ent_dict)
+            
+            if mode == 'exclude':
+                exclude_entities.append(ent_dict)
+            elif mode == 'page':
+                page_entities.append(ent_dict)
+            else:
+                doc_entities.append(ent_dict)
     
-    # If entirely empty, redirect back
     if not query and not title_query and not catalog_id and not tag_name and not entity_filters and 'filtered' not in request.args:
         return redirect(url_for('main.discover_view'))
         
@@ -204,6 +198,25 @@ def search_results():
         doc_where.append("id IN (SELECT dt.doc_id FROM document_tags dt JOIN tags t ON dt.tag_id = t.id WHERE t.name = ?)")
         doc_params.append(tag_name)
         
+    # --- APPLY DOC-LEVEL ENTITY EXCLUSIONS/INCLUSIONS ---
+    for ent in exclude_entities:
+        clause = "id NOT IN (SELECT doc_id FROM entity_appearances ea JOIN entities e ON ea.entity_id = e.id WHERE e.text LIKE ?"
+        doc_params.append(f"%{escape_like(ent['text'])}%")
+        if ent['label']:
+            clause += " AND e.label = ?"
+            doc_params.append(ent['label'])
+        clause += ")"
+        doc_where.append(clause)
+
+    for ent in doc_entities:
+        clause = "id IN (SELECT doc_id FROM entity_appearances ea JOIN entities e ON ea.entity_id = e.id WHERE e.text LIKE ?"
+        doc_params.append(f"%{escape_like(ent['text'])}%")
+        if ent['label']:
+            clause += " AND e.label = ?"
+            doc_params.append(ent['label'])
+        clause += ")"
+        doc_where.append(clause)
+        
     doc_where_str = " AND ".join(doc_where)
     
     # 2. Handle Text Search Context
@@ -215,11 +228,9 @@ def search_results():
         fts_query = ""
         
     # 3. Fetch valid types to power the UI checkboxes on the results page
-    # (We build a base filter string here before applying the types)
     base_types_sql = f"SELECT DISTINCT d.file_type FROM documents d WHERE {doc_where_str} AND d.file_type IS NOT NULL"
     types_params = list(doc_params)
     
-    # If FTS is active, restrict types to those containing hits
     if fts_query:
         base_types_sql = f"""
             SELECT DISTINCT d.file_type 
@@ -231,44 +242,52 @@ def search_results():
         """
         types_params.append(fts_query)
         
-    # --- START OF FIX: If Entity filters exist, restrict types to those containing the entities ---
-    if entity_filters:
-        # We need a dynamic JOIN chain for each required entity
-        for i, ent in enumerate(entity_filters):
-            base_types_sql = f"""
-                SELECT DISTINCT d.file_type FROM ({base_types_sql}) as temp_types
-                JOIN documents d ON d.file_type = temp_types.file_type
-                JOIN entity_appearances ea{i} ON d.id = ea{i}.doc_id
+    # Restrict types to those containing the page intersection
+    entity_intersection_sql = ""
+    entity_params = []
+    if page_entities:
+        entity_intersection_sql = """
+            SELECT ea0.doc_id, ea0.page_number 
+            FROM entity_appearances ea0
+            JOIN entities e0 ON ea0.entity_id = e0.id
+        """
+        for i in range(1, len(page_entities)):
+            entity_intersection_sql += f"""
+                JOIN entity_appearances ea{i} 
+                  ON ea0.doc_id = ea{i}.doc_id 
+                  AND ea0.page_number = ea{i}.page_number
                 JOIN entities e{i} ON ea{i}.entity_id = e{i}.id
             """
             
-            # The WHERE clause for this specific entity
-            entity_where = f"e{i}.text LIKE ?"
-            types_params.append(f"%{escape_like(ent['text'])}%")
-            
+        ent_where_clauses = []
+        for i, ent in enumerate(page_entities):
+            clause = f"e{i}.text LIKE ?"
+            entity_params.append(f"%{escape_like(ent['text'])}%")
             if ent['label']:
-                entity_where += f" AND e{i}.label = ?"
-                types_params.append(ent['label'])
-                
-            base_types_sql += f" WHERE {entity_where}"
-    # --- END OF FIX ---
+                clause += f" AND e{i}.label = ?"
+                entity_params.append(ent['label'])
+            ent_where_clauses.append(clause)
+            
+        entity_intersection_sql += " WHERE " + " AND ".join(ent_where_clauses)
+        
+        base_types_sql = f"""
+            SELECT DISTINCT d.file_type FROM ({base_types_sql}) as temp_types
+            JOIN documents d ON d.file_type = temp_types.file_type
+            JOIN ({entity_intersection_sql}) as ei ON d.id = ei.doc_id
+        """
+        types_params.extend(entity_params)
         
     types_query_result = db.execute(base_types_sql, types_params).fetchall()
     all_types = sorted([row['file_type'] for row in types_query_result])
     
-    # Determine selected types
     if 'filtered' in request.args:
         raw_selected = request.args.getlist('type')
         selected_types = [t for t in raw_selected if t in all_types]
-        
-        # If the user explicitly checked boxes, but they are all invalid for this query -> 0 results
         if raw_selected and not selected_types and all_types:
             return render_template('search_results.html', query=query, title_query=title_query, catalog_id=catalog_id, tag_name=tag_name, entity_filters=entity_filters, results=[], page=page, has_next=False, all_types=all_types, selected_types=[])
     else:
-        # Default behavior for new searches: Check all boxes in the UI
         selected_types = all_types
         
-    # Apply the SQL filter ONLY if a subset of types is selected. 
     if selected_types and len(selected_types) < len(all_types):
         placeholders = ','.join(['?'] * len(selected_types))
         doc_where.append(f"file_type IN ({placeholders})")
@@ -279,42 +298,9 @@ def search_results():
     
     # 4. Main Query Execution
     
-    # --- START OF FIX: Advanced Entity Subquery Generation ---
-    # We want to find documents/pages where ALL the required entities intersect.
-    entity_intersection_sql = ""
-    if entity_filters:
-        # Start with the first entity's appearances
-        entity_intersection_sql = """
-            SELECT ea0.doc_id, ea0.page_number 
-            FROM entity_appearances ea0
-            JOIN entities e0 ON ea0.entity_id = e0.id
-        """
-        
-        # Iteratively join appearances for subsequent entities ON the same doc and page
-        for i in range(1, len(entity_filters)):
-            entity_intersection_sql += f"""
-                JOIN entity_appearances ea{i} 
-                  ON ea0.doc_id = ea{i}.doc_id 
-                  AND ea0.page_number = ea{i}.page_number
-                JOIN entities e{i} ON ea{i}.entity_id = e{i}.id
-            """
-            
-        # Add the WHERE conditions for all entities
-        ent_where_clauses = []
-        for i, ent in enumerate(entity_filters):
-            clause = f"e{i}.text LIKE ?"
-            doc_params.append(f"%{escape_like(ent['text'])}%")
-            if ent['label']:
-                clause += f" AND e{i}.label = ?"
-                doc_params.append(ent['label'])
-            ent_where_clauses.append(clause)
-            
-        entity_intersection_sql += " WHERE " + " AND ".join(ent_where_clauses)
-    # --- END OF FIX ---
-
-    if fts_query and entity_filters:
-        # BOHT FTS AND ENTITY SEARCH
-        sql_params = doc_params + [fts_query, fetch_limit, offset]
+    if fts_query and page_entities:
+        # BOHT FTS AND PAGE ENTITY SEARCH
+        sql_params = entity_params + doc_params + [fts_query, fetch_limit, offset]
         sql_query = f"""
             SELECT d.id as doc_id, d.relative_path, d.color, d.page_count, d.file_type, 
                    tm.page_number, tm.snippet,
@@ -336,7 +322,7 @@ def search_results():
         db_results = db.execute(sql_query, [g.user['id']] + sql_params).fetchall()
         
     elif fts_query:
-        # FTS ONLY SEARCH
+        # FTS SEARCH (Doc-level entities already handled in doc_where_str)
         sql_params = doc_params + [fts_query, fetch_limit, offset]
         sql_query = f"""
             SELECT d.id as doc_id, d.relative_path, d.color, d.page_count, d.file_type, 
@@ -357,9 +343,9 @@ def search_results():
         """
         db_results = db.execute(sql_query, [g.user['id']] + sql_params).fetchall()
         
-    elif entity_filters:
-        # ENTITY INTERSECTION ONLY (No FTS keyword provided)
-        sql_params = doc_params + [fetch_limit, offset]
+    elif page_entities:
+        # PAGE ENTITY INTERSECTION ONLY (No FTS keyword provided)
+        sql_params = entity_params + doc_params + [fetch_limit, offset]
         sql_query = f"""
             SELECT d.id as doc_id, d.relative_path, d.color, d.page_count, d.file_type, 
                    tm.page_number, '' as snippet,
@@ -379,7 +365,7 @@ def search_results():
         db_results = db.execute(sql_query, [g.user['id']] + sql_params).fetchall()
         
     else:
-        # METADATA ONLY SEARCH (No FTS, no Entities)
+        # METADATA OR DOC ENTITIES ONLY SEARCH (No FTS, no Page Entities)
         sql_params = doc_params + [fetch_limit, offset]
         sql_query = f"""
             SELECT d.id as doc_id, d.relative_path, d.color, d.page_count, d.file_type, 
@@ -406,13 +392,11 @@ def search_results():
         row_dict = dict(row)
         
         # Generate custom snippet for entity-only searches
-        if entity_filters and not fts_query:
-            # Grab the raw text for this page
+        if (page_entities or doc_entities) and not fts_query:
             page_row = db.execute("SELECT page_content FROM content_index WHERE doc_id = ? AND page_number = ?", (row_dict['doc_id'], row_dict['page_number'])).fetchone()
             if page_row:
                 raw_text = page_row['page_content']
-                # Create a snippet centered on the FIRST entity in the filter list
-                primary_entity = entity_filters[0]['text']
+                primary_entity = page_entities[0]['text'] if page_entities else doc_entities[0]['text']
                 row_dict['snippet'] = _create_entity_snippet(raw_text, primary_entity)
             else:
                  row_dict['snippet'] = "<em>Could not load text for snippet.</em>"
@@ -437,7 +421,7 @@ def search_results():
                            title_query=title_query,
                            catalog_id=catalog_id,
                            tag_name=tag_name,
-                           entity_filters=entity_filters, # Passed down to the template to persist state
+                           entity_filters=entity_filters,
                            results=results, 
                            page=page, 
                            has_next=has_next, 
@@ -699,7 +683,7 @@ def document_view(doc_id):
                            form=form, 
                            timestamp=timestamp,
                            pills_data=pills_data,
-                           allow_downloads=allow_downloads) # <-- Passed to template
+                           allow_downloads=allow_downloads) 
 
 # --- FIXED: Serve Document securely handles .rlink virtual paths ---
 @main_bp.route('/serve_doc/<path:relative_path>')
@@ -803,7 +787,6 @@ def _parse_srt_for_viewer(srt_content):
         })
     return cues
 
-# --- FIXED: SRT Viewer uses resolve_document_path ---
 @main_bp.route('/view_srt/<int:doc_id>')
 @login_required
 def view_srt_document(doc_id):

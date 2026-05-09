@@ -18,9 +18,16 @@
     {% if entity_filters %}
         <br>
         <span style="font-size: 0.85em; font-weight: normal; color: var(--text-muted);">
-            Required Entities: 
+            Entity Constraints: 
             {% for ent in entity_filters %}
                 <span class="chip" style="color: var(--text-light); border: 1px solid var(--border-color);">
+                    {% if ent.mode == 'exclude' %}
+                        <span style="color: var(--red-danger); font-weight: bold;">NOT:</span>
+                    {% elif ent.mode == 'page' %}
+                        <span style="color: var(--brand-red-cool); font-weight: bold;">SAME PAGE:</span>
+                    {% else %}
+                        <span style="color: var(--text-muted);">DOC:</span>
+                    {% endif %}
                     {{ ent.text }} 
                     {% if ent.label %}<small class="text-muted">({{ ent.label }})</small>{% endif %}
                 </span>
@@ -73,6 +80,7 @@
         {% for ent in entity_filters %}
             {% set filter_qs = filter_qs ~ "&entity_text=" ~ ent.text|urlencode %}
             {% set filter_qs = filter_qs ~ "&entity_label=" ~ ent.label|urlencode %}
+            {% set filter_qs = filter_qs ~ "&entity_mode=" ~ ent.mode|urlencode %}
         {% endfor %}
     {% endif %}
 
