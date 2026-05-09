@@ -50,12 +50,20 @@ def get_db_conn():
 
 def create_staging_tables(conn):
     print("[INFO] Clearing and resetting all staging tables...")
-    conn.execute("DROP TABLE IF EXISTS _staging_raw_text CASCADE;"); conn.execute("DROP TABLE IF EXISTS _staging_chunks_to_embed CASCADE;"); conn.execute("DROP TABLE IF EXISTS _staging_entities CASCADE;"); conn.execute("DROP TABLE IF EXISTS _staging_relationships CASCADE;"); conn.execute("DROP SEQUENCE IF EXISTS seq_staging_chunks_id;")
+    conn.execute("DROP TABLE IF EXISTS _staging_raw_text CASCADE;")
+    conn.execute("DROP TABLE IF EXISTS _staging_chunks_to_embed CASCADE;")
+    conn.execute("DROP TABLE IF EXISTS _staging_standard_chunks CASCADE;")
+    conn.execute("DROP TABLE IF EXISTS _staging_entities CASCADE;")
+    conn.execute("DROP TABLE IF EXISTS _staging_relationships CASCADE;")
+    conn.execute("DROP SEQUENCE IF EXISTS seq_staging_chunks_id;")
+    
     conn.execute("CREATE TABLE _staging_raw_text (doc_id BIGINT, page_number INTEGER, page_content VARCHAR, PRIMARY KEY(doc_id, page_number));")
     conn.execute("CREATE TABLE _staging_chunks_to_embed (id BIGINT PRIMARY KEY, doc_id BIGINT, page_number INTEGER, entity_text VARCHAR, entity_label VARCHAR, chunk_text VARCHAR);")
+    conn.execute("CREATE TABLE _staging_standard_chunks (id BIGINT PRIMARY KEY, doc_id BIGINT, page_number INTEGER, chunk_text VARCHAR);")
     conn.execute("CREATE TABLE _staging_entities (doc_id BIGINT, page_number INTEGER, entity_text VARCHAR, entity_label VARCHAR);")
     conn.execute("CREATE TABLE _staging_relationships (doc_id BIGINT, page_number INTEGER, subj_text VARCHAR, subj_label VARCHAR, obj_text VARCHAR, obj_label VARCHAR, phrase VARCHAR);")
-    conn.execute("CREATE SEQUENCE seq_staging_chunks_id START 1;"); print("[OK]   Staging tables are ready.")
+    conn.execute("CREATE SEQUENCE seq_staging_chunks_id START 1;")
+    print("[OK]   Staging tables are ready.")
 
 def cleanup_staging_tables():
     print("--- Cleaning up temporary staging tables... ---")
@@ -128,7 +136,6 @@ def _extract_text_from_srt(srt_cues: list[dict]) -> str:
 def _extract_worker(d):
     i, r, t = d; p, c, e, m, dur, srt_cues = {}, 0, None, None, None, []
     try:
-        # --- FIX: Resolve path via .rlink if necessary ---
         fp = resolve_document_path(r)
         
         if t == 'PDF':
@@ -177,7 +184,6 @@ def phase_extract_text(workers, doc_limit=None):
     
     dbf, dbw, ap, am, ec, ac = 10000, 5000, [], [], 0, [] 
     
-    # --- FIX: Moved Phase 1 to isolated ProcessPoolExecutor to prevent C-extension segfaults ---
     ctx = multiprocessing.get_context('spawn')
     with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as ex, tqdm(total=td, desc="Extracting Text", mininterval=1.0) as pb:
         for o in range(0, td, dbf):
@@ -214,9 +220,22 @@ def phase_extract_text(workers, doc_limit=None):
 # --- PHASE 2: NLP ANALYSIS ---
 def _nlp_worker_process(pages_batch, temp_file_path):
     nlp = load_spacy_model()
-    results = {'entities': [], 'chunks': [], 'relationships': []}
+    results = {'entities': [], 'chunks': [], 'relationships': [], 'standard_chunks': []}
     for doc_id, page_number, page_text in pages_batch:
-        if not page_text or len(page_text) > nlp.max_length: continue
+        if not page_text: continue
+        
+        # --- STANDARD CHUNKING (400 words, 50 overlap) ---
+        words = page_text.split()
+        chunk_size = 400
+        overlap = 50
+        for i in range(0, len(words), chunk_size - overlap):
+            chunk_text = " ".join(words[i:i + chunk_size])
+            if chunk_text:
+                results['standard_chunks'].append((doc_id, page_number, chunk_text))
+
+        if len(page_text) > nlp.max_length: continue
+        
+        # --- GRAPH EXTRACTION (SUPER CHUNKS) ---
         try:
             doc_nlp = nlp(page_text)
             for ent in doc_nlp.ents:
@@ -226,8 +245,8 @@ def _nlp_worker_process(pages_batch, temp_file_path):
                     if verb.pos_ in ("VERB", "AUX"):
                         action_phrase = " ".join(token.text for token in verb.subtree).strip().replace('\n', ' ')
                         if action_phrase and len(action_phrase) < 2048:
-                            chunk_text = f"{ent.text} ({ent.label_}): {action_phrase}"
-                            results['chunks'].append((doc_id, page_number, ent_text, ent.label_, chunk_text))
+                            super_chunk_text = f"{ent.text} ({ent.label_}): {action_phrase}"
+                            results['chunks'].append((doc_id, page_number, ent_text, ent.label_, super_chunk_text))
             for sent in doc_nlp.sents:
                 unique_ents = list(dict.fromkeys(sent.ents))
                 if len(unique_ents) < 2: continue
@@ -241,6 +260,7 @@ def _nlp_worker_process(pages_batch, temp_file_path):
                             if subj[0] and obj[0]: results['relationships'].append((doc_id, page_number, subj[0], subj[1], obj[0], obj[1], phrase))
         except Exception as e:
             logging.error(f"NLP FAILED for Doc ID {doc_id} Page {page_number}: {e}", exc_info=True)
+            
     with open(temp_file_path, 'wb') as f:
         pickle.dump(results, f)
 
@@ -261,7 +281,6 @@ def phase_nlp_analysis(workers):
     chunk_size = math.ceil(total_pages / workers) if workers > 0 else total_pages
     page_batches = [all_pages[i:i + chunk_size] for i in range(0, total_pages, chunk_size)]
 
-    # --- FIX: Using 'spawn' context to prevent Segmentation Faults with DuckDB ---
     ctx = multiprocessing.get_context('spawn')
     with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as executor:
         futures = [executor.submit(_nlp_worker_process, batch, TEMP_DIR / f"worker_{i}.pkl") for i, batch in enumerate(page_batches)]
@@ -275,6 +294,7 @@ def phase_nlp_analysis(workers):
     temp_files = sorted(list(TEMP_DIR.glob('*.pkl')))
     
     chunk_id_start = conn.execute("SELECT COALESCE(MAX(id), 0) FROM _staging_chunks_to_embed").fetchone()[0] + 1
+    std_chunk_id_start = conn.execute("SELECT COALESCE(MAX(id), 0) FROM _staging_standard_chunks").fetchone()[0] + 1
     
     for temp_file in tqdm(temp_files, desc="Writing Result Files"):
         with open(temp_file, 'rb') as f:
@@ -291,10 +311,19 @@ def phase_nlp_analysis(workers):
             for c in results['chunks']:
                 chunks_to_insert.append((chunk_id_start, c[0], c[1], c[2], c[3], c[4]))
                 chunk_id_start += 1
-                
             conn.executemany(
                 "INSERT INTO _staging_chunks_to_embed VALUES (?, ?, ?, ?, ?, ?)", 
                 chunks_to_insert
+            )
+            
+        if results.get('standard_chunks'):
+            std_chunks_to_insert = []
+            for c in results['standard_chunks']:
+                std_chunks_to_insert.append((std_chunk_id_start, c[0], c[1], c[2]))
+                std_chunk_id_start += 1
+            conn.executemany(
+                "INSERT INTO _staging_standard_chunks VALUES (?, ?, ?, ?)",
+                std_chunks_to_insert
             )
             
         del results
@@ -362,10 +391,11 @@ def _embed_worker(batch):
     results = []
     try:
         for row in batch:
-            doc_id, page_num, entity_id, chunk_text = row
+            chunk_text = row[-1] # The text is always the last element in the input tuple
             response = ollama.embeddings(model=EMBEDDING_MODEL, prompt=chunk_text)
             embedding_bytes = np.array(response['embedding'], dtype=np.float32).tobytes()
-            results.append((doc_id, page_num, entity_id, chunk_text, embedding_bytes))
+            # Append the binary blob to the existing row tuple
+            results.append(row + (embedding_bytes,))
         return results
     except Exception as e:
         tqdm.write(f"[WARN] An embedding generation failed: {e}")
@@ -376,54 +406,78 @@ def phase_generate_embeddings(workers, batch_size, use_gpu):
     if use_gpu: print("[INFO] GPU acceleration is enabled for Ollama.")
     conn = get_db_conn()
     
-    query = """
+    # 1. Fetch Standard Chunks
+    std_query = "SELECT doc_id, page_number, chunk_text FROM _staging_standard_chunks"
+    std_chunks_data = conn.execute(std_query).fetchall()
+    
+    # 2. Fetch Super Chunks
+    sup_query = """
         SELECT s.doc_id, s.page_number, e.id as entity_id, s.chunk_text
         FROM _staging_chunks_to_embed s 
         JOIN entities e ON s.entity_text = e.text AND s.entity_label = e.label
     """
+    sup_chunks_data = conn.execute(sup_query).fetchall()
     
-    print("[INFO] Fetching ALL chunk data upfront to prevent worker starvation...")
-    # Fetch all data at once. Because batches are small, this takes virtually 0 RAM.
-    chunks_data = conn.execute(query).fetchall()
-    total_chunks = len(chunks_data)
+    total_chunks = len(std_chunks_data) + len(sup_chunks_data)
     
     if total_chunks == 0: 
         print("[INFO] No text chunks to embed. Skipping.")
         conn.close()
         return
     
-    print(f"[INFO] Saturating {workers} workers with {total_chunks} embeddings...")
+    print(f"[INFO] Fetching {len(std_chunks_data)} Standard Chunks and {len(sup_chunks_data)} Super Chunks...")
+    print(f"[INFO] Saturating {workers} workers with {total_chunks} total embeddings...")
     print(f"[TIP]  If CPU usage drops, ensure 'OLLAMA_NUM_PARALLEL={workers}' is set on your Ollama server.")
     
-    current_db_id = conn.execute("SELECT COALESCE(MAX(id), 0) FROM super_embedding_chunks").fetchone()[0] + 1
+    std_db_id = conn.execute("SELECT COALESCE(MAX(id), 0) FROM embedding_chunks").fetchone()[0] + 1
+    sup_db_id = conn.execute("SELECT COALESCE(MAX(id), 0) FROM super_embedding_chunks").fetchone()[0] + 1
     
-    batches = list(_batch_generator(chunks_data, batch_size))
-    
-    # --- FIX: Using 'spawn' context to prevent Segmentation Faults with DuckDB ---
     ctx = multiprocessing.get_context('spawn')
     with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as executor:
-        # Submit every batch immediately. Workers will constantly grab the next one.
-        futures = [executor.submit(_embed_worker, b) for b in batches]
-        
         with tqdm(total=total_chunks, desc="Generating Embeddings") as pbar:
-            for future in as_completed(futures):
-                try:
-                    result_rows = future.result()
-                    if result_rows:
-                        rows_to_insert = []
-                        for r in result_rows:
-                            rows_to_insert.append((current_db_id, r[0], r[1], r[2], r[3], r[4]))
-                            current_db_id += 1
-                            
-                        conn.executemany("""
-                            INSERT INTO super_embedding_chunks 
-                            (id, doc_id, page_number, entity_id, chunk_text, embedding) 
-                            VALUES (?, ?, ?, ?, ?, ?)
-                        """, rows_to_insert)
-                        pbar.update(len(result_rows))
-                except Exception as e:
-                    tqdm.write(f"[FATAL] Embedding database write failed: {e}")
-                    raise e 
+            
+            # --- Process Standard Chunks ---
+            if std_chunks_data:
+                batches = list(_batch_generator(std_chunks_data, batch_size))
+                futures = [executor.submit(_embed_worker, b) for b in batches]
+                for future in as_completed(futures):
+                    try:
+                        result_rows = future.result()
+                        if result_rows:
+                            rows_to_insert = []
+                            for r in result_rows:
+                                rows_to_insert.append((std_db_id, r[0], r[1], r[2], r[3]))
+                                std_db_id += 1
+                            conn.executemany("""
+                                INSERT INTO embedding_chunks (id, doc_id, page_number, chunk_text, embedding)
+                                VALUES (?, ?, ?, ?, ?)
+                            """, rows_to_insert)
+                            pbar.update(len(result_rows))
+                    except Exception as e:
+                        tqdm.write(f"[FATAL] Standard embedding database write failed: {e}")
+                        raise e 
+                        
+            # --- Process Super Chunks ---
+            if sup_chunks_data:
+                batches = list(_batch_generator(sup_chunks_data, batch_size))
+                futures = [executor.submit(_embed_worker, b) for b in batches]
+                for future in as_completed(futures):
+                    try:
+                        result_rows = future.result()
+                        if result_rows:
+                            rows_to_insert = []
+                            for r in result_rows:
+                                rows_to_insert.append((sup_db_id, r[0], r[1], r[2], r[3], r[4]))
+                                sup_db_id += 1
+                            conn.executemany("""
+                                INSERT INTO super_embedding_chunks 
+                                (id, doc_id, page_number, entity_id, chunk_text, embedding) 
+                                VALUES (?, ?, ?, ?, ?, ?)
+                            """, rows_to_insert)
+                            pbar.update(len(result_rows))
+                    except Exception as e:
+                        tqdm.write(f"[FATAL] Super embedding database write failed: {e}")
+                        raise e 
 
     conn.close()
     print("[OK] Phase 4: Embedding Generation Complete.")

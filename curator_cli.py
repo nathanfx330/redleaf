@@ -74,6 +74,8 @@ def setup_duckdb_schema():
         CREATE TABLE IF NOT EXISTS entity_appearances (doc_id BIGINT NOT NULL, entity_id BIGINT NOT NULL, page_number INTEGER NOT NULL, PRIMARY KEY (doc_id, entity_id, page_number), FOREIGN KEY (doc_id) REFERENCES documents(id), FOREIGN KEY (entity_id) REFERENCES entities(id));
         CREATE TABLE IF NOT EXISTS entity_relationships (id BIGINT PRIMARY KEY, subject_entity_id BIGINT NOT NULL, object_entity_id BIGINT NOT NULL, relationship_phrase VARCHAR NOT NULL, doc_id BIGINT NOT NULL, page_number INTEGER NOT NULL, FOREIGN KEY (subject_entity_id) REFERENCES entities(id), FOREIGN KEY (object_entity_id) REFERENCES entities(id), FOREIGN KEY (doc_id) REFERENCES documents(id));
         CREATE TABLE IF NOT EXISTS browse_cache (entity_id BIGINT PRIMARY KEY, entity_text VARCHAR NOT NULL, entity_label VARCHAR NOT NULL, document_count BIGINT NOT NULL, appearance_count BIGINT NOT NULL, FOREIGN KEY (entity_id) REFERENCES entities(id));
+        
+        CREATE TABLE IF NOT EXISTS embedding_chunks ( id BIGINT PRIMARY KEY, doc_id BIGINT NOT NULL, page_number INTEGER NOT NULL, chunk_text VARCHAR NOT NULL, embedding BLOB NOT NULL, FOREIGN KEY (doc_id) REFERENCES documents(id) );
         CREATE TABLE IF NOT EXISTS super_embedding_chunks ( id BIGINT PRIMARY KEY, doc_id BIGINT NOT NULL, page_number INTEGER NOT NULL, entity_id BIGINT NOT NULL, chunk_text VARCHAR NOT NULL, embedding BLOB NOT NULL, FOREIGN KEY (doc_id) REFERENCES documents(id), FOREIGN KEY (entity_id) REFERENCES entities(id) );
         
         CREATE TABLE IF NOT EXISTS srt_cues (id BIGINT PRIMARY KEY, doc_id BIGINT NOT NULL, sequence INTEGER NOT NULL, timestamp VARCHAR NOT NULL, dialogue VARCHAR NOT NULL, UNIQUE(doc_id, sequence));
@@ -91,6 +93,7 @@ def setup_duckdb_schema():
     conn.execute("CREATE SEQUENCE IF NOT EXISTS seq_catalogs_id START 1;"); 
     conn.execute("CREATE SEQUENCE IF NOT EXISTS seq_entities_id START 1;");
     conn.execute("CREATE SEQUENCE IF NOT EXISTS seq_entity_relationships_id START 1;");
+    conn.execute("CREATE SEQUENCE IF NOT EXISTS seq_embedding_chunks_id START 1;")
     conn.execute("CREATE SEQUENCE IF NOT EXISTS seq_super_embedding_chunks_id START 1;")
     conn.execute("CREATE SEQUENCE IF NOT EXISTS seq_srt_cues_id START 1;")
 
