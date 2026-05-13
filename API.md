@@ -1,6 +1,6 @@
 # Redleaf Engine API Documentation
 
-The Redleaf Engine exposes a robust REST-like API designed to power its web frontend, as well as external power-user clients like [Node Leaf](https://github.com/nathanfx330/node_leaf) and autonomous AI agents.
+The Redleaf Engine exposes a robust REST-like API designed to power its web frontend, as well as external power-user clients like [Node Leaf](https://github.com/nathanfx330/node-leaf) and autonomous AI agents.
 
 Because Redleaf is a **local-first** application, the API is served locally (default: `http://127.0.0.1:5000`) and relies on standard session cookies and CSRF tokens for security.
 
